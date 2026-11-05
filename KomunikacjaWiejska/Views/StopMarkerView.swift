@@ -3,8 +3,9 @@ import SwiftUI
 
 public struct StopMarkerView: View {
     public let stop: Stop
-    public let isSelected: Bool
-    public let isCompact: Bool
+    private let viewModel: MapViewModel?
+    private let explicitIsSelected: Bool?
+    private let explicitIsCompact: Bool?
 
     /// `@ScaledMetric` keeps markers legible at larger text sizes, capped so
     /// they never cover the map or neighbouring stops.
@@ -12,12 +13,31 @@ public struct StopMarkerView: View {
 
     public init(
         stop: Stop,
+        viewModel: MapViewModel
+    ) {
+        self.stop = stop
+        self.viewModel = viewModel
+        self.explicitIsSelected = nil
+        self.explicitIsCompact = nil
+    }
+
+    public init(
+        stop: Stop,
         isSelected: Bool = false,
         isCompact: Bool = false
     ) {
         self.stop = stop
-        self.isSelected = isSelected
-        self.isCompact = isCompact
+        self.viewModel = nil
+        self.explicitIsSelected = isSelected
+        self.explicitIsCompact = isCompact
+    }
+
+    private var isSelected: Bool {
+        explicitIsSelected ?? (viewModel?.selectedStopID == stop.id)
+    }
+
+    private var isCompact: Bool {
+        explicitIsCompact ?? (viewModel?.isCompactDisplayMode ?? false)
     }
 
     private var markerColor: Color {
@@ -28,24 +48,20 @@ public struct StopMarkerView: View {
         min(max(scaledMarkerSize, DesignTokens.markerSize), DesignTokens.markerMaximumSize)
     }
 
-    private var effectiveBadgeSize: CGFloat {
-        isSelected ? badgeSize + 8 : badgeSize
-    }
-
     private var compactSize: CGFloat {
         min(badgeSize * 0.3, 9)
     }
 
     private var iconSize: CGFloat {
-        effectiveBadgeSize * 0.5
+        badgeSize * 0.5
     }
 
     private var notchSize: CGFloat {
-        effectiveBadgeSize / 3
+        badgeSize / 3
     }
 
     private var notchOffset: CGFloat {
-        -(effectiveBadgeSize / 2 + 2)
+        -(badgeSize / 2 + 2)
     }
 
     private var accessibilityDescription: String {
@@ -67,6 +83,9 @@ public struct StopMarkerView: View {
                             .strokeBorder(.white.opacity(0.85), lineWidth: 1)
                     )
                     .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 0.5)
+                    .frame(width: DesignTokens.compactControlSize, height: DesignTokens.compactControlSize)
+                    .contentShape(Rectangle())
+                    .transition(.scale.combined(with: .opacity))
             } else {
                 ZStack {
                     // Directional pointer / triangle notch if bearing is known.
@@ -88,7 +107,7 @@ public struct StopMarkerView: View {
                     // Main circular badge
                     Circle()
                         .fill(markerColor)
-                        .frame(width: effectiveBadgeSize, height: effectiveBadgeSize)
+                        .frame(width: badgeSize, height: badgeSize)
                         .overlay(
                             Circle()
                                 .strokeBorder(.white, lineWidth: isSelected ? 2.5 : 2)
@@ -107,10 +126,16 @@ public struct StopMarkerView: View {
                         .frame(width: iconSize, height: iconSize)
                         .foregroundStyle(.white)
                 }
-                .scaleEffect(isSelected ? 1.15 : 1.0)
-                .animation(.snappy(duration: 0.2), value: isSelected)
+                .frame(
+                    width: badgeSize + notchSize * 2,
+                    height: badgeSize + notchSize * 2
+                )
+                .scaleEffect(isSelected ? 1.25 : 1.0)
+                .transition(.scale.combined(with: .opacity))
             }
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isSelected)
+        .zIndex(isSelected ? 1 : 0)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: accessibilityDescription))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
