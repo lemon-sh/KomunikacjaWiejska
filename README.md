@@ -38,5 +38,5 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
   performance strategy.
 - [`docs/api.md`](docs/api.md) — API and positional tuple reference.
 - [`docs/cities.md`](docs/cities.md) — bundled city catalog.
-- [`docs/refactor-status.md`](docs/refactor-status.md) — remaining work and
-  decisions.
+- [`docs/decisions.md`](docs/decisions.md) — architecture decision register and ADR index.
+- [`docs/archive/refactor20261105/`](docs/archive/refactor20261105/) — historical refactor archive.

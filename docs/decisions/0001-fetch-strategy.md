@@ -9,7 +9,7 @@ contain tens of thousands of stop poles; the mobile client must not download and
 all of them at once.
 
 ## Decision
-Option **A — viewport bbox fetch**, as recorded in `docs/refactor-plan.md` §11:
+Option **A — viewport bbox fetch**, as recorded in `docs/archive/refactor20261105/refactor-plan.md` §11:
 
 - Fetches are triggered by `.onMapCameraChange(frequency: .onEnd)` and debounced
   350 ms in `MapViewModel`.

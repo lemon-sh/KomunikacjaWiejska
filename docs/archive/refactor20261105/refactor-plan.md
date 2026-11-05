@@ -533,14 +533,14 @@ Actual commit sequence used (2026-11-05):
 
 ## 11.1 Decision outcomes (2026-11-05)
 
-- **D1 → A** (viewport bbox + debounce; 350 ms). ADR: [`docs/decisions/0001-fetch-strategy.md`](decisions/0001-fetch-strategy.md).
-- **D2 → A** (grid thinning, MVP; `MKMapView` clustering may be spiked later). ADR: [`docs/decisions/0002-marker-density.md`](decisions/0002-marker-density.md).
-- **D3 → Polish + English** (full string catalog). ADR: [`docs/decisions/0004-localization.md`](decisions/0004-localization.md).
-- **D4 → session-only tile cache** (no TTL or LRU; cleared on city switch; never persisted). See [`docs/decisions/0007-tile-cache.md`](decisions/0007-tile-cache.md).
+- **D1 → A** (viewport bbox + debounce; 350 ms). ADR: [`docs/decisions/0001-fetch-strategy.md`](../../decisions/0001-fetch-strategy.md).
+- **D2 → A** (grid thinning, MVP; `MKMapView` clustering may be spiked later). ADR: [`docs/decisions/0002-marker-density.md`](../../decisions/0002-marker-density.md).
+- **D3 → Polish + English** (full string catalog). ADR: [`docs/decisions/0004-localization.md`](../../decisions/0004-localization.md).
+- **D4 → session-only tile cache** (no TTL or LRU; cleared on city switch; never persisted). See [`docs/decisions/0007-tile-cache.md`](../../decisions/0007-tile-cache.md).
 - **D5 → tuple index** (entrance IDs are `"{stopID}-entrance-{index}"`).
-- **D6 → lower to glass minimum (iOS 26.0)**, applied in P5-4. ADR: [`docs/decisions/0003-deployment-target.md`](decisions/0003-deployment-target.md).
-- **Swift 6 → enabled** with documented `nonisolated` value types. ADR: [`docs/decisions/0005-swift6-concurrency.md`](decisions/0005-swift6-concurrency.md).
-- **Toolchain → Xcode 27.2+** with a shared scheme and CI check. ADR: [`docs/decisions/0006-toolchain.md`](decisions/0006-toolchain.md).
+- **D6 → lower to glass minimum (iOS 26.0)**, applied in P5-4. ADR: [`docs/decisions/0003-deployment-target.md`](../../decisions/0003-deployment-target.md).
+- **Swift 6 → enabled** with documented `nonisolated` value types. ADR: [`docs/decisions/0005-swift6-concurrency.md`](../../decisions/0005-swift6-concurrency.md).
+- **Toolchain → Xcode 27.2+** with a shared scheme and CI check. ADR: [`docs/decisions/0006-toolchain.md`](../../decisions/0006-toolchain.md).
 
 Progress log:
 - Phase 0, Phase 1, Phase 2, and Phase 3 are complete (2026-11-05).
@@ -549,7 +549,7 @@ Progress log:
 - Phase 5 (hygiene, shared scheme, toolchain documentation, Swift 6 mode,
   iOS 26.0 target, docs reconciliation) is complete.
 - Verification: build has zero source warnings; 49 tests pass hermetically in
-  Swift 6 mode. See [`docs/refactor-status.md`](refactor-status.md).
+  Swift 6 mode. See [`refactor-status.md`](refactor-status.md).
 
 
 ---
