@@ -13,7 +13,9 @@ import os
 final class StubStopsProvider: StopsProviding, @unchecked Sendable {
     /// Gate for simulating in-flight requests. When `holdsRequests` is true,
     /// every `fetchStops` call parks on a continuation until `openGate()`.
-    private final class Gate {
+    /// Mutable state is only touched while holding `gate`, so unchecked
+    /// Sendable is safe and required by `OSAllocatedUnfairLock` in Swift 6.
+    private final class Gate: @unchecked Sendable {
         var holdsRequests: Bool
         var parked: [CheckedContinuation<Void, Never>] = []
 
@@ -96,6 +98,11 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
                 continuation.resume()
             }
         }
+    }
+
+    /// Makes subsequent requests park again (used for multi-phase tests).
+    func holdRequests() {
+        gate.withLock { $0.holdsRequests = true }
     }
 
     /// Releases every parked request and stops holding future ones.

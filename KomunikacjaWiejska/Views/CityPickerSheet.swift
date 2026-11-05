@@ -39,18 +39,20 @@ public struct CityPickerSheet: View {
                             Image(systemName: "checkmark")
                                 .foregroundStyle(Color.accentColor)
                                 .fontWeight(.semibold)
+                                .accessibilityHidden(true)
                         }
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(city.id == selectedCity.id ? .isSelected : [])
             }
-            .searchable(text: $searchText, prompt: "Szukaj miasta...")
-            .navigationTitle("Wybierz miasto")
+            .searchable(text: $searchText, prompt: Text("cityPicker.searchPrompt"))
+            .navigationTitle("cityPicker.title")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Gotowe") {
+                    Button("cityPicker.done") {
                         dismiss()
                     }
                 }

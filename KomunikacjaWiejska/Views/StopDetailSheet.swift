@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 public struct RouteBadgeView: View {
@@ -14,12 +15,20 @@ public struct RouteBadgeView: View {
         return Color(hex: route.color, fallback: route.type.defaultColor)
     }
 
+    private var accessibilityDescription: String {
+        String(
+            format: String(localized: "accessibility.route"),
+            route.name,
+            route.type.displayName
+        )
+    }
+
     public var body: some View {
         HStack(spacing: 4) {
             Image(systemName: route.type.systemImageName)
-                .font(.system(size: 10, weight: .bold))
+                .font(.caption2.weight(.bold))
             Text(route.name)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .font(.system(.caption, design: .rounded).weight(.bold))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -27,6 +36,8 @@ public struct RouteBadgeView: View {
         .foregroundStyle(.white)
         .clipShape(Capsule())
         .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: accessibilityDescription))
     }
 }
 
@@ -39,82 +50,106 @@ public struct StopDetailSheet: View {
         self.onDismiss = onDismiss
     }
 
+    private var directionText: String {
+        String(format: String(localized: "stopDetail.direction"), stop.direction)
+    }
+
+    private var routesHeading: String {
+        String(
+            format: String(localized: "stopDetail.routesHeading"),
+            Int64(stop.routes.count)
+        )
+    }
+
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // Header: Stop Name, Code badge & Close button
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: stop.primaryVehicleType.systemImageName)
-                    .font(.title2)
-                    .foregroundStyle(stop.primaryVehicleType.defaultColor)
-                    .padding(8)
-                    .background(stop.primaryVehicleType.defaultColor.opacity(0.15))
-                    .clipShape(Circle())
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                Divider()
+                routesSection
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(stop.name)
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(.primary)
+    private var header: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: stop.primaryVehicleType.systemImageName)
+                .font(.title2)
+                .foregroundStyle(stop.primaryVehicleType.defaultColor)
+                .padding(8)
+                .background(stop.primaryVehicleType.defaultColor.opacity(0.15))
+                .clipShape(Circle())
+                .accessibilityHidden(true)
 
-                        if !stop.code.isEmpty {
-                            Text(stop.code)
-                                .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color(.secondarySystemFill))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                        }
-                    }
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(stop.name)
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                    if !stop.direction.isEmpty {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.forward")
-                                .font(.caption2)
-                            Text("Kierunek: \(stop.direction)")
-                                .font(.subheadline)
-                        }
-                        .foregroundStyle(.secondary)
+                    if !stop.code.isEmpty {
+                        Text(stop.code)
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color(.secondarySystemFill))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                 }
 
-                Spacer()
-
-                Button {
-                    onDismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
+                if !stop.direction.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.forward")
+                            .font(.caption2)
+                            .accessibilityHidden(true)
+                        Text(directionText)
+                            .font(.subheadline)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .foregroundStyle(.secondary)
                 }
             }
 
-            Divider()
+            Spacer(minLength: 0)
 
-            // Routes section
-            if !stop.routes.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Linie na tym przystanku (\(stop.routes.count))")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 8) {
-                            ForEach(stop.routes) { route in
-                                RouteBadgeView(route: route)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-            } else {
-                Text("Brak przypisanych linii dla tego słupka.")
-                    .font(.subheadline)
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
                     .foregroundStyle(.secondary)
             }
-
-            Spacer()
+            .accessibilityLabel(Text("stopDetail.close"))
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 18)
+    }
+
+    @ViewBuilder
+    private var routesSection: some View {
+        if stop.routes.isEmpty {
+            Text("stopDetail.noRoutes")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(verbatim: routesHeading)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 8) {
+                        ForEach(stop.routes) { route in
+                            RouteBadgeView(route: route)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
     }
 }

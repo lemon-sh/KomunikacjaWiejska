@@ -126,9 +126,21 @@ struct ZbiorkomAPIClientTests {
         await #expect(throws: ZbiorkomAPIError.transport(.timedOut)) {
             try await makeClient().fetchStops(city: "warsaw", bbox: nil)
         }
-        #expect(
-            ZbiorkomAPIError.transport(.timedOut).errorDescription
-                == "Przekroczono czas oczekiwania na odpowiedź serwera."
+
+        // The exact copy is localized; assert it is present and distinct from
+        // other transport failures rather than hard-coding one language.
+        let timeoutMessage = try #require(ZbiorkomAPIError.transport(.timedOut).errorDescription)
+        let offlineMessage = try #require(ZbiorkomAPIError.transport(.notConnectedToInternet).errorDescription)
+        #expect(!timeoutMessage.isEmpty)
+        #expect(timeoutMessage != offlineMessage)
+    }
+
+    @Test("Decoding diagnostics stay out of the user-facing message")
+    func hidesDecodingDetails() throws {
+        let message = try #require(
+            ZbiorkomAPIError.decodingError("secret internal detail").errorDescription
         )
+        #expect(!message.contains("secret internal detail"))
+        #expect(!message.isEmpty)
     }
 }

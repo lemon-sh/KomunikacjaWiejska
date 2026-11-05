@@ -36,85 +36,7 @@ public struct TransitMapView: View {
             .mapControlVisibility(.hidden)
             .ignoresSafeArea()
 
-            // Floating Top Header Controls
-            ZStack(alignment: .top) {
-                // Top Center: Status Capsule (Loading Indicator or Error)
-                VStack(spacing: 0) {
-                    Color.clear.frame(height: 52)
-                    if viewModel.isLoading {
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                            Text("Wczytywanie przystanków...")
-                                .font(.caption.weight(.medium))
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
-                    } else if let error = viewModel.errorMessage {
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                                .font(.caption)
-                            Text(error)
-                                .font(.caption)
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
-                    }
-                }
-
-                // Top Controls: City Switcher (leading) & Right Cluster (Reload, Compass, 2D)
-                HStack(alignment: .top) {
-                    // City Switcher Button with .glass style
-                    Button {
-                        viewModel.isShowingCityPicker = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "tram.circle.fill")
-                                .foregroundStyle(Color.accentColor)
-                                .font(.headline)
-                            Text(viewModel.selectedCity.name)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.capsule)
-
-                    Spacer()
-
-                    // Top Right Cluster: UIKit Compass and 2D Button
-                    VStack(alignment: .trailing, spacing: 10) {
-                        // UIKit Compass
-                        MapCompass(scope: mapScope)
-
-                        // 2D Button: appears when map pitch is tilted in 3D
-                        if viewModel.isPitched3D {
-                            Button {
-                                viewModel.resetPitchTo2D()
-                            } label: {
-                                Text("2D")
-                                    .font(.system(size: 15, weight: .bold))
-                                    .foregroundStyle(Color.primary)
-                                    .frame(width: 30, height: 30)
-                            }
-                            .buttonStyle(.glass)
-                            .buttonBorderShape(.circle)
-                            .transition(.scale.combined(with: .opacity))
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-            }
+            topChrome
         }
         // Bottom Right: Apple Maps Map Style + Location Combo Capsule
         .overlay(alignment: .bottomTrailing) {
@@ -122,8 +44,8 @@ public struct TransitMapView: View {
                 viewModel: viewModel,
                 locationManager: locationManager
             )
-            .padding(.trailing, 16)
-            .padding(.bottom, 36)
+            .padding(.trailing, DesignTokens.horizontalPadding)
+            .padding(.bottom, DesignTokens.bottomPadding)
         }
         .mapScope(mapScope)
         .onAppear {
@@ -153,12 +75,137 @@ public struct TransitMapView: View {
             StopDetailSheet(stop: stop) {
                 viewModel.selectedStopID = nil
             }
-            .presentationDetents([.height(240), .medium])
+            .presentationDetents([.height(240), .medium, .large])
             .presentationDragIndicator(.visible)
             .presentationBackgroundInteraction(.enabled(upThrough: .height(240)))
         }
         .sheet(isPresented: $viewModel.isShowingCityPicker) {
             CityPickerSheet(selectedCity: $viewModel.selectedCity)
+        }
+    }
+
+    // MARK: - Top chrome
+
+    /// One top-aligned stack instead of a fixed spacer: controls sit below the
+    /// safe area, and the status capsule flows underneath them without a magic
+    /// 52 pt offset. Works with the Dynamic Island and in landscape.
+    private var topChrome: some View {
+        VStack(spacing: 8) {
+            HStack(alignment: .top) {
+                cityPickerButton
+                Spacer()
+                trailingControls
+            }
+            statusCapsule
+        }
+        .padding(.horizontal, DesignTokens.horizontalPadding)
+        .padding(.top, DesignTokens.topPadding)
+    }
+
+    private var cityPickerButton: some View {
+        Button {
+            viewModel.isShowingCityPicker = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "tram.circle.fill")
+                    .foregroundStyle(Color.accentColor)
+                    .font(.headline)
+                Text(viewModel.selectedCity.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
+        .accessibilityLabel(Text("map.control.cityPicker"))
+        .accessibilityValue(Text(viewModel.selectedCity.name))
+    }
+
+    private var trailingControls: some View {
+        VStack(alignment: .trailing, spacing: DesignTokens.controlSpacing) {
+            Button {
+                viewModel.refreshStopsForSelectedCity()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(Text("map.control.refresh"))
+
+            // The compass is the native `MapCompass`; it deliberately keeps
+            // Apple's own appearance and animations.
+            MapCompass(scope: mapScope)
+
+            // 2D Button: appears when map pitch is tilted in 3D
+            if viewModel.isPitched3D {
+                Button {
+                    viewModel.resetPitchTo2D()
+                } label: {
+                    Text("map.control.2d")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.primary)
+                        .frame(width: DesignTokens.compactControlSize, height: DesignTokens.compactControlSize)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(Text("map.control.2d.accessibility"))
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusCapsule: some View {
+        if viewModel.isLoading {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(loadingMessage)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(2)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .glassEffect(.regular, in: .capsule)
+            .accessibilityElement(children: .combine)
+        } else if let error = viewModel.errorMessage {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.caption)
+                    .accessibilityHidden(true)
+                Text(error)
+                    .font(.caption)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    viewModel.refreshStopsForSelectedCity()
+                } label: {
+                    Text("map.error.retry")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .glassEffect(.regular, in: .capsule)
+        }
+    }
+
+    private var loadingMessage: String {
+        switch viewModel.loadingPhase {
+        case .refresh:
+            return String(localized: "map.loading.refresh")
+        case .citySwitch:
+            return String(localized: "map.loading.citySwitch")
+        case .initial, .none:
+            return String(localized: "map.loading.initial")
         }
     }
 }

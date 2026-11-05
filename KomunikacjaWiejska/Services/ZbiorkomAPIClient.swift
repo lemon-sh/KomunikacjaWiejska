@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 public enum ZbiorkomAPIError: LocalizedError, Sendable, Equatable {
     case invalidURL
@@ -7,37 +8,41 @@ public enum ZbiorkomAPIError: LocalizedError, Sendable, Equatable {
     case transport(URLError.Code)
     case serverError(String)
     case httpError(statusCode: Int)
+    /// Associated value carries DEBUG-only decoding diagnostics. The
+    /// user-facing message stays short and localized.
     case decodingError(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "Nieprawidłowy adres URL zapytania."
+            return String(localized: "error.invalidURL")
         case .invalidResponse:
-            return "Nieprawidłowa odpowiedź serwera."
+            return String(localized: "error.invalidResponse")
         case .transport(let code):
             switch code {
             case .notConnectedToInternet:
-                return "Brak połączenia z internetem."
+                return String(localized: "error.offline")
             case .timedOut:
-                return "Przekroczono czas oczekiwania na odpowiedź serwera."
+                return String(localized: "error.timeout")
             case .cannotConnectToHost, .cannotFindHost, .networkConnectionLost:
-                return "Nie można połączyć się z serwerem."
+                return String(localized: "error.cannotConnect")
             default:
-                return "Błąd połączenia sieciowego."
+                return String(localized: "error.network")
             }
         case .serverError(let code):
-            return "Błąd serwera: \(code)"
+            return String(format: String(localized: "error.server"), code)
         case .httpError(let statusCode):
-            return "Błąd HTTP (\(statusCode))."
-        case .decodingError(let details):
-            return "Błąd parsowania danych: \(details)"
+            return String(format: String(localized: "error.http"), statusCode)
+        case .decodingError:
+            return String(localized: "error.decoding")
         }
     }
 }
 
 public actor ZbiorkomAPIClient {
     public static let shared = ZbiorkomAPIClient()
+
+    private static let logger = Logger(subsystem: "KomunikacjaWiejska", category: "API")
 
     /// Built with a failable initializer; if this ever fails the client throws
     /// `.invalidURL` instead of trapping.
@@ -85,9 +90,11 @@ public actor ZbiorkomAPIClient {
             return decoded.stops
         } catch {
             #if DEBUG
-            throw ZbiorkomAPIError.decodingError(String(reflecting: error))
+            let details = String(reflecting: error)
+            Self.logger.error("Stops decoding failed: \(details, privacy: .public)")
+            throw ZbiorkomAPIError.decodingError(details)
             #else
-            throw ZbiorkomAPIError.decodingError("Nie udało się odczytać danych przystanków.")
+            throw ZbiorkomAPIError.decodingError("")
             #endif
         }
     }

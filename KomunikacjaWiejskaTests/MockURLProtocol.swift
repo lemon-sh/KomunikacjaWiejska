@@ -3,7 +3,9 @@ import os
 @testable import KomunikacjaWiejska
 
 /// Thread-safe mutable value for capturing URL-protocol handler state.
-final class LockedValue<Value>: @unchecked Sendable {
+/// All access goes through `OSAllocatedUnfairLock`, so the unchecked
+/// `Sendable` conformance is safe.
+final class LockedValue<Value: Sendable>: @unchecked Sendable {
     private let lock: OSAllocatedUnfairLock<Value>
 
     init(_ value: Value) {
@@ -15,7 +17,7 @@ final class LockedValue<Value>: @unchecked Sendable {
         set { lock.withLock { $0 = newValue } }
     }
 
-    func mutate(_ body: (inout Value) -> Void) {
+    func mutate(_ body: @Sendable (inout Value) -> Void) {
         lock.withLock { body(&$0) }
     }
 }

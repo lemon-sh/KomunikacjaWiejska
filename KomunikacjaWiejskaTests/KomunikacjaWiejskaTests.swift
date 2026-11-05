@@ -287,13 +287,27 @@ struct KomunikacjaWiejskaTests {
         #expect(City.warsaw.matches(searchText: "") == true)
     }
 
-    @Test("MapMode enum cases and initialization")
+    @Test("MapMode identifiers stay stable while display names are localized")
     func testMapModes() {
         #expect(MapMode.allCases.count == 2)
+        // Raw values are persisted/identity values, not UI copy.
         #expect(MapMode.explore.rawValue == "Explore")
         #expect(MapMode.satellite.rawValue == "Satellite")
         #expect(MapMode.explore.id == "Explore")
         #expect(MapMode.satellite.id == "Satellite")
+        #expect(!MapMode.explore.displayName.isEmpty)
+        #expect(MapMode.explore.displayName != MapMode.satellite.displayName)
+    }
+
+    @Test("The app ships Polish and English localizations")
+    func testLocalizations() {
+        let localizations = Set(Bundle.main.localizations)
+        #expect(localizations.contains("pl"))
+        #expect(localizations.contains("en"))
+        #expect(
+            Bundle.main.localizedString(forKey: "map.loading.initial", value: nil, table: nil)
+                != "map.loading.initial"
+        )
     }
 
     // MARK: - Hermetic MapViewModel behaviour
@@ -339,6 +353,29 @@ struct KomunikacjaWiejskaTests {
         // Viewport strategy passes the visible bounding box to the API
         #expect(provider.requestedBBoxes.first != nil)
         #expect(provider.requestedBBoxes.first??.queryValue.contains(",") == true)
+    }
+
+    @Test("Loading phase distinguishes initial load, refresh, and completion")
+    func testLoadingPhases() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()], holdsRequests: true)
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while provider.requestedCities.isEmpty { await Task.yield() }
+        #expect(viewModel.loadingPhase == .initial)
+
+        provider.openGate()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(viewModel.loadingPhase == nil)
+
+        provider.holdRequests()
+        viewModel.refreshStopsForSelectedCity()
+        while provider.requestedCities.count < 2 { await Task.yield() }
+        #expect(viewModel.loadingPhase == .refresh)
+
+        provider.openGate()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(viewModel.loadingPhase == nil)
     }
 
     @Test("Grid thinning bounds the rendered marker count deterministically")
@@ -406,8 +443,9 @@ struct KomunikacjaWiejskaTests {
         while viewModel.isLoading { await Task.yield() }
 
         #expect(provider.callCount == 1)
-        #expect(viewModel.errorMessage != nil)
+        #expect(viewModel.errorMessage?.isEmpty == false)
         #expect(viewModel.stops.isEmpty)
+        #expect(viewModel.loadingPhase == nil)
 
         // Failed cities may be retried
         viewModel.loadStopsForSelectedCity()
@@ -438,6 +476,7 @@ struct KomunikacjaWiejskaTests {
         while provider.requestedCities.count < 2 { await Task.yield() }
         #expect(viewModel.stops.isEmpty)
         #expect(provider.requestedCities == ["warsaw", "krakow"])
+        #expect(viewModel.loadingPhase == .citySwitch)
 
         // Release both requests; the stale Warsaw response must not surface.
         provider.openGate()

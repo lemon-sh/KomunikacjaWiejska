@@ -19,6 +19,17 @@ public enum MapMode: String, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
+    /// Localized label. `rawValue` stays a stable, locale-independent
+    /// identifier (persisted state, tests, analytics); never render it.
+    public var displayName: String {
+        switch self {
+        case .explore:
+            return String(localized: "mapMode.explore")
+        case .satellite:
+            return String(localized: "mapMode.satellite")
+        }
+    }
+
     public var mapStyle: MapStyle {
         switch self {
         case .explore:
@@ -27,6 +38,14 @@ public enum MapMode: String, CaseIterable, Identifiable {
             return .hybrid(elevation: .realistic, showsTraffic: true)
         }
     }
+}
+
+/// Why the map is currently loading. Lets the UI distinguish a cold start
+/// from a manual refresh or a city switch without inferring it from timing.
+public enum StopLoadingPhase: Equatable, Sendable {
+    case initial
+    case refresh
+    case citySwitch
 }
 
 @Observable
@@ -129,6 +148,9 @@ public final class MapViewModel {
         return false
     }
 
+    /// The reason for the current load, or `nil` when nothing is in flight.
+    public private(set) var loadingPhase: StopLoadingPhase?
+
     /// Failure message for the currently selected city, if any. Errors are
     /// tracked per city so a failed fetch for city A never surfaces while
     /// viewing city B.
@@ -201,6 +223,9 @@ public final class MapViewModel {
     private var fetchedStops: [Stop] = []
     /// Cache key of the data currently on screen, if any.
     private var displayedKey: String?
+    /// City of the last request, even when no data has arrived yet. Lets the
+    /// loading phase distinguish a switch from a cold start.
+    private var lastRequestedCityID: String?
 
     public init(
         apiClient: any StopsProviding = ZbiorkomAPIClient.shared,
@@ -337,16 +362,36 @@ public final class MapViewModel {
         // Invalidate the generation so a task that already past its guard
         // writes nothing after resume.
         requestGeneration = UUID()
+        loadingPhase = nil
+        if case .loading = fetchState {
+            fetchState = .idle
+        }
+    }
+
+    /// Maps an error to a short, localized message. Non-`LocalizedError`
+    /// failures (including generic test doubles) get a stable app-owned string
+    /// instead of Foundation's often-English `localizedDescription`.
+    private static func userFacingMessage(for error: Error) -> String {
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription,
+           !description.isEmpty {
+            return description
+        }
+        return String(localized: "error.generic")
     }
 
     private func fetchCurrentViewport() {
         let city = selectedCity
-        guard let bbox = BoundingBox(region: cameraState.region) else { return }
+        guard let bbox = BoundingBox(region: cameraState.region) else {
+            loadingPhase = nil
+            return
+        }
         let key = Self.cacheKey(city: city, bbox: bbox)
 
         // A fresh snapshot for exactly this viewport needs no network at all.
         if let freshSnapshot = freshSnapshot(key: key) {
             fetchState = .loaded(cityKey: key)
+            loadingPhase = nil
             if displayedKey != key {
                 display(freshSnapshot.stops, forKey: key)
             }
@@ -384,6 +429,20 @@ public final class MapViewModel {
         errorsByCity[city.id] = nil
         fetchState = .loading(cityKey: key)
 
+        // Classify the load before any displayed data is cleared. Fall back to
+        // the last requested city when the previous request has not produced
+        // data yet (e.g. switching while the first city is still loading).
+        let previousCityID = displayedKey
+            .map { String($0.prefix(while: { $0 != ":" })) } ?? lastRequestedCityID
+        if previousCityID == nil {
+            loadingPhase = .initial
+        } else if previousCityID == city.id {
+            loadingPhase = .refresh
+        } else {
+            loadingPhase = .citySwitch
+        }
+        lastRequestedCityID = city.id
+
         // Keep previously fetched results on screen while refreshing the same
         // viewport; for a new viewport (pan/zoom/city switch) drop the stale
         // set first so old data never lingers.
@@ -407,12 +466,14 @@ public final class MapViewModel {
                 if self.selectedCity.id == city.id {
                     self.display(fetchedStops, forKey: key)
                     self.fetchState = .loaded(cityKey: key)
+                    self.loadingPhase = nil
                 }
             } catch {
                 guard !Task.isCancelled, generation == self.requestGeneration else { return }
                 if self.selectedCity.id == city.id {
-                    self.errorsByCity[city.id] = error.localizedDescription
+                    self.errorsByCity[city.id] = Self.userFacingMessage(for: error)
                     self.fetchState = .failed(cityKey: key)
+                    self.loadingPhase = nil
                 }
             }
         }

@@ -25,31 +25,6 @@ public enum RouteType: Int, Codable, CaseIterable, Sendable {
         self = RouteType(rawValue: rawValue) ?? .unknown
     }
 
-    public var displayName: String {
-        switch self {
-        case .tram:
-            return "Tramwaj"
-        case .subway:
-            return "Metro"
-        case .rail:
-            return "Kolej"
-        case .bus:
-            return "Autobus"
-        case .ferry:
-            return "Prom"
-        case .aerialLift:
-            return "Kolej linowa"
-        case .funicular:
-            return "Kolejka linowo-terenowa"
-        case .trolleybus:
-            return "Trolejbus"
-        case .monorail:
-            return "Monorail"
-        case .unknown:
-            return "Inny"
-        }
-    }
-
     public var systemImageName: String {
         switch self {
         case .tram:
