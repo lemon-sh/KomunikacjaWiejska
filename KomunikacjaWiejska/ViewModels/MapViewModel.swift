@@ -84,13 +84,6 @@ public final class MapViewModel {
         return currentDistance > compactDisplayDistanceThreshold
     }
 
-    /// Threshold above which we do not fetch/display stops to avoid lag and overloading the map.
-    public let maxSpanForStops: Double = 0.09
-
-    public var isZoomedOutForStops: Bool {
-        return false
-    }
-
     /// Whether the map is currently pitched in 3D (pitch > 1.0 degree)
     public var isPitched3D: Bool {
         return currentPitch > 1.0
@@ -269,9 +262,5 @@ public final class MapViewModel {
                 }
             }
         }
-    }
-
-    public func selectStop(_ stop: Stop?) {
-        selectedStop = stop
     }
 }
