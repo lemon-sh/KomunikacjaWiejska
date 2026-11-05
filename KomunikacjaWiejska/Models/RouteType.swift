@@ -1,4 +1,3 @@
-import CoreLocation
 import Foundation
 
 public enum RouteType: Int, Codable, CaseIterable, Sendable {
@@ -11,7 +10,14 @@ public enum RouteType: Int, Codable, CaseIterable, Sendable {
     case funicular = 7
     case trolleybus = 11
     case monorail = 12
+    /// Sentinel for raw values the API adds later. Not a real GTFS type, so it
+    /// is excluded from `displayableCases` and never offered as a filter.
     case unknown = -1
+
+    /// Cases that represent actual transit modes (everything except `.unknown`).
+    public static var displayableCases: [RouteType] {
+        allCases.filter { $0 != .unknown }
+    }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -65,7 +71,7 @@ public enum RouteType: Int, Codable, CaseIterable, Sendable {
         case .monorail:
             return "train.side.middle.car"
         case .unknown:
-            return "mappin.circle.fill"
+            return "questionmark.circle.fill"
         }
     }
 
@@ -83,8 +89,11 @@ public enum RouteType: Int, Codable, CaseIterable, Sendable {
             return "#00ACC1"
         case .trolleybus:
             return "#8E24AA"
-        case .aerialLift, .funicular, .monorail, .unknown:
+        case .aerialLift, .funicular, .monorail:
             return "#546E7A"
+        case .unknown:
+            // Neutral, clearly distinct from every real route type.
+            return "#757575"
         }
     }
 }

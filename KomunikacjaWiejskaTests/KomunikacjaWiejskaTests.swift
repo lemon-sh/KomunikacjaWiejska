@@ -2,7 +2,9 @@ import CoreLocation
 import Foundation
 @testable import KomunikacjaWiejska
 import MapKit
+import SwiftUI
 import Testing
+import UIKit
 
 @Suite("Zbiorkom Models & Decoding Tests")
 @MainActor
@@ -197,6 +199,64 @@ struct KomunikacjaWiejskaTests {
         #expect(Set(firstDecode.entrances.map(\.id)).count == 2)
         #expect(firstDecode.entrances.map(\.id) == secondDecode.entrances.map(\.id))
         #expect(firstDecode.entrances.first?.id == "stop-1-entrance-0")
+    }
+
+    // MARK: - Color parsing (P3-5) & RouteType (P3-6)
+
+    private func rgba(_ color: Color) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return (red, green, blue, alpha)
+    }
+
+    @Test("Hex color parsing accepts 3-, 6-, and 8-digit formats")
+    func testColorParsingValid() throws {
+        let white = try #require(Color(hex: "#fff"))
+        let whiteRGBA = rgba(white)
+        #expect(whiteRGBA.red == 1 && whiteRGBA.green == 1 && whiteRGBA.blue == 1 && whiteRGBA.alpha == 1)
+
+        let red = try #require(Color(hex: "#ff0000"))
+        let redRGBA = rgba(red)
+        #expect(redRGBA.red == 1 && redRGBA.green == 0 && redRGBA.blue == 0)
+
+        // 8-digit format is ARGB: 50% alpha over full red.
+        let translucentRed = try #require(Color(hex: "#80ff0000"))
+        let translucentRGBA = rgba(translucentRed)
+        #expect(translucentRGBA.red == 1)
+        #expect(abs(translucentRGBA.alpha - 128.0 / 255.0) < 0.01)
+    }
+
+    @Test("Hex color parsing rejects invalid input")
+    func testColorParsingInvalid() {
+        #expect(Color(hex: "") == nil)
+        #expect(Color(hex: "#12") == nil)      // 2 digits
+        #expect(Color(hex: "#abcd") == nil)    // 4 digits
+        #expect(Color(hex: "#abcde") == nil)   // 5 digits
+        #expect(Color(hex: "#abcdef0") == nil) // 7 digits
+        #expect(Color(hex: "#gggggg") == nil)  // non-hex characters
+
+        // Explicit fallback is used instead of a silent wrong color.
+        #expect(rgba(Color(hex: "nope", fallback: .blue)).blue == 1)
+    }
+
+    @Test("RouteType decoding is resilient and displayable cases exclude .unknown")
+    func testRouteTypeDecoding() throws {
+        #expect(RouteType.displayableCases.contains(.unknown) == false)
+        #expect(RouteType.displayableCases.count == RouteType.allCases.count - 1)
+
+        let decodedKnown = try JSONDecoder().decode(RouteType.self, from: Data("3".utf8))
+        #expect(decodedKnown == .bus)
+
+        let decodedUnknown = try JSONDecoder().decode(RouteType.self, from: Data("999".utf8))
+        #expect(decodedUnknown == .unknown)
+
+        let encoded = try JSONEncoder().encode(RouteType.unknown)
+        #expect(String(data: encoded, encoding: .utf8) == "-1")
+        #expect(RouteType.unknown.systemImageName != RouteType.bus.systemImageName)
+        #expect(RouteType.unknown.defaultHexColor != RouteType.bus.defaultHexColor)
     }
 
     @Test("City catalog contains major Polish networks")

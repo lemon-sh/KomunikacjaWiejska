@@ -16,7 +16,7 @@ public struct StopMarkerView: View {
     }
 
     private var markerColor: Color {
-        Color(hex: stop.primaryVehicleType.defaultHexColor)
+        Color(hex: stop.primaryVehicleType.defaultHexColor, fallback: .blue)
     }
 
     public var body: some View {

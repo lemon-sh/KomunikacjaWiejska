@@ -9,9 +9,9 @@ public struct RouteBadgeView: View {
 
     private var badgeColor: Color {
         if route.color.isEmpty {
-            return Color(hex: route.type.defaultHexColor)
+            return route.type.defaultColor
         }
-        return Color(hex: route.color)
+        return Color(hex: route.color, fallback: route.type.defaultColor)
     }
 
     public var body: some View {
@@ -45,9 +45,9 @@ public struct StopDetailSheet: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: stop.primaryVehicleType.systemImageName)
                     .font(.title2)
-                    .foregroundStyle(Color(hex: stop.primaryVehicleType.defaultHexColor))
+                    .foregroundStyle(stop.primaryVehicleType.defaultColor)
                     .padding(8)
-                    .background(Color(hex: stop.primaryVehicleType.defaultHexColor).opacity(0.15))
+                    .background(stop.primaryVehicleType.defaultColor.opacity(0.15))
                     .clipShape(Circle())
 
                 VStack(alignment: .leading, spacing: 3) {
