@@ -42,8 +42,6 @@ public enum ZbiorkomAPIError: LocalizedError, Sendable, Equatable {
 public actor ZbiorkomAPIClient {
     public static let shared = ZbiorkomAPIClient()
 
-    private static let logger = Logger(subsystem: "KomunikacjaWiejska", category: "API")
-
     /// Built with a failable initializer; if this ever fails the client throws
     /// `.invalidURL` instead of trapping.
     private static let baseURL = URL(string: "https://api.zbiorkom.live/api6-open")
@@ -83,15 +81,22 @@ public actor ZbiorkomAPIClient {
         request.timeoutInterval = Self.requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
+        #if DEBUG
+        Logger.api.debug("Fetching stops for city: \(city, privacy: .public), bbox: \(bbox?.queryValue ?? "none", privacy: .public)")
+        #endif
+
         let data = try await perform(request)
 
         do {
             let decoded = try JSONDecoder().decode(StopsResponse.self, from: data)
+            #if DEBUG
+            Logger.api.debug("Successfully decoded \(decoded.stops.count, privacy: .public) stops for city: \(city, privacy: .public)")
+            #endif
             return decoded.stops
         } catch {
             #if DEBUG
             let details = String(reflecting: error)
-            Self.logger.error("Stops decoding failed: \(details, privacy: .public)")
+            Logger.api.error("Stops decoding failed: \(details, privacy: .public)")
             throw ZbiorkomAPIError.decodingError(details)
             #else
             throw ZbiorkomAPIError.decodingError("")
@@ -103,13 +108,23 @@ public actor ZbiorkomAPIClient {
     private func perform(_ request: URLRequest) async throws -> Data {
         var attempt = 0
         while true {
+            #if DEBUG
+            Logger.api.debug("Starting request [attempt \(attempt + 1, privacy: .public)]: \(request.url?.absoluteString ?? "", privacy: .public)")
+            #endif
             do {
                 let (data, response) = try await session.data(for: request)
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw ZbiorkomAPIError.invalidResponse
                 }
 
+                #if DEBUG
+                Logger.api.debug("Received response [HTTP \(httpResponse.statusCode, privacy: .public)] for \(request.url?.absoluteString ?? "", privacy: .public) (\(data.count, privacy: .public) bytes)")
+                #endif
+
                 if (500...599).contains(httpResponse.statusCode), attempt < Self.maxRetryCount {
+                    #if DEBUG
+                    Logger.api.debug("Server error \(httpResponse.statusCode, privacy: .public), retrying with backoff...")
+                    #endif
                     attempt += 1
                     try await Self.backoff()
                     continue
@@ -125,9 +140,15 @@ public actor ZbiorkomAPIClient {
 
                 return data
             } catch let urlError as URLError {
+                #if DEBUG
+                Logger.api.error("Transport error \(urlError.code.rawValue, privacy: .public) for \(request.url?.absoluteString ?? "", privacy: .public)")
+                #endif
                 guard Self.isTransient(urlError.code), attempt < Self.maxRetryCount, !Task.isCancelled else {
                     throw ZbiorkomAPIError.transport(urlError.code)
                 }
+                #if DEBUG
+                Logger.api.debug("Transient transport error, retrying with backoff...")
+                #endif
                 attempt += 1
                 try await Self.backoff()
             }

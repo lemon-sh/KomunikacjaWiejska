@@ -62,6 +62,7 @@ public struct TransitMapView: View {
         .onChange(of: scenePhase) { _, newPhase in
             // No network/GPS activity while the app is in the background.
             if newPhase == .background {
+                viewModel.saveCameraPosition()
                 viewModel.pauseForBackground()
                 locationManager.stopUpdatingLocation()
             } else if newPhase == .active {

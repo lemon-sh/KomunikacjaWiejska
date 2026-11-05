@@ -3,40 +3,34 @@ import MapKit
 
 /// A Web Mercator (slippy-map) tile used as a coverage cell for stop data.
 ///
-/// Stop responses are scale-independent: a bbox returns every stop inside it,
-/// regardless of zoom. Tiles therefore record *coverage*, not a level of
-/// detail. A fetched tile also covers all of its descendants.
+/// Stop responses are scale-independent: a bbox returns every stop inside it.
+/// All tiles share a single fixed zoom level (Zoom 12) without hierarchy.
 struct MapTile: Hashable, Sendable {
-    let zoom: Int
+    static let fixedZoom: Int = 12
+
     let x: Int
     let y: Int
 
-    /// The tile one zoom level out that contains this one, if any.
-    var parent: MapTile? {
-        guard zoom > 0 else { return nil }
-        return MapTile(zoom: zoom - 1, x: x >> 1, y: y >> 1)
+    var zoom: Int {
+        Self.fixedZoom
+    }
+
+    init(x: Int, y: Int) {
+        self.x = x
+        self.y = y
+    }
+
+    init(zoom: Int, x: Int, y: Int) {
+        self.x = x
+        self.y = y
     }
 }
 
 /// Pure tile math shared by the view model and its tests.
 enum MapTileGrid {
-    /// Aim for roughly this many tiles across the viewport. Small enough to
-    /// keep individual responses local, large enough that panning usually
-    /// stays inside already-fetched coverage.
-    static let targetTilesAcross: Double = 3
-
-    static let minZoom = 0
-    static let maxZoom = 22
+    /// Fixed zoom level for all coverage tiles (Zoom 12 ~6 km × 6 km).
+    static let zoom: Int = MapTile.fixedZoom
     private static let maxMercatorLatitude = 85.05112878
-
-    /// Picks a zoom level whose tiles span the viewport about
-    /// `targetTilesAcross` times.
-    static func zoom(forLongitudeDelta delta: Double) -> Int {
-        guard delta.isFinite, delta > 0 else { return minZoom }
-        let rawZoom = log2(360.0 * targetTilesAcross / delta)
-        guard rawZoom.isFinite else { return minZoom }
-        return min(max(Int(rawZoom.rounded()), minZoom), maxZoom)
-    }
 
     static func visibleTiles(in region: MKCoordinateRegion) -> Set<MapTile> {
         let latitudeDelta = region.span.latitudeDelta
@@ -45,7 +39,6 @@ enum MapTileGrid {
               latitudeDelta > 0, longitudeDelta > 0
         else { return [] }
 
-        let zoom = zoom(forLongitudeDelta: longitudeDelta)
         let tileCount = 1 << zoom
 
         let west = region.center.longitude - longitudeDelta / 2
@@ -86,7 +79,7 @@ enum MapTileGrid {
         tiles.reserveCapacity(xTiles.count * (clampedLastY - clampedFirstY + 1))
         for x in xTiles {
             for y in clampedFirstY...clampedLastY {
-                tiles.insert(MapTile(zoom: zoom, x: x, y: y))
+                tiles.insert(MapTile(x: x, y: y))
             }
         }
         return tiles
@@ -126,11 +119,11 @@ enum MapTileGrid {
         ((x % tileCount) + tileCount) % tileCount
     }
 
-    static func tileX(longitude: Double, zoom: Int) -> Double {
+    static func tileX(longitude: Double, zoom: Int = zoom) -> Double {
         (longitude + 180.0) / 360.0 * Double(1 << zoom)
     }
 
-    static func tileY(latitude: Double, zoom: Int) -> Double {
+    static func tileY(latitude: Double, zoom: Int = zoom) -> Double {
         let clamped = min(max(latitude, -maxMercatorLatitude), maxMercatorLatitude)
         let radians = clamped * .pi / 180.0
         return (1.0 - log(tan(radians) + 1.0 / cos(radians)) / .pi)
@@ -138,7 +131,7 @@ enum MapTileGrid {
             * Double(1 << zoom)
     }
 
-    static func latitude(tileY: Double, zoom: Int) -> Double {
+    static func latitude(tileY: Double, zoom: Int = zoom) -> Double {
         let tileCount = Double(1 << zoom)
         let mercator = Double.pi * (1.0 - 2.0 * tileY / tileCount)
         return atan(sinh(mercator)) * 180.0 / Double.pi

@@ -14,37 +14,40 @@ unlikely to visit enough distinct stop poles in one city for unbounded memory
 to be a practical concern.
 
 ## Decision
-Use a **session-only, per-city tile cache**:
+Use a **session-only, per-city tile cache with a flat Zoom 12 grid**:
 
 - Cache stops in one `cachedStopsByID` dictionary per selected city. New
   responses overwrite entries by stop ID (newest wins).
 - Record successful coverage in a `fetchedTiles` set of Web Mercator
-  (`z/x/y`) tiles.
-- Choose the zoom level so the viewport spans about three tiles. This keeps a
-  request local without producing a large tile fan-out.
-- A required tile is covered if it or any **ancestor** tile has been fetched.
-  A coarser bbox is a superset of every descendant, so zooming in needs no new
-  data.
-- On a camera settle, compute the visible tiles. If all are covered, make no
-  request. Otherwise request the **union bbox of the missing tiles** as one
-  request and mark them fetched on success.
-- Render from the city-wide stop dictionary, always filtering to the current
-  viewport before applying the 250-marker thinning pass.
+  Zoom 12 tiles (`MapTile.fixedZoom = 12`, ~6 km × 6 km per tile).
+- All coverage tiles share the same coarseness without hierarchy or ancestor
+  traversal. A required tile is covered if it is directly contained in `fetchedTiles`.
+- Zoom threshold for stops:
+  - `stopVisibilityDistanceThreshold = 25_000` metres (sits above the 10,000 m
+    compacting threshold).
+  - When camera distance exceeds 25,000 m, stop markers are hidden (`stops = []`)
+    and network fetches are suppressed. Zooming back in restores fetching and rendering.
+- On camera settle within visible range, compute the visible Zoom 12 tiles.
+  If all are covered, make no request. Otherwise request the **union bbox of the missing tiles**
+  as one request and mark them fetched on success.
+- Render from the city-wide stop dictionary, filtering to the current viewport
+  before applying the 250-marker thinning pass.
 - Keep existing markers on screen while new tiles load; a failed request leaves
   the cache untouched.
 - Treat a successful empty response as valid coverage so it is not retried on
   every settle.
 - Clear both the stop dictionary and the tile set on every city switch.
-- Never persist the cache to `UserDefaults`, files, or any other non-volatile
-  storage. Only `lastSelectedCityId` remains persisted.
+- On background transition (`scenePhase == .background`), the camera center
+  coordinates and zoom distance are persisted to `UserDefaults` and restored
+  on next launch if valid for the selected city (or unconditionally for PKP).
+- The stop cache itself is never persisted to non-volatile storage.
 - Entries do not expire while the app process lives.
 
 ## Consequences
 - Panning inside fetched coverage is free and no longer blanks the map.
 - Returning to any covered viewport, including a slightly different one,
   reuses the cached stops.
-- Zooming out of a deeply zoomed area may fetch coarser tiles once; zooming
-  back in is then served by ancestor coverage.
+- Simpler flat tile grid eliminating multi-level tile cache hierarchies and parent traversal.
 - Memory is unbounded for the session but bounded in practice by the selected
   city’s unique stops plus a small set of tile keys.
 - Server-side changes are not picked up until city switch or relaunch.

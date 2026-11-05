@@ -100,10 +100,10 @@ struct KomunikacjaWiejskaTests {
         #expect(!tiles.isEmpty)
         #expect(tiles.count <= 40)
 
-        let zoom = MapTileGrid.zoom(forLongitudeDelta: region.span.longitudeDelta)
+        let zoom = MapTileGrid.zoom
         let tileWidth = 360.0 / Double(1 << zoom)
         let tilesAcross = region.span.longitudeDelta / tileWidth
-        #expect(tilesAcross >= 2)
+        #expect(tilesAcross >= 0.5)
         #expect(tilesAcross <= 5)
 
         let coverage = try #require(MapTileGrid.boundingBox(covering: tiles))
@@ -123,13 +123,12 @@ struct KomunikacjaWiejskaTests {
         }
     }
 
-    @Test("A tile is covered by its ancestors")
-    func testTileAncestorCoverage() {
-        let tile = MapTile(zoom: 16, x: 36_000, y: 22_000)
-        let parent = MapTile(zoom: 15, x: 18_000, y: 11_000)
-        #expect(tile.parent == parent)
-        #expect(parent.parent?.zoom == 14)
-        #expect(MapTile(zoom: 0, x: 0, y: 0).parent == nil)
+    @Test("All tiles share fixed Zoom 12 coarseness without hierarchy")
+    func testFixedZoomTiles() {
+        let tile = MapTile(x: 2200, y: 1300)
+        #expect(tile.zoom == 12)
+        #expect(MapTile.fixedZoom == 12)
+        #expect(MapTileGrid.zoom == 12)
     }
 
     @Test("RouteType properties and fallback")
@@ -450,8 +449,8 @@ struct KomunikacjaWiejskaTests {
         // A different viewport in the same city is a plain reload, not a city
         // switch and not a cold start.
         viewModel.visibleRegion = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 52.25, longitude: 21.01),
-            span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
+            center: CLLocationCoordinate2D(latitude: 52.23, longitude: 21.20),
+            span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
         )
         provider.holdRequests()
         viewModel.loadStopsForSelectedCity()
@@ -554,10 +553,10 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.first?.bearing == 90)
 
         // Same ID, new details: the rendered marker array must update.
-        provider.setStops([StopFixtures.sample(bearing: 180)])
+        provider.setStops([StopFixtures.sample(bearing: 180, longitude: 21.20, latitude: 52.23)])
         viewModel.visibleRegion = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 52.25, longitude: 21.01),
-            span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
+            center: CLLocationCoordinate2D(latitude: 52.23, longitude: 21.20),
+            span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
         )
         viewModel.loadStopsForSelectedCity()
         while viewModel.isLoading { await Task.yield() }
@@ -632,8 +631,8 @@ struct KomunikacjaWiejskaTests {
             id: "warsaw",
             name: "Warszawa",
             coordinate: CLLocationCoordinate2D(latitude: 52.2300, longitude: 21.0100),
-            defaultLatitudeDelta: 0.002,
-            defaultLongitudeDelta: 0.002
+            defaultLatitudeDelta: 0.08,
+            defaultLongitudeDelta: 0.08
         )
         let viewModel = MapViewModel(apiClient: provider, initialCity: startingCity)
 
@@ -644,8 +643,8 @@ struct KomunikacjaWiejskaTests {
         // Far outside the previous coverage: none of the fetched tiles cover
         // this viewport, so a new request is required.
         viewModel.visibleRegion = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 52.2400, longitude: 21.0100),
-            span: MKCoordinateSpan(latitudeDelta: 0.002, longitudeDelta: 0.002)
+            center: CLLocationCoordinate2D(latitude: 52.2300, longitude: 21.2000),
+            span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
         )
         viewModel.loadStopsForSelectedCity()
         while viewModel.isLoading { await Task.yield() }
@@ -686,8 +685,8 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.count == 1)
     }
 
-    @Test("Zooming in after a coarse fetch is served by ancestor tile coverage")
-    func testZoomingInUsesAncestorCoverage() async throws {
+    @Test("Zooming in within covered Zoom 12 tiles reuses the cache")
+    func testZoomingInUsesTileCoverage() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
 
@@ -695,8 +694,7 @@ struct KomunikacjaWiejskaTests {
         while viewModel.isLoading { await Task.yield() }
         #expect(provider.callCount == 1)
 
-        // A tighter viewport is entirely inside the tiles fetched above; its
-        // tiles are descendants and therefore covered.
+        // A tighter viewport within the same Zoom 12 tiles needs no new requests
         viewModel.visibleRegion = MKCoordinateRegion(
             center: City.warsaw.coordinate,
             span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
@@ -706,13 +704,13 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.count == 1)
     }
 
-    @Test("Zooming out fetches coarser tiles once and then reuses them")
-    func testZoomingOutFetchesCoarserCoverage() async throws {
+    @Test("Zooming out within stop visibility threshold fetches additional Zoom 12 tiles")
+    func testZoomingOutFetchesAdditionalCoverage() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
         let wideRegion = MKCoordinateRegion(
             center: City.warsaw.coordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.3, longitudeDelta: 0.3)
+            span: MKCoordinateSpan(latitudeDelta: 0.18, longitudeDelta: 0.18)
         )
 
         viewModel.loadStopsForSelectedCity()
@@ -723,7 +721,7 @@ struct KomunikacjaWiejskaTests {
         while viewModel.isLoading { await Task.yield() }
         #expect(provider.callCount == 2)
 
-        // The coarse tiles now cover the wide viewport.
+        // The tiles now cover the wide viewport.
         viewModel.loadStopsForSelectedCity()
         #expect(provider.callCount == 2)
     }
@@ -1091,5 +1089,102 @@ struct KomunikacjaWiejskaTests {
 
         viewModel.currentHeading = 120.0
         #expect(viewModel.cameraState.heading == 120.0)
+    }
+
+    // MARK: - Stop Visibility Threshold & Non-Volatile Persistence
+
+    @Test("Stop visibility threshold hides stops and suppresses fetching when zoomed out")
+    func testStopVisibilityThreshold() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        // When distance is beyond the 25,000m threshold:
+        viewModel.currentDistance = 26_000
+        #expect(!viewModel.areStopsVisible)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(viewModel.stops.isEmpty)
+        #expect(provider.callCount == 0) // Fetch suppressed
+
+        // When zoomed back inside the threshold:
+        viewModel.currentDistance = 8_000
+        #expect(viewModel.areStopsVisible)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(provider.callCount == 1)
+        #expect(viewModel.stops.count == 1)
+
+        // Zooming out again immediately hides rendered stops:
+        viewModel.currentDistance = 30_000
+        #expect(!viewModel.areStopsVisible)
+        viewModel.loadStopsForSelectedCity()
+        #expect(viewModel.stops.isEmpty)
+    }
+
+    @Test("Camera position persistence in UserDefaults and restoration on launch")
+    func testCameraPersistenceAndRestoration() {
+        let defaults = UserDefaults.standard
+        let latKey = MapViewModel.savedCameraLatitudeKey
+        let lonKey = MapViewModel.savedCameraLongitudeKey
+        let distKey = MapViewModel.savedCameraDistanceKey
+        let cityKey = "lastSelectedCityId"
+
+        let previousLat = defaults.object(forKey: latKey)
+        let previousLon = defaults.object(forKey: lonKey)
+        let previousDist = defaults.object(forKey: distKey)
+        let previousCity = defaults.string(forKey: cityKey)
+
+        defer {
+            defaults.setValue(previousLat, forKey: latKey)
+            defaults.setValue(previousLon, forKey: lonKey)
+            defaults.setValue(previousDist, forKey: distKey)
+            defaults.setValue(previousCity, forKey: cityKey)
+        }
+
+        // 1. Save camera state from a MapViewModel instance
+        let provider = StubStopsProvider()
+        let vm = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        vm.currentCenter = CLLocationCoordinate2D(latitude: 52.235, longitude: 21.015)
+        vm.currentDistance = 14_200
+        vm.saveCameraPosition()
+
+        #expect(defaults.double(forKey: latKey) == 52.235)
+        #expect(defaults.double(forKey: lonKey) == 21.015)
+        #expect(defaults.double(forKey: distKey) == 14_200)
+
+        // 2. Restore on launch when position is within city bounds
+        defaults.setValue("warsaw", forKey: cityKey)
+        let restoredVM = MapViewModel(apiClient: provider)
+        #expect(restoredVM.selectedCity.id == "warsaw")
+        #expect(abs(restoredVM.currentCenter.latitude - 52.235) < 1e-6)
+        #expect(abs(restoredVM.currentCenter.longitude - 21.015) < 1e-6)
+        #expect(restoredVM.currentDistance == 14_200)
+
+        // 3. Fall back to city defaults when saved coordinate is outside city coverage
+        defaults.setValue(50.0647, forKey: latKey) // Krakow coordinate
+        defaults.setValue(19.9450, forKey: lonKey)
+        defaults.setValue(10_000, forKey: distKey)
+        defaults.setValue("warsaw", forKey: cityKey)
+
+        let fallbackVM = MapViewModel(apiClient: provider)
+        #expect(fallbackVM.selectedCity.id == "warsaw")
+        #expect(abs(fallbackVM.currentCenter.latitude - City.warsaw.coordinate.latitude) < 1e-6)
+        #expect(abs(fallbackVM.currentCenter.longitude - City.warsaw.coordinate.longitude) < 1e-6)
+
+        // 4. PKP restores saved coordinates without boundary checks
+        defaults.setValue("pkp", forKey: cityKey)
+        defaults.setValue(50.0647, forKey: latKey)
+        defaults.setValue(19.9450, forKey: lonKey)
+        defaults.setValue(15_000, forKey: distKey)
+
+        let pkpVM = MapViewModel(apiClient: provider)
+        #expect(pkpVM.selectedCity.id == "pkp")
+        #expect(abs(pkpVM.currentCenter.latitude - 50.0647) < 1e-6)
+        #expect(abs(pkpVM.currentCenter.longitude - 19.9450) < 1e-6)
+        #expect(pkpVM.currentDistance == 15_000)
     }
 }

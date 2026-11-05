@@ -2,6 +2,7 @@ import CoreLocation
 import Foundation
 import MapKit
 import Observation
+import os
 import SwiftUI
 
 extension CLLocationCoordinate2D {
@@ -204,10 +205,23 @@ public final class MapViewModel {
     /// markers, while the countrywide PKP view starts compact.
     public let compactDisplayDistanceThreshold: Double = 10_000
 
+    /// Camera distance (in metres) above which stops are no longer displayed at all.
+    public let stopVisibilityDistanceThreshold: Double = 25_000
+
     /// Whether the camera is far enough that stops should be displayed as smaller points.
     public var isCompactDisplayMode: Bool {
         return currentDistance > compactDisplayDistanceThreshold
     }
+
+    /// Whether stops should be displayed on the map.
+    public var areStopsVisible: Bool {
+        return currentDistance <= stopVisibilityDistanceThreshold
+    }
+
+    /// Keys for camera persistence in non-volatile storage.
+    public static let savedCameraLatitudeKey = "savedCameraLatitude"
+    public static let savedCameraLongitudeKey = "savedCameraLongitude"
+    public static let savedCameraDistanceKey = "savedCameraDistance"
 
     /// Whether the map is currently pitched in 3D (pitch > 1.0 degree)
     public var isPitched3D: Bool {
@@ -258,19 +272,67 @@ public final class MapViewModel {
         }
 
         self.selectedCity = chosenCity
-        let initialRegion = MKCoordinateRegion(
-            center: chosenCity.coordinate,
-            span: MKCoordinateSpan(
-                latitudeDelta: chosenCity.defaultLatitudeDelta,
-                longitudeDelta: chosenCity.defaultLongitudeDelta
+
+        var restoredCamera: (center: CLLocationCoordinate2D, distance: Double)?
+        if initialCity == nil,
+           let savedLat = UserDefaults.standard.object(forKey: Self.savedCameraLatitudeKey) as? Double,
+           let savedLon = UserDefaults.standard.object(forKey: Self.savedCameraLongitudeKey) as? Double,
+           let savedDist = UserDefaults.standard.object(forKey: Self.savedCameraDistanceKey) as? Double,
+           savedLat.isFinite, savedLon.isFinite, savedDist.isFinite, savedDist > 0,
+           (-90.0...90.0).contains(savedLat), (-180.0...180.0).contains(savedLon) {
+            let savedCoord = CLLocationCoordinate2D(latitude: savedLat, longitude: savedLon)
+            let isWithinCityBounds: Bool
+            if chosenCity.id == "pkp" {
+                isWithinCityBounds = true
+            } else {
+                let cityLocation = CLLocation(latitude: chosenCity.coordinate.latitude, longitude: chosenCity.coordinate.longitude)
+                let savedLocation = CLLocation(latitude: savedCoord.latitude, longitude: savedCoord.longitude)
+                isWithinCityBounds = savedLocation.distance(from: cityLocation) <= chosenCity.coverageRadiusMeters
+            }
+            if isWithinCityBounds {
+                restoredCamera = (center: savedCoord, distance: savedDist)
+            }
+        }
+
+        if let restored = restoredCamera {
+            let delta = max(0.001, min(180.0, restored.distance / 111_000))
+            let region = MKCoordinateRegion(
+                center: restored.center,
+                span: MKCoordinateSpan(latitudeDelta: delta, longitudeDelta: delta)
             )
-        )
-        self.cameraState = CameraState(
-            region: initialRegion,
-            distance: Self.approximateDistance(for: initialRegion),
-            center: chosenCity.coordinate
-        )
-        self.cameraPosition = .region(initialRegion)
+            self.cameraState = CameraState(
+                region: region,
+                distance: restored.distance,
+                center: restored.center
+            )
+            self.cameraPosition = .camera(MapCamera(
+                centerCoordinate: restored.center,
+                distance: restored.distance,
+                heading: 0,
+                pitch: 0
+            ))
+        } else {
+            let initialRegion = MKCoordinateRegion(
+                center: chosenCity.coordinate,
+                span: MKCoordinateSpan(
+                    latitudeDelta: chosenCity.defaultLatitudeDelta,
+                    longitudeDelta: chosenCity.defaultLongitudeDelta
+                )
+            )
+            self.cameraState = CameraState(
+                region: initialRegion,
+                distance: Self.approximateDistance(for: initialRegion),
+                center: chosenCity.coordinate
+            )
+            self.cameraPosition = .region(initialRegion)
+        }
+    }
+
+    /// Persists current camera center and zoom distance to non-volatile storage.
+    public func saveCameraPosition() {
+        UserDefaults.standard.set(currentCenter.latitude, forKey: Self.savedCameraLatitudeKey)
+        UserDefaults.standard.set(currentCenter.longitude, forKey: Self.savedCameraLongitudeKey)
+        UserDefaults.standard.set(currentDistance, forKey: Self.savedCameraDistanceKey)
     }
 
     deinit {
@@ -497,6 +559,9 @@ public final class MapViewModel {
     /// Cancels in-flight network work when the scene backgrounds. The session
     /// cache is kept in memory so returning to the foreground stays instant.
     public func pauseForBackground() {
+        #if DEBUG
+        Logger.mapCache.debug("Pausing for background: cancelling active fetch and debounced tasks for city \(self.selectedCity.id, privacy: .public)")
+        #endif
         debounceTask?.cancel()
         debounceTask = nil
         cancelActiveFetch()
@@ -515,6 +580,11 @@ public final class MapViewModel {
     }
 
     private func fetchCurrentViewport() {
+        guard areStopsVisible else {
+            cancelActiveFetch()
+            updateStops()
+            return
+        }
         let city = selectedCity
         switch loadDecision(for: cameraState.region) {
         case .cached:
@@ -546,33 +616,51 @@ public final class MapViewModel {
     /// cache, and if not, which missing tiles to request in one bbox.
     private func loadDecision(for region: MKCoordinateRegion) -> ViewportLoad {
         let visibleTiles = MapTileGrid.visibleTiles(in: region)
-        guard !visibleTiles.isEmpty else { return .invalid }
-        let missingTiles = visibleTiles.filter { !isTileCovered($0) }
-        guard !missingTiles.isEmpty else { return .cached }
-        guard let bbox = MapTileGrid.boundingBox(covering: missingTiles) else {
+        guard !visibleTiles.isEmpty else {
+            #if DEBUG
+            Logger.mapCache.debug("Load decision: invalid region (visible tiles is empty)")
+            #endif
             return .invalid
         }
+        let missingTiles = visibleTiles.filter { !isTileCovered($0) }
+        guard !missingTiles.isEmpty else {
+            #if DEBUG
+            let zoom = visibleTiles.first?.zoom ?? 0
+            Logger.mapCache.debug("Cache HIT: all \(visibleTiles.count, privacy: .public) visible tiles at zoom \(zoom, privacy: .public) covered. Cached stops: \(self.cachedStopsByID.count, privacy: .public)")
+            #endif
+            return .cached
+        }
+        guard let bbox = MapTileGrid.boundingBox(covering: missingTiles) else {
+            #if DEBUG
+            Logger.mapCache.debug("Load decision: failed to create bounding box for \(missingTiles.count, privacy: .public) missing tiles")
+            #endif
+            return .invalid
+        }
+        #if DEBUG
+        let zoom = visibleTiles.first?.zoom ?? 0
+        Logger.mapCache.debug("Cache MISS: \(missingTiles.count, privacy: .public) of \(visibleTiles.count, privacy: .public) visible tiles missing at zoom \(zoom, privacy: .public). Querying bbox: \(bbox.queryValue, privacy: .public)")
+        #endif
         return .fetch(bbox: bbox, tiles: missingTiles)
     }
 
-    /// A tile is covered by itself or any of its ancestors: a coarser fetch
-    /// already returned every stop inside the finer tile. Descendants are not
-    /// consulted; zooming out of a deeply zoomed area fetches the coarser
-    /// tiles once, after which zooming back in is free.
+    /// A tile is covered if it has been fetched successfully in this session.
+    /// With fixed-size Zoom 12 tiles, there is no ancestor hierarchy.
     private func isTileCovered(_ tile: MapTile) -> Bool {
-        var candidate: MapTile? = tile
-        while let current = candidate {
-            if fetchedTiles.contains(current) {
-                return true
-            }
-            candidate = current.parent
-        }
-        return false
+        fetchedTiles.contains(tile)
     }
 
     private func startFetch(city: City, bbox: BoundingBox, tiles: Set<MapTile>) {
         let key = "\(city.id):\(bbox.queryValue)"
-        guard fetchState != .loading(cityKey: key) else { return }
+        guard fetchState != .loading(cityKey: key) else {
+            #if DEBUG
+            Logger.mapCache.debug("Start fetch skipped: already in flight for \(key, privacy: .public)")
+            #endif
+            return
+        }
+
+        #if DEBUG
+        Logger.mapCache.debug("Starting fetch for city \(city.id, privacy: .public), bbox: \(bbox.queryValue, privacy: .public), missing tiles: \(tiles.count, privacy: .public)")
+        #endif
 
         activeFetchTask?.cancel()
         debounceTask?.cancel()
@@ -598,8 +686,18 @@ public final class MapViewModel {
             guard let self = self else { return }
             do {
                 let fetchedStops = try await self.apiClient.fetchStops(city: city.id, bbox: bbox)
-                guard !Task.isCancelled, generation == self.requestGeneration else { return }
-                guard self.selectedCity.id == city.id else { return }
+                guard !Task.isCancelled, generation == self.requestGeneration else {
+                    #if DEBUG
+                    Logger.mapCache.debug("Fetch result discarded for \(city.id, privacy: .public): cancelled or generation mismatch")
+                    #endif
+                    return
+                }
+                guard self.selectedCity.id == city.id else {
+                    #if DEBUG
+                    Logger.mapCache.debug("Fetch result discarded: selected city changed to \(self.selectedCity.id, privacy: .public)")
+                    #endif
+                    return
+                }
                 for stop in fetchedStops {
                     self.cachedStopsByID[stop.id] = stop
                 }
@@ -609,10 +707,21 @@ public final class MapViewModel {
                 self.fetchedTiles.formUnion(tiles)
                 self.fetchState = .loaded(cityKey: key)
                 self.loadingPhase = nil
+                #if DEBUG
+                Logger.mapCache.debug("Fetch completed for \(city.id, privacy: .public): +\(fetchedStops.count, privacy: .public) stops (total cached: \(self.cachedStopsByID.count, privacy: .public)), +\(tiles.count, privacy: .public) tiles (total tiles: \(self.fetchedTiles.count, privacy: .public))")
+                #endif
                 self.updateStops()
             } catch {
-                guard !Task.isCancelled, generation == self.requestGeneration else { return }
+                guard !Task.isCancelled, generation == self.requestGeneration else {
+                    #if DEBUG
+                    Logger.mapCache.debug("Fetch error discarded for \(city.id, privacy: .public): cancelled or generation mismatch")
+                    #endif
+                    return
+                }
                 if self.selectedCity.id == city.id {
+                    #if DEBUG
+                    Logger.mapCache.error("Fetch failed for \(city.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    #endif
                     self.errorsByCity[city.id] = Self.userFacingMessage(for: error)
                     self.fetchState = .failed(cityKey: key)
                     self.loadingPhase = nil
@@ -622,6 +731,11 @@ public final class MapViewModel {
     }
 
     private func cancelActiveFetch() {
+        if activeFetchTask != nil {
+            #if DEBUG
+            Logger.mapCache.debug("Cancelling active fetch for city \(self.selectedCity.id, privacy: .public)")
+            #endif
+        }
         activeFetchTask?.cancel()
         activeFetchTask = nil
         // Invalidate the generation so a task already past its guard writes
@@ -636,6 +750,9 @@ public final class MapViewModel {
     /// Drops every cached stop and tile for the previous city. The cache is
     /// session-only and never written to UserDefaults or disk.
     private func clearStopCache() {
+        #if DEBUG
+        Logger.mapCache.debug("Clearing stop cache: purging \(self.cachedStopsByID.count, privacy: .public) cached stops and \(self.fetchedTiles.count, privacy: .public) fetched tiles for city \(self.selectedCity.id, privacy: .public)")
+        #endif
         debounceTask?.cancel()
         debounceTask = nil
         cancelActiveFetch()
@@ -647,6 +764,13 @@ public final class MapViewModel {
     // MARK: - Marker rendering (P2-2)
 
     private func updateStops() {
+        guard areStopsVisible else {
+            if !stops.isEmpty {
+                stops = []
+            }
+            return
+        }
+
         let region = cameraState.region
         let visibleStops = cachedStopsByID.values.filter { Self.contains($0, in: region) }
 
@@ -671,6 +795,9 @@ public final class MapViewModel {
         // a stop's bearing, routes, or name while keeping the same identifier.
         // Camera-only changes still produce an equal array and are ignored.
         if renderedStops != stops {
+            #if DEBUG
+            Logger.mapCache.debug("Rendered stops updated: \(visibleStops.count, privacy: .public) visible in cache -> \(renderedStops.count, privacy: .public) rendered on map (ceiling: \(Self.maxRenderedStops, privacy: .public))")
+            #endif
             stops = renderedStops
         }
     }
