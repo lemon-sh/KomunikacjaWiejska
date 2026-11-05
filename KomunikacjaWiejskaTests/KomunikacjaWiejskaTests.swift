@@ -1049,4 +1049,47 @@ struct KomunikacjaWiejskaTests {
         )
         #expect(suggestion?.id == "krakow")
     }
+
+    @Test("Stop marker direction updates with map camera heading")
+    func testStopMarkerEffectiveRotation() {
+        // When map is North-up (heading = 0°), screen rotation matches geographic bearing directly
+        #expect(StopMarkerView.effectiveRotation(bearing: 90, heading: 0) == 90)
+        #expect(StopMarkerView.effectiveRotation(bearing: 0, heading: 0) == 0)
+        #expect(StopMarkerView.effectiveRotation(bearing: 180, heading: 0) == 180)
+        #expect(StopMarkerView.effectiveRotation(bearing: 270, heading: 0) == 270)
+
+        // When map is rotated East-up (heading = 90°):
+        // East (bearing 90°) points to the top of screen (0°)
+        #expect(StopMarkerView.effectiveRotation(bearing: 90, heading: 90) == 0)
+        // North (bearing 0°) points to the left of screen (-90°)
+        #expect(StopMarkerView.effectiveRotation(bearing: 0, heading: 90) == -90)
+        // South (bearing 180°) points to the right of screen (90°)
+        #expect(StopMarkerView.effectiveRotation(bearing: 180, heading: 90) == 90)
+
+        // When map is rotated South-up (heading = 180°):
+        // East (bearing 90°) points to the left of screen (-90°)
+        #expect(StopMarkerView.effectiveRotation(bearing: 90, heading: 180) == -90)
+
+        // Arbitrary angles
+        #expect(StopMarkerView.effectiveRotation(bearing: 0, heading: 45) == -45)
+        #expect(StopMarkerView.effectiveRotation(bearing: 180, heading: 350) == -170)
+    }
+
+    @Test("MapViewModel tracks heading changes in camera state")
+    func testMapViewModelTracksHeading() {
+        let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
+        #expect(viewModel.currentHeading == 0)
+
+        viewModel.cameraState = MapViewModel.CameraState(
+            region: viewModel.cameraState.region,
+            heading: 65.5,
+            pitch: 0,
+            distance: 1000,
+            center: viewModel.cameraState.center
+        )
+        #expect(viewModel.currentHeading == 65.5)
+
+        viewModel.currentHeading = 120.0
+        #expect(viewModel.cameraState.heading == 120.0)
+    }
 }

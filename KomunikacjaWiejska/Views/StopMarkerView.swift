@@ -6,6 +6,7 @@ public struct StopMarkerView: View {
     private let viewModel: MapViewModel?
     private let explicitIsSelected: Bool?
     private let explicitIsCompact: Bool?
+    private let explicitHeading: Double?
 
     /// `@ScaledMetric` keeps markers legible at larger text sizes, capped so
     /// they never cover the map or neighbouring stops.
@@ -19,17 +20,20 @@ public struct StopMarkerView: View {
         self.viewModel = viewModel
         self.explicitIsSelected = nil
         self.explicitIsCompact = nil
+        self.explicitHeading = nil
     }
 
     public init(
         stop: Stop,
         isSelected: Bool = false,
-        isCompact: Bool = false
+        isCompact: Bool = false,
+        heading: Double = 0
     ) {
         self.stop = stop
         self.viewModel = nil
         self.explicitIsSelected = isSelected
         self.explicitIsCompact = isCompact
+        self.explicitHeading = heading
     }
 
     private var isSelected: Bool {
@@ -38,6 +42,16 @@ public struct StopMarkerView: View {
 
     private var isCompact: Bool {
         explicitIsCompact ?? (viewModel?.isCompactDisplayMode ?? false)
+    }
+
+    private var mapHeading: Double {
+        explicitHeading ?? (viewModel?.currentHeading ?? 0)
+    }
+
+    /// Computes the screen rotation angle for a stop's geographic bearing given the map camera's heading.
+    /// Annotations in MapKit stay screen-aligned, so a bearing relative to North must be offset by the map heading.
+    public static func effectiveRotation(bearing: Int, heading: Double) -> Double {
+        Double(bearing) - heading
     }
 
     private var markerColor: Color {
@@ -101,7 +115,7 @@ public struct StopMarkerView: View {
                                 .foregroundStyle(markerColor)
                                 .offset(y: notchOffset)
                         }
-                        .rotationEffect(.degrees(Double(bearing)))
+                        .rotationEffect(.degrees(Self.effectiveRotation(bearing: bearing, heading: mapHeading)))
                     }
 
                     // Main circular badge
