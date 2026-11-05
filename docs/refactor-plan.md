@@ -76,7 +76,7 @@ Additional checks:
 
 Nothing else can be validated reliably until tests stop touching the production API.
 
-### [ ] P0-1 Introduce an injectable API abstraction
+### [x] P0-1 Introduce an injectable API abstraction
 
 **Files:** `Services/ZbiorkomAPIClient.swift`, `ViewModels/MapViewModel.swift`, tests.
 
@@ -90,7 +90,7 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 **Acceptance:** `MapViewModel` can be constructed with a stub and never starts a real request in tests.
 
-### [ ] P0-2 Remove the eager request from `MapViewModel.init`
+### [x] P0-2 Remove the eager request from `MapViewModel.init`
 
 **Files:** `ViewModels/MapViewModel.swift:106`, `Views/TransitMapView.swift:128-131`.
 
@@ -104,7 +104,7 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 **Acceptance:** VM construction performs no I/O; cold launch issues exactly one stops request (verify with a breakpoint/log or stub call count).
 
-### [ ] P0-3 Rewrite the tests to be hermetic
+### [x] P0-3 Rewrite the tests to be hermetic
 
 **Files:** `KomunikacjaWiejskaTests/KomunikacjaWiejskaTests.swift`.
 
@@ -122,7 +122,7 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 ## 5. Phase 1 — Correctness bugs
 
-### [ ] P1-1 Deduplicate stop loading
+### [x] P1-1 Deduplicate stop loading
 
 **Files:** `ViewModels/MapViewModel.swift`, `Views/TransitMapView.swift`.
 
@@ -132,7 +132,7 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 **Acceptance:** One request on launch; switching A → B → A while B is loading does not leave duplicate tasks running. Add a unit test around the state machine.
 
-### [ ] P1-2 Clear stops when switching city and ignore stale responses
+### [x] P1-2 Clear stops when switching city and ignore stale responses
 
 **Files:** `ViewModels/MapViewModel.swift:27-35, 176-211`.
 
@@ -146,7 +146,7 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 **Acceptance:** City A annotations disappear immediately on switching to B; a slow A response cannot overwrite B; spinner always resolves. Tests cover the race.
 
-### [ ] P1-3 Fix compact-mode threshold
+### [x] P1-3 Fix compact-mode threshold
 
 **Files:** `ViewModels/MapViewModel.swift:54-60`, `Models/City.swift:15-16`.
 
@@ -159,7 +159,7 @@ Prefer (b) because it matches how MapKit represents zoom, then delete `compactDi
 
 **Acceptance:** Launching every city in `City.allCities` (except deliberately huge networks) shows full markers. Boundary tests at the threshold.
 
-### [ ] P1-4 Delete dead code and the test that protects it
+### [x] P1-4 Delete dead code and the test that protects it
 
 **Files:** `ViewModels/MapViewModel.swift:63-67, 213-215`, `Models/BoundingBox.swift`, tests.
 
@@ -172,7 +172,7 @@ Prefer (b) because it matches how MapKit represents zoom, then delete `compactDi
 
 **Acceptance:** No unreferenced production symbols; `rg "isZoomedOutForStops|maxSpanForStops|selectStop"` returns only the decision record in this doc.
 
-### [ ] P1-5 Make stop selection a single source of truth
+### [x] P1-5 Make stop selection a single source of truth
 
 **Files:** `Views/TransitMapView.swift:13-29, 132-139`.
 
@@ -186,7 +186,7 @@ Prefer (b) because it matches how MapKit represents zoom, then delete `compactDi
 
 **Acceptance:** Tap marker → sheet opens; drag sheet down → marker deselects; tap another marker while open → sheet switches content; no “ghost” selection. Selection hash cost drops to a string comparison.
 
-### [ ] P1-6 Fix the bearing-notch rotation
+### [x] P1-6 Fix the bearing-notch rotation
 
 **Files:** `Views/StopMarkerView.swift:35-43`.
 
@@ -206,7 +206,7 @@ ZStack {
 
 **Acceptance:** Screenshot/visual check for bearings 0, 90, 180, 270: the notch points in the travel direction while the icon stays upright.
 
-### [ ] P1-7 Fix location-authorization dead ends
+### [x] P1-7 Fix location-authorization dead ends
 
 **Files:** `Services/LocationManager.swift`, `Views/MapControlsComboView.swift:51-59`.
 
@@ -225,7 +225,7 @@ ZStack {
 
 ## 6. Phase 2 — Performance and data lifecycle
 
-### [ ] P2-1 Decide and document the fetch strategy
+### [x] P2-1 Decide and document the fetch strategy
 
 **Files:** `ViewModels/MapViewModel.swift:194`, `Services/ZbiorkomAPIClient.swift:33-44`, `Models/BoundingBox.swift`, `docs/architecture.md:16-19`.
 
@@ -237,7 +237,7 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 **Acceptance:** Documented decision; production no longer contains unused bbox plumbing; request pattern matches the doc.
 
-### [ ] P2-2 Stop rendering every stop at every zoom level
+### [x] P2-2 Stop rendering every stop at every zoom level
 
 **Files:** `Views/TransitMapView.swift:20-29`, `ViewModels/MapViewModel.swift:57-60`.
 
@@ -250,7 +250,7 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 **Acceptance:** Pan/zoom a large city (Warsaw, GZM) at 120 Hz-capable device and confirm no sustained frame drops; marker count on screen is bounded. Document the chosen strategy.
 
-### [ ] P2-3 Bound the cache and add refresh semantics
+### [x] P2-3 Bound the cache and add refresh semantics
 
 **Files:** `ViewModels/MapViewModel.swift:76, 180-185`.
 
@@ -264,7 +264,7 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 **Acceptance:** Visiting 10 cities keeps cache size bounded; pull-to-refresh/reload fetches fresh data after TTL; failure does not poison the cache.
 
-### [ ] P2-4 Reduce observation churn on camera changes
+### [x] P2-4 Reduce observation churn on camera changes
 
 **Files:** `ViewModels/MapViewModel.swift:127-143`, `Views/TransitMapView.swift:32-34`.
 
@@ -274,7 +274,7 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 **Acceptance:** SwiftUI view updates per camera gesture are measurably reduced (Instruments or a temporary `_printChanges`), and annotations don’t re-render when the camera settles at the same zoom.
 
-### [ ] P2-5 Cancel work when the scene backgrounds
+### [x] P2-5 Cancel work when the scene backgrounds
 
 **Files:** `MapViewModel`, `LocationManager`, `KomunikacjaWiejskaApp`.
 
@@ -501,6 +501,16 @@ Specific items:
 
 Keep phases 2 and 4 independent once Phase 1 is merged. Phase 3 can proceed in parallel with Phase 2 if the same files are not touched.
 
+Actual commit sequence used (2026-11-05):
+1. `test: injectable StopsProviding; hermetic VM tests; idempotent non-init fetch` (P0-1, P0-2, P1-1, P0-3)
+2. `fix: clear stops and guard stale responses on city switch; per-city loading/error` (P1-2)
+3. `fix: compact markers from camera distance` (P1-3)
+4. `refactor: remove dead stop-fetching state` (P1-4)
+5. `fix: selection single source of truth` (P1-5)
+6. `fix: bearing notch orbits badge center` (P1-6)
+7. `fix: denied-location Settings deep link; one-shot fixes` (P1-7, + the redundant second init from P4-4)
+8. `perf: viewport bbox fetch + thinning + cache + background cancellation` (P2-1…P2-5, D1-A/D2-A/D6 ADRs)
+
 ---
 
 ## 11. Open decisions
@@ -514,7 +524,19 @@ Keep phases 2 and 4 independent once Phase 1 is merged. Phase 3 can proceed in p
 | D5 | Entrance identity | Tuple index; name + coordinates; server ID if added | Tuple index (deterministic) | P3-4 |
 | D6 | Minimum iOS | 27.2 (current); lower to glass minimum | Ask the developer | P5-4 |
 
-Ask the developer for D1, D2, and D6 before starting Phase 2. D3/D4/D5 can be decided inside their work packages.
+## 11.1 Decision outcomes (2026-11-05)
+
+- **D1 → A** (viewport bbox + debounce; 350 ms). ADR: [`docs/decisions/0001-fetch-strategy.md`](decisions/0001-fetch-strategy.md).
+- **D2 → A** (grid thinning, MVP; `MKMapView` clustering may be spiked later). ADR: [`docs/decisions/0002-marker-density.md`](decisions/0002-marker-density.md).
+- **D6 → lower to glass minimum (iOS 26.0)**. ADR: [`docs/decisions/0003-deployment-target.md`](decisions/0003-deployment-target.md). Setting change still pending as P5-4.
+- D4 resolved inside P2-3: both TTL (10 min) and manual refresh are implemented.
+- D3/D5 remain open inside their work packages (P4-1, P3-4).
+
+Progress log:
+- Phase 0, Phase 1, and Phase 2 are complete (2026-11-05). P3-1's bbox query bug
+  and the empty-cache guarantee were fixed as part of Phase 2; the remaining
+  P3-1/P3-2 and later items are outstanding.
+
 
 ---
 
@@ -568,11 +590,11 @@ Ask the developer for D1, D2, and D6 before starting Phase 2. D3/D4/D5 can be de
 
 If there is only time for a short session, do these in order:
 
-- [ ] P0-2 + P1-1: remove `loadStopsForSelectedCity()` from `init`, call once from `.task`.
-- [ ] P1-3: stop launching in compact mode.
-- [ ] P1-2: clear `stops` on city switch.
-- [ ] P1-4: delete the three dead symbols and the stub assertion.
-- [ ] P1-6: fix the notch rotation.
+- [x] P0-2 + P1-1: remove `loadStopsForSelectedCity()` from `init`, call once from `.task`.
+- [x] P1-3: stop launching in compact mode.
+- [x] P1-2: clear `stops` on city switch.
+- [x] P1-4: delete the three dead symbols and the stub assertion.
+- [x] P1-6: fix the notch rotation.
 - [ ] P3-1: remove `await [` and the force unwrap.
 - [ ] P3-5: make invalid hex colors explicit.
 
