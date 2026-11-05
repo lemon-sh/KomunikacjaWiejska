@@ -392,6 +392,9 @@ public final class MapViewModel {
         if let freshSnapshot = freshSnapshot(key: key) {
             fetchState = .loaded(cityKey: key)
             loadingPhase = nil
+            // A cached viewport is a successful load; do not keep showing an
+            // error from an earlier failed attempt.
+            errorsByCity[city.id] = nil
             if displayedKey != key {
                 display(freshSnapshot.stops, forKey: key)
             }
