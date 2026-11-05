@@ -1,25 +1,72 @@
 import CoreLocation
 import Foundation
 
-public struct City: Identifiable, Hashable, Sendable {
+/// A supported transit network.
+///
+/// The catalog lives in the bundled `Resources/cities.json` resource so adding
+/// a city is a data change, not a code change. Identity is the API `id`; the
+/// custom `==`/`hash` guarantee that two records with the same ID compare
+/// equal even if other fields (names, aliases) change between releases.
+public struct City: Identifiable, Hashable, Sendable, Decodable {
     public let id: String
     public let name: String
     public let coordinate: CLLocationCoordinate2D
     public let defaultLatitudeDelta: Double
     public let defaultLongitudeDelta: Double
+    /// Extra search terms (e.g. `gdansk` for `tricity`, diacritic-free forms).
+    public let aliases: [String]
 
     public init(
         id: String,
         name: String,
         coordinate: CLLocationCoordinate2D,
         defaultLatitudeDelta: Double = 0.08,
-        defaultLongitudeDelta: Double = 0.08
+        defaultLongitudeDelta: Double = 0.08,
+        aliases: [String] = []
     ) {
         self.id = id
         self.name = name
         self.coordinate = coordinate
         self.defaultLatitudeDelta = defaultLatitudeDelta
         self.defaultLongitudeDelta = defaultLongitudeDelta
+        self.aliases = aliases
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case latitude
+        case longitude
+        case latitudeDelta
+        case longitudeDelta
+        case aliases
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        let latitude = try container.decode(Double.self, forKey: .latitude)
+        let longitude = try container.decode(Double.self, forKey: .longitude)
+        guard (-90.0...90.0).contains(latitude), (-180.0...180.0).contains(longitude) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: container.codingPath,
+                debugDescription: "City \(id): invalid coordinate pair (\(longitude), \(latitude))"
+            ))
+        }
+        self.coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        self.defaultLatitudeDelta = try container.decodeIfPresent(Double.self, forKey: .latitudeDelta) ?? 0.08
+        self.defaultLongitudeDelta = try container.decodeIfPresent(Double.self, forKey: .longitudeDelta) ?? 0.08
+        self.aliases = try container.decodeIfPresent([String].self, forKey: .aliases) ?? []
+    }
+
+    /// Case- and diacritic-insensitive search across name, ID, and aliases.
+    public func matches(searchText: String) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        if name.localizedStandardContains(query) { return true }
+        if id.localizedStandardContains(query) { return true }
+        return aliases.contains { $0.localizedStandardContains(query) }
     }
 
     public static func == (lhs: City, rhs: City) -> Bool {
@@ -30,173 +77,42 @@ public struct City: Identifiable, Hashable, Sendable {
         hasher.combine(id)
     }
 
-    public static let warsaw = City(
+    // MARK: - Catalog
+
+    public static let allCities: [City] = CityCatalog.loadedCities
+
+    /// Convenience references for call sites and tests.
+    public static var warsaw: City { city(id: "warsaw") }
+    public static var krakow: City { city(id: "krakow") }
+
+    public static func city(id: String) -> City {
+        allCities.first { $0.id == id } ?? CityCatalog.fallbackCity
+    }
+}
+
+/// Loads the bundled city catalog. A malformed or missing resource degrades to
+/// a single Warsaw entry (and logs) rather than crashing at launch.
+private enum CityCatalog {
+    struct CityFile: Decodable {
+        let cities: [City]
+    }
+
+    static let fallbackCity = City(
         id: "warsaw",
         name: "Warszawa",
         coordinate: CLLocationCoordinate2D(latitude: 52.2297, longitude: 21.0122)
     )
 
-    public static let krakow = City(
-        id: "krakow",
-        name: "Kraków",
-        coordinate: CLLocationCoordinate2D(latitude: 50.0647, longitude: 19.9450)
-    )
+    static let loadedCities: [City] = load()
 
-    public static let wroclaw = City(
-        id: "wroclaw",
-        name: "Wrocław",
-        coordinate: CLLocationCoordinate2D(latitude: 51.1079, longitude: 17.0385)
-    )
-
-    public static let poznan = City(
-        id: "poznan",
-        name: "Poznań",
-        coordinate: CLLocationCoordinate2D(latitude: 52.4064, longitude: 16.9252)
-    )
-
-    public static let tricity = City(
-        id: "tricity",
-        name: "Trójmiasto (Gdańsk / Sopot / Gdynia)",
-        coordinate: CLLocationCoordinate2D(latitude: 54.3520, longitude: 18.6466),
-        defaultLatitudeDelta: 0.15,
-        defaultLongitudeDelta: 0.15
-    )
-
-    public static let gzm = City(
-        id: "gzm",
-        name: "GZM (Katowice i Metropolia)",
-        coordinate: CLLocationCoordinate2D(latitude: 50.2649, longitude: 19.0238),
-        defaultLatitudeDelta: 0.15,
-        defaultLongitudeDelta: 0.15
-    )
-
-    public static let lodz = City(
-        id: "lodz",
-        name: "Łódź",
-        coordinate: CLLocationCoordinate2D(latitude: 51.7592, longitude: 19.4560)
-    )
-
-    public static let szczecin = City(
-        id: "szczecin",
-        name: "Szczecin",
-        coordinate: CLLocationCoordinate2D(latitude: 53.4285, longitude: 14.5528)
-    )
-
-    public static let lublin = City(
-        id: "lublin",
-        name: "Lublin",
-        coordinate: CLLocationCoordinate2D(latitude: 51.2465, longitude: 22.5684)
-    )
-
-    public static let bialystok = City(
-        id: "bialystok",
-        name: "Białystok",
-        coordinate: CLLocationCoordinate2D(latitude: 53.1325, longitude: 23.1688)
-    )
-
-    public static let bydgoszcz = City(
-        id: "bydgoszcz",
-        name: "Bydgoszcz",
-        coordinate: CLLocationCoordinate2D(latitude: 53.1235, longitude: 18.0084)
-    )
-
-    public static let torun = City(
-        id: "torun",
-        name: "Toruń",
-        coordinate: CLLocationCoordinate2D(latitude: 53.0138, longitude: 18.5984)
-    )
-
-    public static let rzeszow = City(
-        id: "rzeszow",
-        name: "Rzeszów",
-        coordinate: CLLocationCoordinate2D(latitude: 50.0412, longitude: 21.9991)
-    )
-
-    public static let kielce = City(
-        id: "kielce",
-        name: "Kielce",
-        coordinate: CLLocationCoordinate2D(latitude: 50.8661, longitude: 20.6286)
-    )
-
-    public static let olsztyn = City(
-        id: "olsztyn",
-        name: "Olsztyn",
-        coordinate: CLLocationCoordinate2D(latitude: 53.7784, longitude: 20.4801)
-    )
-
-    public static let opole = City(
-        id: "opole",
-        name: "Opole",
-        coordinate: CLLocationCoordinate2D(latitude: 50.6751, longitude: 17.9213)
-    )
-
-    public static let czestochowa = City(
-        id: "czestochowa",
-        name: "Częstochowa",
-        coordinate: CLLocationCoordinate2D(latitude: 50.8118, longitude: 19.1203)
-    )
-
-    public static let radom = City(
-        id: "radom",
-        name: "Radom",
-        coordinate: CLLocationCoordinate2D(latitude: 51.4027, longitude: 21.1471)
-    )
-
-    public static let bielsko = City(
-        id: "bielsko",
-        name: "Bielsko-Biała",
-        coordinate: CLLocationCoordinate2D(latitude: 49.8224, longitude: 19.0444)
-    )
-
-    public static let rybnik = City(
-        id: "rybnik",
-        name: "Rybnik",
-        coordinate: CLLocationCoordinate2D(latitude: 50.0970, longitude: 18.5418)
-    )
-
-    public static let zielonagora = City(
-        id: "zielonagora",
-        name: "Zielona Góra",
-        coordinate: CLLocationCoordinate2D(latitude: 51.9356, longitude: 15.5062)
-    )
-
-    public static let gorzow = City(
-        id: "gorzow",
-        name: "Gorzów Wielkopolski",
-        coordinate: CLLocationCoordinate2D(latitude: 52.7368, longitude: 15.2288)
-    )
-
-    public static let pkp = City(
-        id: "pkp",
-        name: "PKP (Kolej Ogólnopolska)",
-        coordinate: CLLocationCoordinate2D(latitude: 52.0693, longitude: 19.4803),
-        defaultLatitudeDelta: 5.0,
-        defaultLongitudeDelta: 5.0
-    )
-
-    public static let allCities: [City] = [
-        .warsaw,
-        .krakow,
-        .wroclaw,
-        .poznan,
-        .tricity,
-        .gzm,
-        .lodz,
-        .szczecin,
-        .lublin,
-        .bialystok,
-        .bydgoszcz,
-        .torun,
-        .rzeszow,
-        .kielce,
-        .olsztyn,
-        .opole,
-        .czestochowa,
-        .radom,
-        .bielsko,
-        .rybnik,
-        .zielonagora,
-        .gorzow,
-        .pkp
-    ]
+    private static func load() -> [City] {
+        guard let url = Bundle.main.url(forResource: "cities", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(CityFile.self, from: data),
+              !file.cities.isEmpty
+        else {
+            return [fallbackCity]
+        }
+        return file.cities
+    }
 }

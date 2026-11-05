@@ -288,7 +288,7 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 ## 7. Phase 3 — API and model robustness
 
-### [ ] P3-1 Clean up `ZbiorkomAPIClient`
+### [x] P3-1 Clean up `ZbiorkomAPIClient`
 
 **Files:** `Services/ZbiorkomAPIClient.swift`.
 
@@ -305,7 +305,7 @@ Specific items:
 
 **Acceptance:** No force unwraps; no non-async `await`; error cases and localized messages covered by tests.
 
-### [ ] P3-2 Remove the `nonisolated struct` band-aid properly
+### [x] P3-2 Remove the `nonisolated struct` band-aid properly
 
 **Files:** `Models/Stop.swift:141`.
 
@@ -315,7 +315,7 @@ Specific items:
 
 **Acceptance:** Builds cleanly without the attribute, or the attribute is documented. No unexplained concurrency escapes.
 
-### [ ] P3-3 Harden the positional tuple decoders
+### [x] P3-3 Harden the positional tuple decoders
 
 **Files:** `Models/Stop.swift:31-40, 59-65, 122-138`.
 
@@ -328,7 +328,7 @@ Specific items:
 
 **Acceptance:** Malformed payloads produce descriptive errors; tests cover each failure mode; no crash on any fixture.
 
-### [ ] P3-4 Stabilize `StopEntrance.id`
+### [x] P3-4 Stabilize `StopEntrance.id`
 
 **Files:** `Models/Stop.swift:43-65`.
 
@@ -338,7 +338,7 @@ Specific items:
 
 **Acceptance:** Duplicate-name fixtures get distinct IDs; IDs are stable across identical responses. Test added.
 
-### [ ] P3-5 Make color parsing explicit and test it
+### [x] P3-5 Make color parsing explicit and test it
 
 **Files:** `Extensions/Color+Hex.swift`, `Models/RouteType.swift:72-88`, `Views/StopMarkerView.swift:18-20`, `Views/StopDetailSheet.swift:10-15, 46-50`.
 
@@ -351,7 +351,7 @@ Specific items:
 
 **Acceptance:** Invalid API colors are observable (fallback is explicit), not silently Material blue. Tests cover all lengths.
 
-### [ ] P3-6 Clean up `RouteType`
+### [x] P3-6 Clean up `RouteType`
 
 **Files:** `Models/RouteType.swift`.
 
@@ -362,7 +362,7 @@ Specific items:
 
 **Acceptance:** No unused imports; tests cover unknown raw values; no UI ever shows `.unknown` as a selectable filter unless intended.
 
-### [ ] P3-7 De-boilerplate the city catalog and add aliases
+### [x] P3-7 De-boilerplate the city catalog and add aliases
 
 **Files:** `Models/City.swift:177-201`, `Views/CityPickerSheet.swift:12-20`, `docs/cities.md`.
 

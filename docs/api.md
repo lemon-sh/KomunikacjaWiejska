@@ -139,3 +139,24 @@ Standard codes:
 - `STOP_NOT_FOUND`
 - `INVALID_BBOX`
 - `UNKNOWN_ERROR`
+
+### Client-side error mapping (`ZbiorkomAPIError`)
+
+| Client case | Trigger | User-facing message (Polish) |
+|---|---|---|
+| `transport(URLError.Code)` | Offline, timeout, host unreachable | "Brak połączenia z internetem.", "Przekroczono czas oczekiwania…", etc. |
+| `invalidURL` | Base URL or query construction failure | "Nieprawidłowy adres URL zapytania." |
+| `invalidResponse` | Response is not an `HTTPURLResponse` | "Nieprawidłowa odpowiedź serwera." |
+| `serverError(String)` | Non-200 response with an `error` code | "Błąd serwera: `CODE`" |
+| `httpError(statusCode)` | Non-200 response without an error body | "Błąd HTTP (`code`)." |
+| `decodingError(String)` | Malformed payload | "Błąd parsowania danych…" |
+
+Requests set `Accept: application/json`, use a 15 s timeout, and are retried
+**once with 200–600 ms jitter** for transient transport errors (timeout,
+connection loss, offline) and 5xx responses. 4xx responses are never retried.
+
+### Bounding box semantics
+
+`bbox` is `minLon,minLat,maxLon,maxLat` (WGS84, decimal degrees), built from the
+visible map region and rounded to six decimal places. The client fetches per
+viewport and caches results for 10 minutes (see `docs/decisions/0001-fetch-strategy.md`).

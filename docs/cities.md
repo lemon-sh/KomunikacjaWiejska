@@ -1,6 +1,13 @@
 # Cities & Transit Networks Catalog
 
-The following 66 transit networks and cities are supported by `api.zbiorkom.live`.
+All **66** transit networks and cities supported by `api.zbiorkom.live` are
+bundled with the app.
+
+The catalog lives in [`KomunikacjaWiejska/Resources/cities.json`](../KomunikacjaWiejska/Resources/cities.json)
+and is loaded by [`City`](../KomunikacjaWiejska/Models/City.swift). Adding a city means
+adding a JSON entry — no decoder or view changes. Each entry may declare
+`aliases` (additional search terms such as `gdansk` for `tricity`); the city
+picker matches names, IDs, aliases, and diacritic-free queries.
 
 | City ID | Display Name | Coordinates (Approx. Center) |
 |---|---|---|

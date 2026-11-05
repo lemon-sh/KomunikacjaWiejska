@@ -267,6 +267,24 @@ struct KomunikacjaWiejskaTests {
         #expect(City.allCities.contains(where: { $0.id == "poznan" }))
         #expect(City.allCities.contains(where: { $0.id == "tricity" }))
         #expect(City.allCities.contains(where: { $0.id == "gzm" }))
+        #expect(City.allCities.count == 66)
+        #expect(Set(City.allCities.map(\.id)).count == City.allCities.count)
+    }
+
+    @Test("City search matches names, IDs, aliases, and diacritic-free queries")
+    func testCityAliases() {
+        let tricity = City.city(id: "tricity")
+        #expect(tricity.matches(searchText: "trojmiasto"))
+        #expect(tricity.matches(searchText: "gdansk"))
+        #expect(tricity.matches(searchText: "GDAŃSK"))
+        #expect(tricity.matches(searchText: "Trójmiasto"))
+
+        let lodz = City.city(id: "lodz")
+        #expect(lodz.matches(searchText: "lodz"))
+        #expect(lodz.matches(searchText: "Łódź"))
+
+        #expect(City.warsaw.matches(searchText: "warszawa"))
+        #expect(City.warsaw.matches(searchText: "") == true)
     }
 
     @Test("MapMode enum cases and initialization")

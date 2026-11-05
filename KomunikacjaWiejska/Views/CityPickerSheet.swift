@@ -13,10 +13,7 @@ public struct CityPickerSheet: View {
         if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return City.allCities
         }
-        return City.allCities.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText) ||
-            $0.id.localizedCaseInsensitiveContains(searchText)
-        }
+        return City.allCities.filter { $0.matches(searchText: searchText) }
     }
 
     public var body: some View {
