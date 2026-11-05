@@ -25,6 +25,7 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
     private struct State {
         var callCount = 0
         var requestedCities: [String] = []
+        var requestedBBoxes: [BoundingBox?] = []
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -53,10 +54,15 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
         state.withLock { $0.requestedCities }
     }
 
+    var requestedBBoxes: [BoundingBox?] {
+        state.withLock { $0.requestedBBoxes }
+    }
+
     func fetchStops(city: String, bbox: BoundingBox?) async throws -> [Stop] {
         let result: Result<[Stop], Error> = state.withLock { testState in
             testState.callCount += 1
             testState.requestedCities.append(city)
+            testState.requestedBBoxes.append(bbox)
             return fixtureResult(for: city)
         }
         if gate.withLock({ $0.holdsRequests }) {

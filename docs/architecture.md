@@ -15,8 +15,9 @@ This document describes the software architecture, state flow, MapKit integratio
    - Network interactions are actor-isolated (`ZbiorkomAPIClient: actor`) with `async`/`await`.
 3. **Optimized Map Performance:**
    - Public transit networks in metropolitan areas contain tens of thousands of stop poles.
-   - When zoomed out, stop pins are pruned to maintain 60/120 fps map panning.
-   - Stop fetching is tied to `.onMapCameraChange(frequency: .onEnd)` and passes the viewport's bounding box (`minLon,minLat,maxLon,maxLat`) to the backend.
+   - Stops are fetched **per visible viewport**: `.onMapCameraChange(frequency: .onEnd)` debounces camera changes (350 ms) and `MapViewModel` passes the viewport bounding box (`minLon,minLat,maxLon,maxLat`) to the backend.
+   - Viewport results are cached in memory with a 10-minute TTL and LRU eviction (8 entries); failures and empty results are never cached.
+   - When a viewport returns more than 250 stops, `MapViewModel` thins them deterministically (one representative per grid cell) before rendering.
 
 ---
 
@@ -58,6 +59,8 @@ flowchart TD
 - [`ZbiorkomAPIClient.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Services/ZbiorkomAPIClient.swift):
   - Actor managing `URLSession` communication with `api.zbiorkom.live`.
   - Encapsulates error parsing (`ZbiorkomAPIError`).
+- [`StopsProviding.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Services/StopsProviding.swift):
+  - Injectable abstraction over the stops data source; `ZbiorkomAPIClient` conforms so `MapViewModel` can be built with a stub in tests.
 
 ### Extensions (`KomunikacjaWiejska/Extensions/`)
 - [`Color+Hex.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Extensions/Color+Hex.swift):

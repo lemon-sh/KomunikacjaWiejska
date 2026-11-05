@@ -35,7 +35,7 @@ public actor ZbiorkomAPIClient {
 
         if let bbox = bbox {
             var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            components?.queryItems = await [
+            components?.queryItems = [
                 URLQueryItem(name: "bbox", value: bbox.queryValue)
             ]
             if let queryURL = components?.url {

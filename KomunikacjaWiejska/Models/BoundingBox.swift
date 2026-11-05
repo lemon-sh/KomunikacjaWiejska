@@ -2,7 +2,9 @@ import CoreLocation
 import Foundation
 import MapKit
 
-public struct BoundingBox: Equatable, Sendable {
+/// `nonisolated` because the API client (`actor`) calls it from off MainActor;
+/// the project's default actor isolation would otherwise isolate it to MainActor.
+public nonisolated struct BoundingBox: Equatable, Sendable {
     public let minLon: Double
     public let minLat: Double
     public let maxLon: Double

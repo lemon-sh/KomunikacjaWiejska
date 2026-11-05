@@ -4,6 +4,7 @@ import SwiftUI
 public struct TransitMapView: View {
     @State private var viewModel = MapViewModel()
     @State private var locationManager = LocationManager.shared
+    @Environment(\.scenePhase) private var scenePhase
     @Namespace private var mapScope
 
     public init() {}
@@ -130,6 +131,16 @@ public struct TransitMapView: View {
         }
         .task {
             viewModel.loadStopsForSelectedCity()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // No network/GPS activity while the app is in the background.
+            if newPhase == .background {
+                viewModel.pauseForBackground()
+                locationManager.stopUpdatingLocation()
+            } else if newPhase == .active {
+                locationManager.requestWhenInUseAuthorization()
+                viewModel.loadStopsForSelectedCity()
+            }
         }
         .sheet(item: Binding(
             get: { viewModel.selectedStop },

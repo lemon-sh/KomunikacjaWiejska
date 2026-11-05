@@ -158,6 +158,30 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.count == 1)
         #expect(viewModel.isLoading == false)
         #expect(viewModel.errorMessage == nil)
+
+        // Viewport strategy passes the visible bounding box to the API
+        #expect(provider.requestedBBoxes.first != nil)
+        #expect(provider.requestedBBoxes.first??.queryValue.contains(",") == true)
+    }
+
+    @Test("Grid thinning bounds the rendered marker count deterministically")
+    func testGridThinning() {
+        let region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.2, longitude: 21.0),
+            span: MKCoordinateSpan(latitudeDelta: 0.2, longitudeDelta: 0.2)
+        )
+        let rawStops = (0..<1000).map { index in
+            StopFixtures.sample(id: String(format: "stop-%04d", index))
+        }
+
+        _ = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
+        let thinned = MapViewModel.thinnedStops(rawStops, region: region)
+
+        #expect(thinned.count <= MapViewModel.maxRenderedStops)
+        #expect(thinned.map(\.id) == MapViewModel.thinnedStops(rawStops, region: region).map(\.id))
+        // Exactly one representative per occupied cell
+        let ids = Set(thinned.map(\.id))
+        #expect(ids.count == thinned.count)
     }
 
     @Test("Repeated loads and camera changes use the cache without refetching")
@@ -168,7 +192,13 @@ struct KomunikacjaWiejskaTests {
         viewModel.loadStopsForSelectedCity()
         while viewModel.isLoading { await Task.yield() }
 
-        // Camera changes should not clear or refresh stops
+        // Loading the same viewport again must be served from cache/state, not the network
+        viewModel.loadStopsForSelectedCity()
+        #expect(provider.callCount == 1)
+        #expect(viewModel.stops.count == 1)
+
+        // Camera changes should not clear or refresh stops (a fetch only ever
+        // starts from a debounced camera-change event or explicit load)
         let dummyRegion = MKCoordinateRegion(
             center: CLLocationCoordinate2D(latitude: 52.0, longitude: 21.0),
             span: MKCoordinateSpan(latitudeDelta: 1.0, longitudeDelta: 1.0)
@@ -176,7 +206,14 @@ struct KomunikacjaWiejskaTests {
         viewModel.visibleRegion = dummyRegion
         #expect(viewModel.stops.count == 1)
 
-        // Loading the same city again must be served from memory, not the network
+        // Restoring the initial viewport still uses the fresh cached snapshot
+        viewModel.visibleRegion = MKCoordinateRegion(
+            center: City.warsaw.coordinate,
+            span: MKCoordinateSpan(
+                latitudeDelta: City.warsaw.defaultLatitudeDelta,
+                longitudeDelta: City.warsaw.defaultLongitudeDelta
+            )
+        )
         viewModel.loadStopsForSelectedCity()
         #expect(provider.callCount == 1)
         #expect(viewModel.stops.count == 1)
