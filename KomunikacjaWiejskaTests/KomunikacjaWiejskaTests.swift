@@ -100,6 +100,105 @@ struct KomunikacjaWiejskaTests {
         #expect(unknown == nil)
     }
 
+    // MARK: - Positional tuple hardening (P3-3, P3-4)
+
+    private func decodeStops(_ json: String) throws -> [Stop] {
+        let response = try JSONDecoder().decode(StopsResponse.self, from: Data(json.utf8))
+        return response.stops
+    }
+
+    private func stopTuple(
+        bearing: String = "90",
+        vehicleTypes: String = "[3]",
+        routes: String = "[]",
+        entrances: String = "[]",
+        location: String = "[21.01, 52.23]",
+        extraElements: String = ""
+    ) -> String {
+        """
+        {
+            "stops": [[
+                "stop-1", "warsaw", "Testowa", "01",
+                \(location), \(vehicleTypes), \(bearing), "Centrum",
+                \(routes), \(entrances)\(extraElements)
+            ]]
+        }
+        """
+    }
+
+    @Test("A tuple with too few elements fails with a descriptive error")
+    func testTooFewTupleElements() {
+        do {
+            _ = try decodeStops(#"{"stops": [["only-id"]]}"#)
+            Issue.record("Expected a decoding error for a short tuple")
+        } catch let error as DecodingError {
+            guard case .dataCorrupted(let context) = error else {
+                Issue.record("Unexpected decoding error: \(error)")
+                return
+            }
+            #expect(context.debugDescription.contains("Stop"))
+            #expect(context.debugDescription.contains("at least 10"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("An unknown vehicle type decodes as .unknown")
+    func testUnknownVehicleType() throws {
+        let stops = try decodeStops(stopTuple(vehicleTypes: "[999]"))
+        #expect(stops.first?.vehicleTypes == [.unknown])
+    }
+
+    @Test("A null bearing decodes as nil, and bearings are normalized")
+    func testBearingNormalization() throws {
+        #expect(try decodeStops(stopTuple(bearing: "null")).first?.bearing == nil)
+        #expect(try decodeStops(stopTuple(bearing: "370")).first?.bearing == 10)
+        #expect(try decodeStops(stopTuple(bearing: "-10")).first?.bearing == 350)
+    }
+
+    @Test("Empty routes and entrances decode to empty arrays")
+    func testEmptyCollections() throws {
+        let stop = try #require(decodeStops(stopTuple()).first)
+        #expect(stop.routes.isEmpty)
+        #expect(stop.entrances.isEmpty)
+    }
+
+    @Test("Extra trailing tuple elements are tolerated for forward compatibility")
+    func testExtraTupleElements() throws {
+        let stop = try #require(decodeStops(stopTuple(extraElements: ", \"future\", 42")).first)
+        #expect(stop.id == "stop-1")
+    }
+
+    @Test("Invalid coordinates fail with a descriptive error")
+    func testInvalidCoordinates() {
+        do {
+            _ = try decodeStops(stopTuple(location: "[21.01, 200.0]"))
+            Issue.record("Expected a decoding error for invalid coordinates")
+        } catch let error as DecodingError {
+            guard case .dataCorrupted(let context) = error else {
+                Issue.record("Unexpected decoding error: \(error)")
+                return
+            }
+            #expect(context.debugDescription.contains("invalid coordinate"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("Entrance IDs are deterministic and unique even with duplicate names")
+    func testEntranceIdentity() throws {
+        let entrances = """
+        [["Wejście", [21.0, 52.0]], ["Wejście", [21.0, 52.0]]]
+        """
+        let firstDecode = try #require(decodeStops(stopTuple(entrances: entrances)).first)
+        let secondDecode = try #require(decodeStops(stopTuple(entrances: entrances)).first)
+
+        #expect(firstDecode.entrances.count == 2)
+        #expect(Set(firstDecode.entrances.map(\.id)).count == 2)
+        #expect(firstDecode.entrances.map(\.id) == secondDecode.entrances.map(\.id))
+        #expect(firstDecode.entrances.first?.id == "stop-1-entrance-0")
+    }
+
     @Test("City catalog contains major Polish networks")
     func testCityCatalog() {
         #expect(City.allCities.contains(where: { $0.id == "warsaw" }))
