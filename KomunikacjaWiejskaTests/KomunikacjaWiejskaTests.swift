@@ -135,4 +135,44 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.currentCenter.latitude == targetCoord.latitude)
         #expect(viewModel.currentCenter.longitude == targetCoord.longitude)
     }
+
+    @Test("Stops are loaded once and kept in memory without refreshing on camera updates")
+    func testStopsKeptInMemory() {
+        let viewModel = MapViewModel(initialCity: .warsaw)
+
+        let mockStop = Stop(
+            id: "test-stop",
+            city: "warsaw",
+            name: "Testowa",
+            code: "01",
+            longitude: 21.01,
+            latitude: 52.23,
+            vehicleTypes: [.bus],
+            bearing: 90,
+            direction: "Centrum",
+            routes: [],
+            entrances: []
+        )
+
+        viewModel.stops = [mockStop]
+        #expect(viewModel.stops.count == 1)
+
+        // Camera changes should not clear or refresh stops
+        let dummyRegion = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.0, longitude: 21.0),
+            span: MKCoordinateSpan(latitudeDelta: 1.0, longitudeDelta: 1.0)
+        )
+        viewModel.visibleRegion = dummyRegion
+        viewModel.loadStopsForSelectedCity()
+        #expect(viewModel.stops.count == 1)
+        #expect(viewModel.isZoomedOutForStops == false)
+        #expect(viewModel.isCompactDisplayMode == true)
+
+        let zoomedInRegion = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.23, longitude: 21.01),
+            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+        )
+        viewModel.visibleRegion = zoomedInRegion
+        #expect(viewModel.isCompactDisplayMode == false)
+    }
 }

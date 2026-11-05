@@ -59,6 +59,10 @@ flowchart TD
   - Actor managing `URLSession` communication with `api.zbiorkom.live`.
   - Encapsulates error parsing (`ZbiorkomAPIError`).
 
+### Extensions (`KomunikacjaWiejska/Extensions/`)
+- [`Color+Hex.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Extensions/Color+Hex.swift):
+  - Initializer for `Color(hex:)` supporting 3-, 6-, and 8-digit hex strings for route and vehicle badge styling.
+
 ### Presentation (`KomunikacjaWiejska/ViewModels/` & `Views/`)
 - [`MapViewModel.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/ViewModels/MapViewModel.swift):
   - Central `@Observable` state holder. Manages camera position, selected city, visible stops, active stop selection, and cancellation of pending network tasks.

@@ -138,7 +138,7 @@ public struct Stop: Identifiable, Hashable, Sendable, Decodable {
     }
 }
 
-public struct StopsResponse: Decodable, Sendable {
+public nonisolated struct StopsResponse: Decodable, Sendable {
     public let stops: [Stop]
 
     public init(stops: [Stop]) {

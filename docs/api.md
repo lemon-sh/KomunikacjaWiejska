@@ -2,8 +2,6 @@
 
 This document provides a complete reference for the `zbiorkom.live` open public transport API (`https://api.zbiorkom.live/api6-open`).
 
----
-
 ## 1. General Principles & Conventions
 
 - **Base URL:** `https://api.zbiorkom.live/api6-open`

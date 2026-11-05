@@ -21,14 +21,15 @@ public struct TransitMapView: View {
                     Annotation(stop.displayName, coordinate: stop.coordinate, anchor: .center) {
                         StopMarkerView(
                             stop: stop,
-                            isSelected: viewModel.selectedStop?.id == stop.id
+                            isSelected: viewModel.selectedStop?.id == stop.id,
+                            isCompact: viewModel.isCompactDisplayMode
                         )
                     }
                     .tag(stop)
                 }
             }
             .mapStyle(viewModel.selectedMapMode.mapStyle)
-            .onMapCameraChange(frequency: .continuous) { context in
+            .onMapCameraChange(frequency: .onEnd) { context in
                 viewModel.handleCameraChange(to: context)
             }
             .mapControlVisibility(.hidden)
@@ -36,7 +37,7 @@ public struct TransitMapView: View {
 
             // Floating Top Header Controls
             ZStack(alignment: .top) {
-                // Top Center: Status Capsule (Zoom Hint, Loading Indicator, or Error)
+                // Top Center: Status Capsule (Loading Indicator or Error)
                 VStack(spacing: 0) {
                     Color.clear.frame(height: 52)
                     if viewModel.isLoading {
@@ -46,18 +47,6 @@ public struct TransitMapView: View {
                             Text("Wczytywanie przystanków...")
                                 .font(.caption.weight(.medium))
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
-                    } else if viewModel.isZoomedOutForStops {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus.magnifyingglass")
-                                .font(.caption)
-                            Text("Przybliż mapę, aby zobaczyć przystanki")
-                                .font(.caption.weight(.medium))
-                        }
-                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(.ultraThinMaterial, in: Capsule())
@@ -101,21 +90,9 @@ public struct TransitMapView: View {
 
                     Spacer()
 
-                    // Top Right Cluster: Reload Button, UIKit Compass, and 2D Button
+                    // Top Right Cluster: UIKit Compass and 2D Button
                     VStack(alignment: .trailing, spacing: 10) {
-                        // Reload Button with .glass style
-                        Button {
-                            viewModel.refreshStops()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(.primary)
-                                .frame(width: 30, height: 30)
-                        }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.circle)
-
-                        // UIKit Compass placed directly below the refresh button
+                        // UIKit Compass
                         MapCompass(scope: mapScope)
 
                         // 2D Button: appears when map pitch is tilted in 3D
@@ -133,7 +110,6 @@ public struct TransitMapView: View {
                             .transition(.scale.combined(with: .opacity))
                         }
                     }
-                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: viewModel.isPitched3D)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -151,6 +127,7 @@ public struct TransitMapView: View {
         .mapScope(mapScope)
         .onAppear {
             locationManager.requestWhenInUseAuthorization()
+            viewModel.loadStopsForSelectedCity()
         }
         .sheet(item: $viewModel.selectedStop) { stop in
             StopDetailSheet(stop: stop) {

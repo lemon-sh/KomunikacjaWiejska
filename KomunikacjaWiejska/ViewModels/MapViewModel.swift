@@ -14,9 +14,9 @@ public enum MapMode: String, CaseIterable, Identifiable {
     public var mapStyle: MapStyle {
         switch self {
         case .explore:
-            return .standard(pointsOfInterest: .excludingAll)
+            return .standard(pointsOfInterest: .excludingAll, showsTraffic: true)
         case .satellite:
-            return .hybrid(elevation: .realistic)
+            return .hybrid(elevation: .realistic, showsTraffic: true)
         }
     }
 }
@@ -26,8 +26,11 @@ public enum MapMode: String, CaseIterable, Identifiable {
 public final class MapViewModel {
     public var selectedCity: City {
         didSet {
+            guard selectedCity != oldValue else { return }
             UserDefaults.standard.set(selectedCity.id, forKey: "lastSelectedCityId")
+            selectedStop = nil
             repositionCameraForCurrentCity()
+            loadStopsForSelectedCity()
         }
     }
 
@@ -47,12 +50,20 @@ public final class MapViewModel {
     public var isShowingMapModes: Bool = false
     public var isTrackingUser: Bool = false
 
+    /// Threshold coordinate span delta above which stops are displayed as smaller compact points.
+    public let compactDisplayThreshold: Double = 0.05
+
+    /// Whether the map is zoomed out far enough that stops should be displayed as smaller points.
+    public var isCompactDisplayMode: Bool {
+        guard let region = visibleRegion else { return false }
+        return region.span.latitudeDelta > compactDisplayThreshold
+    }
+
     /// Threshold above which we do not fetch/display stops to avoid lag and overloading the map.
     public let maxSpanForStops: Double = 0.09
 
     public var isZoomedOutForStops: Bool {
-        guard let region = visibleRegion else { return false }
-        return region.span.latitudeDelta > maxSpanForStops
+        return false
     }
 
     /// Whether the map is currently pitched in 3D (pitch > 1.0 degree)
@@ -62,6 +73,7 @@ public final class MapViewModel {
 
     private let apiClient: ZbiorkomAPIClient
     private var activeFetchTask: Task<Void, Never>?
+    private var stopsCache: [String: [Stop]] = [:]
 
     public init(
         apiClient: ZbiorkomAPIClient = .shared,
@@ -90,6 +102,8 @@ public final class MapViewModel {
         self.visibleRegion = initialRegion
         self.currentCenter = chosenCity.coordinate
         self.cameraPosition = .region(initialRegion)
+
+        loadStopsForSelectedCity()
     }
 
     public func repositionCameraForCurrentCity() {
@@ -108,7 +122,6 @@ public final class MapViewModel {
         currentHeading = 0
         currentPitch = 0
         isTrackingUser = false
-        refreshStops()
     }
 
     public func handleCameraChange(to context: MapCameraUpdateContext) {
@@ -127,8 +140,6 @@ public final class MapViewModel {
                 isTrackingUser = false
             }
         }
-
-        refreshStops()
     }
 
     /// Centers the map camera on the user's coordinate with a smooth spring animation.
@@ -145,7 +156,6 @@ public final class MapViewModel {
             cameraPosition = .camera(camera)
             currentCenter = coordinate
         }
-        refreshStops()
     }
 
     /// Flattens the map view to 2D (pitch = 0) while keeping current center, distance, and heading intact.
@@ -162,37 +172,39 @@ public final class MapViewModel {
         }
     }
 
-    public func refreshStops() {
-        guard let region = visibleRegion else { return }
+    /// Loads stops for the currently selected city once and keeps them in memory.
+    public func loadStopsForSelectedCity() {
+        let city = selectedCity
 
-        // If zoomed out too far, clear stops so user gets clear hint to zoom in
-        if isZoomedOutForStops {
-            activeFetchTask?.cancel()
-            stops = []
+        // If stops for this city are already in memory, display them immediately and do not fetch
+        if let cachedStops = stopsCache[city.id] {
+            self.stops = cachedStops
+            self.isLoading = false
+            self.errorMessage = nil
             return
         }
 
-        guard let bbox = BoundingBox(region: region) else { return }
-
         activeFetchTask?.cancel()
+        isLoading = true
+        errorMessage = nil
+
         activeFetchTask = Task { [weak self] in
             guard let self = self else { return }
-            self.isLoading = true
-            self.errorMessage = nil
-
             do {
-                let fetchedStops = try await self.apiClient.fetchStops(
-                    city: self.selectedCity.id,
-                    bbox: bbox
-                )
+                let fetchedStops = try await self.apiClient.fetchStops(city: city.id)
                 if !Task.isCancelled {
-                    self.stops = fetchedStops
-                    self.isLoading = false
+                    self.stopsCache[city.id] = fetchedStops
+                    if self.selectedCity.id == city.id {
+                        self.stops = fetchedStops
+                        self.isLoading = false
+                    }
                 }
             } catch {
                 if !Task.isCancelled {
-                    self.isLoading = false
-                    self.errorMessage = error.localizedDescription
+                    if self.selectedCity.id == city.id {
+                        self.isLoading = false
+                        self.errorMessage = error.localizedDescription
+                    }
                 }
             }
         }
