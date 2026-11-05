@@ -28,7 +28,7 @@ public final class MapViewModel {
         didSet {
             guard selectedCity != oldValue else { return }
             UserDefaults.standard.set(selectedCity.id, forKey: "lastSelectedCityId")
-            selectedStop = nil
+            selectedStopID = nil
             repositionCameraForCurrentCity()
             loadStopsForSelectedCity()
         }
@@ -41,7 +41,10 @@ public final class MapViewModel {
     public var currentDistance: Double = 15000
     public var currentCenter: CLLocationCoordinate2D
     public var stops: [Stop] = []
-    public var selectedStop: Stop?
+    /// Marker selection source of truth: the map writes the tagged stop ID,
+    /// the detail sheet is derived from it. Identify by ID instead of the full
+    /// `Stop` value so selection compares a string, not routes/entrances.
+    public var selectedStopID: String?
     public var isShowingCityPicker: Bool = false
     public var selectedMapMode: MapMode = .explore
     public var isShowingMapModes: Bool = false
@@ -60,6 +63,13 @@ public final class MapViewModel {
     /// viewing city B.
     public var errorMessage: String? {
         errorsByCity[selectedCity.id]
+    }
+
+    /// The stop currently selected, looked up by `selectedStopID`. Derived —
+    /// never set this; write to `selectedStopID` instead.
+    public var selectedStop: Stop? {
+        guard let selectedStopID = selectedStopID else { return nil }
+        return stops.first(where: { $0.id == selectedStopID })
     }
 
     /// Cycle a city's stop fetch can be in. Guarantees one in-flight request

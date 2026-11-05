@@ -12,7 +12,7 @@ public struct TransitMapView: View {
         ZStack(alignment: .top) {
             Map(
                 position: $viewModel.cameraPosition,
-                selection: $viewModel.selectedStop,
+                selection: $viewModel.selectedStopID,
                 scope: mapScope
             ) {
                 UserAnnotation()
@@ -21,11 +21,11 @@ public struct TransitMapView: View {
                     Annotation(stop.displayName, coordinate: stop.coordinate, anchor: .center) {
                         StopMarkerView(
                             stop: stop,
-                            isSelected: viewModel.selectedStop?.id == stop.id,
+                            isSelected: viewModel.selectedStopID == stop.id,
                             isCompact: viewModel.isCompactDisplayMode
                         )
                     }
-                    .tag(stop)
+                    .tag(stop.id)
                 }
             }
             .mapStyle(viewModel.selectedMapMode.mapStyle)
@@ -131,9 +131,16 @@ public struct TransitMapView: View {
         .task {
             viewModel.loadStopsForSelectedCity()
         }
-        .sheet(item: $viewModel.selectedStop) { stop in
+        .sheet(item: Binding(
+            get: { viewModel.selectedStop },
+            set: { newValue in
+                // Scene-dismiss or close button both funnel through here so
+                // the ID is cleared exactly once.
+                viewModel.selectedStopID = newValue?.id
+            }
+        )) { stop in
             StopDetailSheet(stop: stop) {
-                viewModel.selectedStop = nil
+                viewModel.selectedStopID = nil
             }
             .presentationDetents([.height(240), .medium])
             .presentationDragIndicator(.visible)
