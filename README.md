@@ -1,5 +1,9 @@
 # KomunikacjaWiejska
 
+> [!WARNING]
+> ### ⚠️ Slopware
+> **Notice:** This codebase is almost entirely vibecoded. While I try my best to keep the code quality as high as I can, I've figured this fact should be clearly stated for the ones who care. Additionally, any prose beyond this point may also be AI-generated. Have a nice day >w<
+
 A native iOS client for [zbiorkom.live](https://zbiorkom.live), built with
 SwiftUI, MapKit, CoreLocation, Observation, and Swift Concurrency. There are no
 third-party dependencies.
