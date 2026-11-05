@@ -565,6 +565,66 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.first?.bearing == 180)
     }
 
+    @Test("Stop selection updates selectedStop and cachedStop lookup")
+    func testStopSelection() async throws {
+        let stopA = StopFixtures.sample(id: "stop-a", name: "Stop Alpha")
+        let stopB = StopFixtures.sample(id: "stop-b", name: "Stop Beta")
+        let provider = StubStopsProvider(stops: [stopA, stopB])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(viewModel.selectedStopID == nil)
+        #expect(viewModel.selectedStop == nil)
+        #expect(viewModel.cachedStop(for: "stop-a")?.name == "Stop Alpha")
+        #expect(viewModel.cachedStop(for: "stop-b")?.name == "Stop Beta")
+        #expect(viewModel.cachedStop(for: "non-existent") == nil)
+
+        // Selecting stop A
+        viewModel.selectedStopID = "stop-a"
+        #expect(viewModel.selectedStop?.id == "stop-a")
+        #expect(viewModel.selectedStop?.name == "Stop Alpha")
+
+        // Switching selection directly to stop B
+        viewModel.selectedStopID = "stop-b"
+        #expect(viewModel.selectedStop?.id == "stop-b")
+        #expect(viewModel.selectedStop?.name == "Stop Beta")
+
+        // Deselection
+        viewModel.selectedStopID = nil
+        #expect(viewModel.selectedStop == nil)
+    }
+
+    @Test("Selected stop is preserved even when grid thinning occurs")
+    func testSelectedStopPreservedDuringThinning() async throws {
+        // Create enough stops to trigger grid thinning (> 250)
+        let count = 300
+        var allStops: [Stop] = []
+        for index in 0..<count {
+            allStops.append(
+                StopFixtures.sample(
+                    id: String(format: "thin-stop-%03d", index),
+                    longitude: 21.0 + Double(index) * 0.0001,
+                    latitude: 52.2 + Double(index) * 0.0001
+                )
+            )
+        }
+
+        let provider = StubStopsProvider(stops: allStops)
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(viewModel.stops.count <= MapViewModel.maxRenderedStops)
+
+        // Select a stop and verify it stays in rendered stops
+        let targetID = "thin-stop-150"
+        viewModel.selectedStopID = targetID
+        #expect(viewModel.stops.contains(where: { $0.id == targetID }))
+    }
+
     @Test("A viewport that leaves fetched tile coverage requests new tiles")
     func testViewportOutsideCoverageFetches() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])

@@ -107,7 +107,12 @@ public final class MapViewModel {
     /// Marker selection source of truth: the map writes the tagged stop ID,
     /// the detail sheet is derived from it. Identify by ID instead of the full
     /// `Stop` value so selection compares a string, not routes/entances.
-    public var selectedStopID: String?
+    public var selectedStopID: String? {
+        didSet {
+            guard selectedStopID != oldValue else { return }
+            updateStops()
+        }
+    }
     public var isShowingCityPicker: Bool = false
     public var selectedMapMode: MapMode = .explore
     public var isShowingMapModes: Bool = false
@@ -167,6 +172,11 @@ public final class MapViewModel {
         return cachedStopsByID[selectedStopID]
     }
 
+    /// Looks up a stop in the session cache by its identifier.
+    public func cachedStop(for id: String) -> Stop? {
+        cachedStopsByID[id]
+    }
+
     /// Cycle a city's stop fetch can be in. Guarantees one in-flight request
     /// per viewport and makes loading idempotent.
     private enum FetchState: Equatable {
@@ -182,7 +192,7 @@ public final class MapViewModel {
     /// compact points. Distance-based so it is independent of each city's
     /// default span: every normal city (span ≤ 0.15°) loads fully zoomed
     /// markers, while the countrywide PKP view starts compact.
-    public let compactDisplayDistanceThreshold: Double = 50_000
+    public let compactDisplayDistanceThreshold: Double = 20_000
 
     /// Whether the camera is far enough that stops should be displayed as smaller points.
     public var isCompactDisplayMode: Bool {
@@ -517,11 +527,21 @@ public final class MapViewModel {
         let region = cameraState.region
         let visibleStops = cachedStopsByID.values.filter { Self.contains($0, in: region) }
 
-        let renderedStops: [Stop]
+        var renderedStops: [Stop]
         if visibleStops.count > Self.maxRenderedStops {
             renderedStops = Self.thinnedStops(visibleStops, region: region)
         } else {
             renderedStops = visibleStops.sorted { $0.id < $1.id }
+        }
+
+        // Always keep the currently selected stop visible if it falls within the viewport,
+        // even if grid thinning would have dropped its cell.
+        if let selectedStopID = selectedStopID,
+           let selectedStop = cachedStopsByID[selectedStopID],
+           Self.contains(selectedStop, in: region),
+           !renderedStops.contains(where: { $0.id == selectedStopID }) {
+            renderedStops.append(selectedStop)
+            renderedStops.sort { $0.id < $1.id }
         }
 
         // Compare full values, not just IDs: a later viewport fetch can change

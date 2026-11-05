@@ -4,6 +4,7 @@ import SwiftUI
 public struct TransitMapView: View {
     @State private var viewModel = MapViewModel()
     @State private var locationManager = LocationManager.shared
+    @State private var presentedStop: Stop?
     @Environment(\.scenePhase) private var scenePhase
     @Namespace private var mapScope
 
@@ -18,15 +19,20 @@ public struct TransitMapView: View {
             ) {
                 UserAnnotation()
 
-                ForEach(viewModel.stops) { stop in
-                    Annotation(stop.displayName, coordinate: stop.coordinate, anchor: .center) {
+                ForEach(stopAnnotationItems) { item in
+                    Annotation(markerTitle(for: item.stop), coordinate: item.stop.coordinate, anchor: .center) {
                         StopMarkerView(
-                            stop: stop,
-                            isSelected: viewModel.selectedStopID == stop.id,
+                            stop: item.stop,
+                            isSelected: item.isSelected,
                             isCompact: viewModel.isCompactDisplayMode
                         )
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                viewModel.selectedStopID = item.stop.id
+                            }
+                        }
                     }
-                    .tag(stop.id)
+                    .tag(item.stop.id)
                 }
             }
             .mapStyle(viewModel.selectedMapMode.mapStyle)
@@ -64,24 +70,62 @@ public struct TransitMapView: View {
                 viewModel.loadStopsForSelectedCity()
             }
         }
-        .sheet(item: Binding(
-            get: { viewModel.selectedStop },
-            set: { newValue in
+        .onChange(of: viewModel.selectedStopID) { _, newID in
+            if let newID, let stop = viewModel.cachedStop(for: newID) ?? viewModel.selectedStop {
+                presentedStop = stop
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { viewModel.selectedStopID != nil },
+            set: { isPresented in
                 // Scene-dismiss or close button both funnel through here so
                 // the ID is cleared exactly once.
-                viewModel.selectedStopID = newValue?.id
+                if !isPresented {
+                    viewModel.selectedStopID = nil
+                }
             }
-        )) { stop in
-            StopDetailSheet(stop: stop) {
-                viewModel.selectedStopID = nil
+        )) {
+            if let stop = presentedStop ?? viewModel.selectedStop {
+                StopDetailSheet(stop: stop) {
+                    viewModel.selectedStopID = nil
+                }
+                .presentationDetents([.height(240), .medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
             }
-            .presentationDetents([.height(240), .medium, .large])
-            .presentationDragIndicator(.visible)
-            .presentationBackgroundInteraction(.enabled(upThrough: .height(240)))
         }
         .sheet(isPresented: $viewModel.isShowingCityPicker) {
             CityPickerSheet(selectedCity: $viewModel.selectedCity)
         }
+    }
+
+    /// Derives annotation items from the visible stops, uniquely keying them by both stop ID
+    /// and selection state so MapKit immediately refreshes the marker appearance on tap.
+    private var stopAnnotationItems: [StopAnnotationItem] {
+        let selectedID = viewModel.selectedStopID
+        let items = viewModel.stops.map { stop in
+            StopAnnotationItem(
+                stop: stop,
+                isSelected: stop.id == selectedID
+            )
+        }
+        guard let selectedID else { return items }
+        // Ensure the selected stop renders last so it sits above all other markers.
+        return items.sorted { lhs, rhs in
+            if lhs.isSelected { return false }
+            if rhs.isSelected { return true }
+            return false
+        }
+    }
+
+    /// Compact mode draws every stop as a small dot; names would overlap each
+    /// other and bury the map, so those annotations render without a title
+    /// unless the stop is currently selected.
+    private func markerTitle(for stop: Stop) -> String {
+        if viewModel.selectedStopID == stop.id {
+            return stop.displayName
+        }
+        return viewModel.isCompactDisplayMode ? "" : stop.displayName
     }
 
     // MARK: - Top chrome
@@ -197,5 +241,18 @@ public struct TransitMapView: View {
         case .initial, .none:
             return String(localized: "map.loading.initial")
         }
+    }
+}
+
+/// An item driving an annotation on the transit map.
+/// Giving each item an identity derived from both the stop ID and its selection state
+/// forces SwiftUI/MapKit to recreate the annotation immediately upon selection or
+/// deselection without requiring a camera movement/pan.
+private struct StopAnnotationItem: Identifiable, Hashable, Sendable {
+    let stop: Stop
+    let isSelected: Bool
+
+    var id: String {
+        isSelected ? "\(stop.id):selected" : stop.id
     }
 }

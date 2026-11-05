@@ -29,7 +29,7 @@ public struct StopMarkerView: View {
     }
 
     private var effectiveBadgeSize: CGFloat {
-        isSelected ? badgeSize + 6 : badgeSize
+        isSelected ? badgeSize + 8 : badgeSize
     }
 
     private var compactSize: CGFloat {
@@ -91,9 +91,14 @@ public struct StopMarkerView: View {
                         .frame(width: effectiveBadgeSize, height: effectiveBadgeSize)
                         .overlay(
                             Circle()
-                                .strokeBorder(.white, lineWidth: 2)
+                                .strokeBorder(.white, lineWidth: isSelected ? 2.5 : 2)
                         )
-                        .shadow(color: .black.opacity(0.25), radius: 3, x: 0, y: 1.5)
+                        .shadow(
+                            color: isSelected ? .black.opacity(0.35) : .black.opacity(0.25),
+                            radius: isSelected ? 4 : 3,
+                            x: 0,
+                            y: isSelected ? 2 : 1.5
+                        )
 
                     // Icon inside badge
                     Image(systemName: stop.primaryVehicleType.systemImageName)
