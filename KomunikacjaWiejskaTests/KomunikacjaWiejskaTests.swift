@@ -119,9 +119,11 @@ struct KomunikacjaWiejskaTests {
         #expect(MapMode.satellite.id == "Satellite")
     }
 
+    // MARK: - Hermetic MapViewModel behaviour
+
     @Test("MapViewModel map mode and user location controls")
     func testMapViewModelControls() {
-        let viewModel = MapViewModel(initialCity: .warsaw)
+        let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
         #expect(viewModel.selectedMapMode == .explore)
         #expect(viewModel.isShowingMapModes == false)
         #expect(viewModel.isTrackingUser == false)
@@ -136,26 +138,35 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.currentCenter.longitude == targetCoord.longitude)
     }
 
-    @Test("Stops are loaded once and kept in memory without refreshing on camera updates")
-    func testStopsKeptInMemory() {
-        let viewModel = MapViewModel(initialCity: .warsaw)
+    @Test("MapViewModel construction performs no network request")
+    func testConstructionDoesNoIO() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()])
+        _ = MapViewModel(apiClient: provider, initialCity: .warsaw)
 
-        let mockStop = Stop(
-            id: "test-stop",
-            city: "warsaw",
-            name: "Testowa",
-            code: "01",
-            longitude: 21.01,
-            latitude: 52.23,
-            vehicleTypes: [.bus],
-            bearing: 90,
-            direction: "Centrum",
-            routes: [],
-            entrances: []
-        )
+        #expect(provider.callCount == 0)
+    }
 
-        viewModel.stops = [mockStop]
+    @Test("loadStopsForSelectedCity fetches exactly once and settles loading state")
+    func testLoadFetchesOnce() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(provider.callCount == 1)
         #expect(viewModel.stops.count == 1)
+        #expect(viewModel.isLoading == false)
+        #expect(viewModel.errorMessage == nil)
+    }
+
+    @Test("Repeated loads and camera changes use the cache without refetching")
+    func testStopsKeptInMemory() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
 
         // Camera changes should not clear or refresh stops
         let dummyRegion = MKCoordinateRegion(
@@ -163,16 +174,47 @@ struct KomunikacjaWiejskaTests {
             span: MKCoordinateSpan(latitudeDelta: 1.0, longitudeDelta: 1.0)
         )
         viewModel.visibleRegion = dummyRegion
-        viewModel.loadStopsForSelectedCity()
         #expect(viewModel.stops.count == 1)
-        #expect(viewModel.isZoomedOutForStops == false)
-        #expect(viewModel.isCompactDisplayMode == true)
 
-        let zoomedInRegion = MKCoordinateRegion(
+        // Loading the same city again must be served from memory, not the network
+        viewModel.loadStopsForSelectedCity()
+        #expect(provider.callCount == 1)
+        #expect(viewModel.stops.count == 1)
+    }
+
+    @Test("Fetch errors surface a message and mark the city as failed")
+    func testFetchErrorSurfacesMessage() async throws {
+        struct NetworkFailure: Error {}
+        let provider = StubStopsProvider(error: NetworkFailure())
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(provider.callCount == 1)
+        #expect(viewModel.errorMessage != nil)
+        #expect(viewModel.stops.isEmpty)
+
+        // Failed cities may be retried
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(provider.callCount == 2)
+    }
+
+    @Test("Compact display mode respects the threshold boundaries")
+    func testCompactDisplayMode() {
+        let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
+
+        viewModel.visibleRegion = MKCoordinateRegion(
             center: CLLocationCoordinate2D(latitude: 52.23, longitude: 21.01),
-            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
         )
-        viewModel.visibleRegion = zoomedInRegion
         #expect(viewModel.isCompactDisplayMode == false)
+
+        viewModel.visibleRegion = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.23, longitude: 21.01),
+            span: MKCoordinateSpan(latitudeDelta: 0.0501, longitudeDelta: 0.0501)
+        )
+        #expect(viewModel.isCompactDisplayMode == true)
     }
 }

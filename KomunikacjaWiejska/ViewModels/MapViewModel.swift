@@ -50,6 +50,17 @@ public final class MapViewModel {
     public var isShowingMapModes: Bool = false
     public var isTrackingUser: Bool = false
 
+    /// Cycle a city's stop fetch can be in. Guarantees one in-flight request
+    /// per city and makes `loadStopsForSelectedCity()` idempotent.
+    private enum LoadState: Equatable {
+        case idle
+        case loading(cityID: String)
+        case loaded(cityID: String)
+        case failed(cityID: String)
+    }
+
+    private var loadState: LoadState = .idle
+
     /// Threshold coordinate span delta above which stops are displayed as smaller compact points.
     public let compactDisplayThreshold: Double = 0.05
 
@@ -71,12 +82,15 @@ public final class MapViewModel {
         return currentPitch > 1.0
     }
 
-    private let apiClient: ZbiorkomAPIClient
-    private var activeFetchTask: Task<Void, Never>?
+    private let apiClient: any StopsProviding
+    // `nonisolated(unsafe)`: only mutated from `@MainActor` methods, read from
+    // `deinit` (nonisolated by definition). `Task` is `Sendable`, so cancelling
+    // from any context is safe; the reference itself is never read concurrently.
+    @ObservationIgnored private nonisolated(unsafe) var activeFetchTask: Task<Void, Never>?
     private var stopsCache: [String: [Stop]] = [:]
 
     public init(
-        apiClient: ZbiorkomAPIClient = .shared,
+        apiClient: any StopsProviding = ZbiorkomAPIClient.shared,
         initialCity: City? = nil
     ) {
         self.apiClient = apiClient
@@ -102,8 +116,10 @@ public final class MapViewModel {
         self.visibleRegion = initialRegion
         self.currentCenter = chosenCity.coordinate
         self.cameraPosition = .region(initialRegion)
+    }
 
-        loadStopsForSelectedCity()
+    deinit {
+        activeFetchTask?.cancel()
     }
 
     public func repositionCameraForCurrentCity() {
@@ -172,39 +188,61 @@ public final class MapViewModel {
         }
     }
 
-    /// Loads stops for the currently selected city once and keeps them in memory.
+    /// Loads stops for the selected city. Idempotent while a request for the
+    /// same city is already in flight or already loaded; a manual refresh can
+    /// force a refetch via `refreshStopsForSelectedCity()`.
     public func loadStopsForSelectedCity() {
         let city = selectedCity
 
+        switch loadState {
+        case .loading(let id), .loaded(let id):
+            guard id != city.id else { return }
+        case .idle, .failed:
+            break
+        }
+
         // If stops for this city are already in memory, display them immediately and do not fetch
         if let cachedStops = stopsCache[city.id] {
-            self.stops = cachedStops
-            self.isLoading = false
-            self.errorMessage = nil
+            stops = cachedStops
+            isLoading = false
+            errorMessage = nil
+            loadState = .loaded(cityID: city.id)
             return
         }
 
+        fetchStops(for: city)
+    }
+
+    /// Forces a fresh fetch for the selected city, discarding any cached data.
+    public func refreshStopsForSelectedCity() {
+        stopsCache.removeValue(forKey: selectedCity.id)
+        loadState = .idle
+        loadStopsForSelectedCity()
+    }
+
+    private func fetchStops(for city: City) {
         activeFetchTask?.cancel()
         isLoading = true
         errorMessage = nil
+        loadState = .loading(cityID: city.id)
 
         activeFetchTask = Task { [weak self] in
             guard let self = self else { return }
             do {
-                let fetchedStops = try await self.apiClient.fetchStops(city: city.id)
-                if !Task.isCancelled {
-                    self.stopsCache[city.id] = fetchedStops
-                    if self.selectedCity.id == city.id {
-                        self.stops = fetchedStops
-                        self.isLoading = false
-                    }
+                let fetchedStops = try await self.apiClient.fetchStops(city: city.id, bbox: nil)
+                guard !Task.isCancelled else { return }
+                self.stopsCache[city.id] = fetchedStops
+                if self.selectedCity.id == city.id {
+                    self.stops = fetchedStops
+                    self.isLoading = false
+                    self.loadState = .loaded(cityID: city.id)
                 }
             } catch {
-                if !Task.isCancelled {
-                    if self.selectedCity.id == city.id {
-                        self.isLoading = false
-                        self.errorMessage = error.localizedDescription
-                    }
+                guard !Task.isCancelled else { return }
+                if self.selectedCity.id == city.id {
+                    self.isLoading = false
+                    self.errorMessage = error.localizedDescription
+                    self.loadState = .failed(cityID: city.id)
                 }
             }
         }

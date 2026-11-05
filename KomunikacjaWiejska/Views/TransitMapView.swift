@@ -127,6 +127,8 @@ public struct TransitMapView: View {
         .mapScope(mapScope)
         .onAppear {
             locationManager.requestWhenInUseAuthorization()
+        }
+        .task {
             viewModel.loadStopsForSelectedCity()
         }
         .sheet(item: $viewModel.selectedStop) { stop in
