@@ -138,6 +138,14 @@ public struct Stop: Identifiable, Hashable, Sendable, Decodable {
     }
 }
 
+/// `nonisolated` is required, not cosmetic: this project builds with
+/// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, which makes the synthesized
+/// `Decodable` conformance MainActor-isolated. `ZbiorkomAPIClient` is an
+/// independent actor and decodes off MainActor, so using such a conformance
+/// there is rejected (warning now, error in Swift 6 mode, diagnostic
+/// `IsolatedConformances`). If P5-3 moves the decoding entry point to a
+/// nonisolated context or the project stops defaulting to MainActor isolation,
+/// this attribute can be removed.
 public nonisolated struct StopsResponse: Decodable, Sendable {
     public let stops: [Stop]
 
