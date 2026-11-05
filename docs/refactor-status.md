@@ -8,7 +8,7 @@
 - `xcodebuild build` — app + tests build in **Swift 6 language mode** with no
   source warnings (the only build warning is Xcode's App Intents metadata note,
   which is unrelated to app code).
-- `xcodebuild test` — **39 tests in 2 suites, all passing** on iPhone 17 /
+- `xcodebuild test` — **40 tests in 2 suites, all passing** on iPhone 17 /
   iOS 27.2 with `IPHONEOS_DEPLOYMENT_TARGET = 26.0`.
 - Tests are **hermetic**: all `MapViewModel` tests inject `StubStopsProvider`;
   `ZbiorkomAPIClient` tests use `MockURLProtocol`. No test opens a socket.
@@ -47,6 +47,8 @@
 - **P2-1** Viewport `bbox` fetch on camera end with 350 ms debounce;
   `BoundingBox` wired end-to-end; docs updated.
 - **P2-2** Grid-based thinning bounds rendering to 250 markers, deterministic.
+  The grid is cap-driven (15×16 = 240 slots), not derived from the stop count;
+  a stop-count-derived grid collapsed dense viewports to a few markers.
 - **P2-3** Viewport cache with 10-minute TTL and 8-entry LRU; failures and
   empty/partial results are never cached; explicit refresh API.
 - **P2-4** Camera metrics grouped into one `CameraState` with epsilon equality;

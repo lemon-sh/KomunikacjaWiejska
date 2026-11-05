@@ -429,6 +429,31 @@ struct KomunikacjaWiejskaTests {
         #expect(ids.count == thinned.count)
     }
 
+    @Test("Grid thinning keeps a useful marker count for dense viewports")
+    func testGridThinningDensity() {
+        let region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.2, longitude: 21.0),
+            span: MKCoordinateSpan(latitudeDelta: 0.2, longitudeDelta: 0.2)
+        )
+        // 2,000 stops spread evenly over the viewport, not stacked on one point.
+        let rawStops = (0..<2000).map { index in
+            let row = Double(index / 50)
+            let column = Double(index % 50)
+            return StopFixtures.sample(
+                id: String(format: "stop-%04d", index),
+                longitude: 20.9 + column * (0.2 / 50),
+                latitude: 52.1 + row * (0.2 / 40)
+            )
+        }
+
+        let thinned = MapViewModel.thinnedStops(rawStops, region: region)
+
+        // A cap-driven grid should retain most of its slots, not collapse to a
+        // handful of markers as a stop-count-derived grid did.
+        #expect(thinned.count > 200)
+        #expect(thinned.count <= MapViewModel.maxRenderedStops)
+    }
+
     @Test("Repeated loads and camera changes use the cache without refetching")
     func testStopsKeptInMemory() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])

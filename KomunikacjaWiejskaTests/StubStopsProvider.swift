@@ -135,15 +135,17 @@ enum StopFixtures {
         city: String = "warsaw",
         name: String = "Testowa",
         code: String = "01",
-        bearing: Int? = 90
+        bearing: Int? = 90,
+        longitude: Double = 21.01,
+        latitude: Double = 52.23
     ) -> Stop {
         Stop(
             id: id,
             city: city,
             name: name,
             code: code,
-            longitude: 21.01,
-            latitude: 52.23,
+            longitude: longitude,
+            latitude: latitude,
             vehicleTypes: [.bus],
             bearing: bearing,
             direction: "Centrum",

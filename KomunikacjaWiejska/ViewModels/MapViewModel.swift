@@ -552,16 +552,16 @@ public final class MapViewModel {
     }
 
     /// Grid-based thinning: keep one deterministic representative per cell of
-    /// a square grid laid over the visible region.
+    /// a grid laid over the visible region.
     static func thinnedStops(_ rawStops: [Stop], region: MKCoordinateRegion?) -> [Stop] {
         guard let region = region else { return [] }
-        let gridCells = gridDimensions(stopCount: rawStops.count)
+        let grid = thinningGrid()
         var buckets: [Int: Stop] = [:]
         for stop in rawStops {
             guard let cell = cellIndex(
                 for: stop,
                 in: region,
-                gridCells: gridCells
+                grid: grid
             ) else { continue }
             if let current = buckets[cell] {
                 // Deterministic pick so repainting does not flicker markers.
@@ -575,28 +575,38 @@ public final class MapViewModel {
         return buckets.values.sorted { $0.id < $1.id }
     }
 
-    private static func gridDimensions(stopCount: Int) -> Int {
-        let raw = sqrt(Double(stopCount) / Double(maxRenderedStops))
-        return max(2, Int(ceil(raw)))
+    private struct ThinningGrid {
+        let columns: Int
+        let rows: Int
+    }
+
+    /// Fixed grid sized to `maxRenderedStops`. It must not be derived from the
+    /// stop count: `sqrt(count / cap)` produces very few cells for dense
+    /// viewports (e.g. a 2×2 grid for 1,000 stops), discarding nearly every
+    /// marker. 15×16 = 240 slots stays under the cap.
+    private static func thinningGrid() -> ThinningGrid {
+        let columns = max(2, Int(Double(maxRenderedStops).squareRoot()))
+        let rows = max(2, maxRenderedStops / columns)
+        return ThinningGrid(columns: columns, rows: rows)
     }
 
     private static func cellIndex(
         for stop: Stop,
         in region: MKCoordinateRegion,
-        gridCells: Int
+        grid: ThinningGrid
     ) -> Int? {
         let latitudeSpan = max(region.span.latitudeDelta, 1e-6)
         let longitudeSpan = max(region.span.longitudeDelta, 1e-6)
         let dx = (stop.longitude - region.center.longitude) / longitudeSpan
         let dy = (stop.latitude - region.center.latitude) / latitudeSpan
         guard abs(dx) <= 0.5, abs(dy) <= 0.5 else { return nil }  // outside viewport
-        let column = clampCell(Int((dx + 0.5) * Double(gridCells)), gridCells: gridCells)
-        let row = clampCell(Int((dy + 0.5) * Double(gridCells)), gridCells: gridCells)
-        return row * gridCells + column
+        let column = clampCell(Int((dx + 0.5) * Double(grid.columns)), limit: grid.columns)
+        let row = clampCell(Int((dy + 0.5) * Double(grid.rows)), limit: grid.rows)
+        return row * grid.columns + column
     }
 
-    private static func clampCell(_ value: Int, gridCells: Int) -> Int {
-        min(max(value, 0), gridCells - 1)
+    private static func clampCell(_ value: Int, limit: Int) -> Int {
+        min(max(value, 0), limit - 1)
     }
 }
 
