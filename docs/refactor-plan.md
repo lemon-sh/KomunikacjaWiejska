@@ -533,9 +533,10 @@ Actual commit sequence used (2026-11-05):
 - D3/D5 remain open inside their work packages (P4-1, P3-4).
 
 Progress log:
-- Phase 0, Phase 1, and Phase 2 are complete (2026-11-05). P3-1's bbox query bug
-  and the empty-cache guarantee were fixed as part of Phase 2; the remaining
-  P3-1/P3-2 and later items are outstanding.
+- Phase 0, Phase 1, Phase 2, and Phase 3 are complete (2026-11-05); see
+  [`docs/refactor-status.md`](refactor-status.md) for the detailed status.
+- Phase 4 and Phase 5 are outstanding, including applying decision D6
+  (deployment target → iOS 26.0, P5-4).
 
 
 ---
