@@ -910,4 +910,143 @@ struct KomunikacjaWiejskaTests {
         viewModel.currentDistance = threshold + 1
         #expect(viewModel.isCompactDisplayMode == true)
     }
+
+    // MARK: - Region Suggestion Tests
+
+    @Test("No region suggestion when viewing current city")
+    func testNoRegionSuggestionWhenViewingCurrentCity() {
+        let warsaw = City.warsaw
+        let suggestion = MapViewModel.detectSuggestedCity(
+            center: warsaw.coordinate,
+            regionSpan: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08),
+            currentCity: warsaw
+        )
+        #expect(suggestion == nil)
+    }
+
+    @Test("Suggests region when viewport moves to a different city")
+    func testSuggestsRegionWhenViewportMovesToDifferentCity() {
+        let warsaw = City.warsaw
+        let krakow = City.krakow
+        let suggestion = MapViewModel.detectSuggestedCity(
+            center: krakow.coordinate,
+            regionSpan: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08),
+            currentCity: warsaw
+        )
+        #expect(suggestion?.id == "krakow")
+    }
+
+    @Test("No suggestion when zoomed out to nationwide scale")
+    func testNoSuggestionWhenZoomedOutNationwide() {
+        let warsaw = City.warsaw
+        let krakow = City.krakow
+        let suggestion = MapViewModel.detectSuggestedCity(
+            center: krakow.coordinate,
+            regionSpan: MKCoordinateSpan(latitudeDelta: 1.5, longitudeDelta: 1.5),
+            currentCity: warsaw
+        )
+        #expect(suggestion == nil)
+    }
+
+    @Test("Dismissing suggestion suppresses repeated suggestion until moving away")
+    func testDismissSuggestion() {
+        let warsaw = City.warsaw
+        let krakow = City.krakow
+        let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: warsaw)
+
+        // Move camera to Kraków
+        viewModel.cameraState = MapViewModel.CameraState(
+            region: MKCoordinateRegion(
+                center: krakow.coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
+            ),
+            center: krakow.coordinate
+        )
+        viewModel.updateRegionSuggestion()
+        #expect(viewModel.suggestedCity?.id == "krakow")
+
+        // Dismiss
+        viewModel.dismissSuggestedCity()
+        #expect(viewModel.suggestedCity == nil)
+        #expect(viewModel.dismissedCityID == "krakow")
+
+        // Updating while still in Kraków keeps it suppressed
+        viewModel.updateRegionSuggestion()
+        #expect(viewModel.suggestedCity == nil)
+
+        // Moving far away to Poznań coordinate resets dismissed state and suggests Poznań
+        let poznan = City.city(id: "poznan")
+        viewModel.cameraState = MapViewModel.CameraState(
+            region: MKCoordinateRegion(
+                center: poznan.coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
+            ),
+            center: poznan.coordinate
+        )
+        viewModel.updateRegionSuggestion()
+        #expect(viewModel.dismissedCityID == nil)
+        #expect(viewModel.suggestedCity?.id == "poznan")
+    }
+
+    @Test("Switching to suggested city preserves camera position and loads stops")
+    func testSwitchToSuggestedCityPreservesCameraAndLoadsStops() async {
+        let krakow = City.krakow
+        let customKrakowCenter = CLLocationCoordinate2D(latitude: 50.065, longitude: 19.950)
+        let customRegion = MKCoordinateRegion(
+            center: customKrakowCenter,
+            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+        )
+
+        let provider = StubStopsProvider(
+            resultsByCity: [
+                "krakow": .success([])
+            ]
+        )
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        // Set camera in Kraków
+        viewModel.cameraState = MapViewModel.CameraState(
+            region: customRegion,
+            center: customKrakowCenter
+        )
+        viewModel.updateRegionSuggestion()
+        #expect(viewModel.suggestedCity?.id == "krakow")
+
+        // Switch to suggested city
+        viewModel.switchToSuggestedCity()
+
+        #expect(viewModel.selectedCity.id == "krakow")
+        #expect(viewModel.suggestedCity == nil)
+        // Camera position must remain where user was viewing, not jumped to Kraków default
+        #expect(viewModel.cameraState.center.latitude == customKrakowCenter.latitude)
+        #expect(viewModel.cameraState.center.longitude == customKrakowCenter.longitude)
+        #expect(viewModel.cameraState.region.span.latitudeDelta == 0.05)
+
+        while viewModel.isLoading { await Task.yield() }
+        #expect(provider.requestedCities.contains("krakow"))
+    }
+
+    @Test("Excludes nationwide PKP from region suggestions")
+    func testExcludesPKPFromRegionSuggestions() {
+        let pkp = City.city(id: "pkp")
+        let suggestion = MapViewModel.detectSuggestedCity(
+            center: pkp.coordinate,
+            regionSpan: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08),
+            currentCity: .warsaw
+        )
+        // Center near Piątek / PKP should not suggest switching to PKP
+        #expect(suggestion?.id != "pkp")
+    }
+
+    @Test("PKP mode suggests local city when zooming into one")
+    func testPKPSuggestsLocalCity() {
+        let pkp = City.city(id: "pkp")
+        let krakow = City.krakow
+        let suggestion = MapViewModel.detectSuggestedCity(
+            center: krakow.coordinate,
+            regionSpan: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08),
+            currentCity: pkp
+        )
+        #expect(suggestion?.id == "krakow")
+    }
 }

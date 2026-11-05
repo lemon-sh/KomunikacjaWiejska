@@ -88,16 +88,26 @@ public final class MapViewModel {
         }
     }
 
+    @ObservationIgnored private var shouldRepositionOnCityChange = true
+
     public var selectedCity: City {
         didSet {
             guard selectedCity != oldValue else { return }
             UserDefaults.standard.set(selectedCity.id, forKey: "lastSelectedCityId")
             selectedStopID = nil
             clearStopCache()
-            repositionCameraForCurrentCity()
+            if shouldRepositionOnCityChange {
+                repositionCameraForCurrentCity()
+            }
+            suggestedCity = nil
             loadStopsForSelectedCity()
         }
     }
+
+    /// City suggested to the user when viewing an area outside the current city's territory.
+    public private(set) var suggestedCity: City?
+    /// City ID whose suggestion was dismissed by the user to avoid repeated prompting.
+    public private(set) var dismissedCityID: String?
 
     public var cameraPosition: MapCameraPosition
     public var cameraState: CameraState
@@ -192,7 +202,7 @@ public final class MapViewModel {
     /// compact points. Distance-based so it is independent of each city's
     /// default span: every normal city (span ≤ 0.15°) loads fully zoomed
     /// markers, while the countrywide PKP view starts compact.
-    public let compactDisplayDistanceThreshold: Double = 20_000
+    public let compactDisplayDistanceThreshold: Double = 10_000
 
     /// Whether the camera is far enough that stops should be displayed as smaller points.
     public var isCompactDisplayMode: Bool {
@@ -311,6 +321,7 @@ public final class MapViewModel {
         updateStops()
         releaseTrackingIfRoaming(to: context.camera.centerCoordinate)
         scheduleViewportFetch()
+        updateRegionSuggestion()
     }
 
     private func releaseTrackingIfRoaming(to center: CLLocationCoordinate2D) {
@@ -348,6 +359,118 @@ public final class MapViewModel {
             )
             cameraPosition = .camera(camera)
             cameraState.pitch = 0
+        }
+    }
+
+    // MARK: - Region Suggestion
+
+    /// Evaluates whether the current camera viewport belongs to a different transit network,
+    /// updating `suggestedCity`.
+    public func updateRegionSuggestion() {
+        let center = cameraState.center
+        let span = cameraState.region.span
+
+        // Clear dismissed city memory if the user has panned far away from it (> 1.5x its radius)
+        if let dismissed = dismissedCityID, let city = City.allCities.first(where: { $0.id == dismissed }) {
+            let viewportLoc = CLLocation(latitude: center.latitude, longitude: center.longitude)
+            let dismissedLoc = CLLocation(latitude: city.coordinate.latitude, longitude: city.coordinate.longitude)
+            if viewportLoc.distance(from: dismissedLoc) > city.coverageRadiusMeters * 1.5 {
+                dismissedCityID = nil
+            }
+        }
+
+        let newSuggestion = Self.detectSuggestedCity(
+            center: center,
+            regionSpan: span,
+            currentCity: selectedCity,
+            allCities: City.allCities,
+            dismissedCityID: dismissedCityID
+        )
+
+        if suggestedCity != newSuggestion {
+            suggestedCity = newSuggestion
+        }
+    }
+
+    /// Determines whether the viewport is focused on a different transit network.
+    public static func detectSuggestedCity(
+        center: CLLocationCoordinate2D,
+        regionSpan: MKCoordinateSpan,
+        currentCity: City,
+        allCities: [City] = City.allCities,
+        dismissedCityID: String? = nil
+    ) -> City? {
+        // Only evaluate when zoomed into city or regional scale (span ≤ 0.6° ≈ 65 km).
+        // Macro / nationwide zooms shouldn't trigger local city switch suggestions.
+        guard regionSpan.latitudeDelta <= 0.6 else { return nil }
+
+        let viewportLocation = CLLocation(latitude: center.latitude, longitude: center.longitude)
+
+        struct Candidate {
+            let city: City
+            let distance: CLLocationDistance
+        }
+
+        var candidates: [Candidate] = []
+        for city in allCities {
+            guard city.id != "pkp", city.id != currentCity.id else { continue }
+            let radius = city.coverageRadiusMeters
+            guard radius > 0 else { continue }
+
+            let cityLocation = CLLocation(latitude: city.coordinate.latitude, longitude: city.coordinate.longitude)
+            let distance = viewportLocation.distance(from: cityLocation)
+            if distance <= radius {
+                candidates.append(Candidate(city: city, distance: distance))
+            }
+        }
+
+        guard !candidates.isEmpty else { return nil }
+
+        // Pick the closest candidate city to viewport center
+        candidates.sort { $0.distance < $1.distance }
+        guard let best = candidates.first else { return nil }
+
+        // If the user dismissed this specific city, don't nag them while they stay in it
+        if best.city.id == dismissedCityID {
+            return nil
+        }
+
+        // If current city is not PKP, verify the viewport is not still in the current city's territory.
+        // Hysteresis: best candidate must be closer than current city by at least 3 km.
+        if currentCity.id != "pkp" {
+            let currentCityLocation = CLLocation(
+                latitude: currentCity.coordinate.latitude,
+                longitude: currentCity.coordinate.longitude
+            )
+            let currentDistance = viewportLocation.distance(from: currentCityLocation)
+            if best.distance >= currentDistance - 3_000 {
+                return nil
+            }
+        }
+
+        return best.city
+    }
+
+    /// Selects a new city, optionally repositioning the camera to the city's center.
+    public func selectCity(_ city: City, repositionCamera: Bool = true) {
+        guard city != selectedCity else { return }
+        shouldRepositionOnCityChange = repositionCamera
+        selectedCity = city
+        shouldRepositionOnCityChange = true
+    }
+
+    /// Switches the active city to the currently suggested city without moving the camera,
+    /// so the user retains their exact viewing position.
+    public func switchToSuggestedCity() {
+        guard let city = suggestedCity else { return }
+        selectCity(city, repositionCamera: false)
+    }
+
+    /// Dismisses the current region switch suggestion.
+    public func dismissSuggestedCity() {
+        if let currentSuggestion = suggestedCity {
+            dismissedCityID = currentSuggestion.id
+            suggestedCity = nil
         }
     }
 

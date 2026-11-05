@@ -117,6 +117,9 @@ public struct TransitMapView: View {
                 trailingControls
             }
             statusCapsule
+            if let suggestedCity = viewModel.suggestedCity {
+                regionSuggestionCapsule(for: suggestedCity)
+            }
         }
         .padding(.horizontal, DesignTokens.horizontalPadding)
         .padding(.top, DesignTokens.topPadding)
@@ -206,6 +209,46 @@ public struct TransitMapView: View {
             .padding(.vertical, 6)
             .glassEffect(.regular, in: .capsule)
         }
+    }
+
+    @ViewBuilder
+    private func regionSuggestionCapsule(for city: City) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    viewModel.switchToSuggestedCity()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.swap")
+                        .foregroundStyle(Color.accentColor)
+                        .font(.caption.weight(.semibold))
+                    Text(String(format: String(localized: "map.suggestion.switchCity"), city.name))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
+
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    viewModel.dismissSuggestedCity()
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, height: 14)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(Text("map.suggestion.dismiss"))
+        }
+        .transition(.asymmetric(
+            insertion: .scale(scale: 0.9).combined(with: .opacity).combined(with: .move(edge: .top)),
+            removal: .scale(scale: 0.9).combined(with: .opacity)
+        ))
     }
 
     private var loadingMessage: String {

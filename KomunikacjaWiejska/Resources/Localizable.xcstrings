@@ -562,6 +562,40 @@
         }
       }
     },
+    "map.suggestion.dismiss" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dismiss suggestion"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odrzuć sugestię"
+          }
+        }
+      }
+    },
+    "map.suggestion.switchCity" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switch to %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przełącz na: %@"
+          }
+        }
+      }
+    },
     "mapMode.explore" : {
       "extractionState" : "manual",
       "localizations" : {

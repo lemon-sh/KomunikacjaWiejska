@@ -77,6 +77,13 @@ public struct City: Identifiable, Hashable, Sendable, Decodable {
         hasher.combine(id)
     }
 
+    /// Estimated coverage radius in metres for this transit network.
+    /// Returns 0 for nationwide networks like PKP to prevent false-positive region switches.
+    public var coverageRadiusMeters: Double {
+        if id == "pkp" { return 0 }
+        return max(20_000, defaultLatitudeDelta * 111_000 * 1.5)
+    }
+
     // MARK: - Catalog
 
     public static let allCities: [City] = CityCatalog.loadedCities
