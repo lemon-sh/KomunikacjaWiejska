@@ -329,6 +329,37 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.currentCenter.longitude == targetCoord.longitude)
     }
 
+    @Test("Location authorization state maps prompts, denial, and disabled services")
+    func testLocationAuthorizationState() {
+        #expect(
+            LocationAuthorizationState.resolve(status: .notDetermined, servicesEnabled: true)
+                == .notDetermined
+        )
+        #expect(
+            LocationAuthorizationState.resolve(status: .denied, servicesEnabled: true) == .denied
+        )
+        #expect(
+            LocationAuthorizationState.resolve(status: .restricted, servicesEnabled: true) == .denied
+        )
+        #expect(
+            LocationAuthorizationState.resolve(status: .authorizedWhenInUse, servicesEnabled: true)
+                == .authorized
+        )
+        #expect(
+            LocationAuthorizationState.resolve(status: .authorizedAlways, servicesEnabled: true)
+                == .authorized
+        )
+        // Disabled location services win over any per-app authorization.
+        #expect(
+            LocationAuthorizationState.resolve(status: .authorizedAlways, servicesEnabled: false)
+                == .servicesDisabled
+        )
+        #expect(
+            LocationAuthorizationState.resolve(status: .denied, servicesEnabled: false)
+                == .servicesDisabled
+        )
+    }
+
     @Test("MapViewModel construction performs no network request")
     func testConstructionDoesNoIO() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])

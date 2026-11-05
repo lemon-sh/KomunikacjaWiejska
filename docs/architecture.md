@@ -75,7 +75,7 @@ flowchart TD
   - Injectable abstraction over the stops data source; `ZbiorkomAPIClient` conforms so `MapViewModel` can be built with a stub in tests.
 
 - [`LocationManager.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Services/LocationManager.swift):
-  - Wraps `CLLocationManager`, derives a UI-friendly authorization state, performs one-shot fixes, and logs failures.
+  - Wraps `CLLocationManager`, derives a testable authorization state, resolves one-shot fixes asynchronously (waiting for the permission prompt when needed), and logs failures.
 
 ### Extensions (`KomunikacjaWiejska/Extensions/`)
 - [`Color+Hex.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Extensions/Color+Hex.swift):

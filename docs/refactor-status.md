@@ -8,7 +8,7 @@
 - `xcodebuild build` — app + tests build in **Swift 6 language mode** with no
   source warnings (the only build warning is Xcode's App Intents metadata note,
   which is unrelated to app code).
-- `xcodebuild test` — **36 tests in 2 suites, all passing** on iPhone 17 /
+- `xcodebuild test` — **37 tests in 2 suites, all passing** on iPhone 17 /
   iOS 27.2 with `IPHONEOS_DEPLOYMENT_TARGET = 26.0`.
 - Tests are **hermetic**: all `MapViewModel` tests inject `StubStopsProvider`;
   `ZbiorkomAPIClient` tests use `MockURLProtocol`. No test opens a socket.
@@ -109,6 +109,16 @@
 - **P5-4** `IPHONEOS_DEPLOYMENT_TARGET = 26.0` for app and tests (D6 applied).
 - **P5-5** Architecture/API/cities/AGENTS docs reconciled with the code; ADRs
   0003–0006 added.
+
+### Post-completion follow-up — location one-shot flow
+- **P1-7 follow-up** The location button now awaits the permission decision and
+  the one-shot fix as a single async operation, so the camera centers when the
+  fix arrives (including after a first-time permission grant). Fix failures
+  show a localized "Location unavailable" alert; denial still deep-links to
+  Settings. The write-only `locationAccessDenied` flag was removed and
+  `LocationAuthorizationState.resolve` is covered by a hermetic test.
+- Additional copy: `location.error.title`, `location.error.message`,
+  `location.error.ok` (Polish and English).
 
 ## Residual manual QA
 

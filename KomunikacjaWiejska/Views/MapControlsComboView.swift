@@ -4,8 +4,15 @@ public struct MapControlsComboView: View {
     @Bindable var viewModel: MapViewModel
     @Namespace private var namespace
     var locationManager: LocationManager
-    @State private var isShowingLocationAlert = false
+    @State private var locationAlert: LocationAlert?
     @Environment(\.openURL) private var openURL
+
+    private enum LocationAlert: Hashable, Identifiable {
+        case settings
+        case unavailable
+
+        var id: Self { self }
+    }
 
     public init(viewModel: MapViewModel, locationManager: LocationManager) {
         self.viewModel = viewModel
@@ -51,28 +58,44 @@ public struct MapControlsComboView: View {
                 .accessibilityAddTraits(viewModel.isTrackingUser ? .isSelected : [])
             }
         }
-        .alert("location.alert.title", isPresented: $isShowingLocationAlert) {
-            Button("location.alert.openSettings", action: openAppSettings)
-            Button("location.alert.cancel", role: .cancel) {}
-        } message: {
-            Text("location.alert.message")
+        .alert(item: $locationAlert) { alert in
+            switch alert {
+            case .settings:
+                Alert(
+                    title: Text("location.alert.title"),
+                    message: Text("location.alert.message"),
+                    primaryButton: .default(Text("location.alert.openSettings"), action: openAppSettings),
+                    secondaryButton: .cancel(Text("location.alert.cancel"))
+                )
+            case .unavailable:
+                Alert(
+                    title: Text("location.error.title"),
+                    message: Text("location.error.message"),
+                    dismissButton: .default(Text("location.error.ok"))
+                )
+            }
         }
     }
 
     private func handleLocationTap() {
         switch locationManager.authorizationState {
-        case .notDetermined:
-            locationManager.requestWhenInUseAuthorization()
-        case .authorized:
-            if let coordinate = locationManager.userLocation?.coordinate {
-                viewModel.centerOnUserLocation(coordinate: coordinate)
-            } else {
-                // No fix yet: request a one-shot location update.
-                locationManager.requestLocationUpdate()
+        case .notDetermined, .authorized:
+            // A single async request covers both cases: it waits for the
+            // authorization prompt when needed, then centers the camera once
+            // the one-shot fix arrives.
+            Task {
+                do {
+                    let location = try await locationManager.requestCurrentLocation()
+                    viewModel.centerOnUserLocation(coordinate: location.coordinate)
+                } catch LocationError.denied, LocationError.servicesDisabled {
+                    locationAlert = .settings
+                } catch {
+                    locationAlert = .unavailable
+                }
             }
         case .denied, .servicesDisabled:
             // Requesting again can never succeed; offer the Settings deep link.
-            isShowingLocationAlert = true
+            locationAlert = .settings
         }
     }
 
