@@ -128,9 +128,9 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 **Files:** `ViewModels/MapViewModel.swift`, `Views/TransitMapView.swift`.
 
-**Problem:** Duplicate requests caused by `init` + `.onAppear` + manual refresh paths.
+**Problem:** Duplicate requests caused by `init` + `.onAppear` + explicit load paths.
 
-**Change:** Single `.task` entry point using the idempotent state machine from P0-2. A manual refresh button may force `.idle` first. Cancel any in-flight task before starting a new city.
+**Change:** Single `.task` entry point using the idempotent state machine from P0-2. Cancel any in-flight task before starting a new city.
 
 **Acceptance:** One request on launch; switching A → B → A while B is loading does not leave duplicate tasks running. Add a unit test around the state machine.
 
@@ -259,7 +259,7 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 **Problem:** `stopsCache` is an unbounded in-memory dictionary with no TTL. A cached city never refreshes. Empty/partial arrays cache forever.
 
 **Change:**
-- Add a TTL (e.g. 5–10 minutes) and an explicit refresh action.
+- Add a TTL (e.g. 5–10 minutes) and an explicit retry action.
 - Cap entries with LRU eviction (e.g. 5 cities) or drop non-selected cities when memory pressure is received.
 - Do not cache failed or cancelled results.
 - Consider a discriminator key (`city + bbox` if Option A).
@@ -525,7 +525,7 @@ Actual commit sequence used (2026-11-05):
 | D1 | Stops fetch strategy | A: viewport bbox + debounce; B: full-city fetch | A for large networks; B only if simplicity is preferred and docs are updated | P2-1, P2-3, P3-1 |
 | D2 | Marker density strategy | A: grid thinning; B: `MKMapView` clustering; C: SwiftUI `Marker` clustering | B (native) if the architecture can absorb a representable; A as an interim | P2-2 |
 | D3 | Localization scope | Polish only; Polish + English | Polish primary + English if App Store requires it | P4-1 |
-| D4 | Cache freshness | TTL only; manual refresh only; both | TTL + manual refresh | P2-3 |
+| D4 | Cache freshness | TTL only; manual refresh only; both | TTL only (viewport changes refetch automatically) | P2-3 |
 | D5 | Entrance identity | Tuple index; name + coordinates; server ID if added | Tuple index (deterministic) | P3-4 |
 | D6 | Minimum iOS | 27.2 (current); lower to glass minimum | Ask the developer | P5-4 |
 
@@ -534,7 +534,7 @@ Actual commit sequence used (2026-11-05):
 - **D1 → A** (viewport bbox + debounce; 350 ms). ADR: [`docs/decisions/0001-fetch-strategy.md`](decisions/0001-fetch-strategy.md).
 - **D2 → A** (grid thinning, MVP; `MKMapView` clustering may be spiked later). ADR: [`docs/decisions/0002-marker-density.md`](decisions/0002-marker-density.md).
 - **D3 → Polish + English** (full string catalog). ADR: [`docs/decisions/0004-localization.md`](decisions/0004-localization.md).
-- **D4 → TTL + manual refresh** (10-minute TTL, visible refresh control, cache invalidation).
+- **D4 → TTL only** (10-minute TTL; viewport changes and the error retry trigger fetches, so a separate refresh control was removed).
 - **D5 → tuple index** (entrance IDs are `"{stopID}-entrance-{index}"`).
 - **D6 → lower to glass minimum (iOS 26.0)**, applied in P5-4. ADR: [`docs/decisions/0003-deployment-target.md`](decisions/0003-deployment-target.md).
 - **Swift 6 → enabled** with documented `nonisolated` value types. ADR: [`docs/decisions/0005-swift6-concurrency.md`](decisions/0005-swift6-concurrency.md).

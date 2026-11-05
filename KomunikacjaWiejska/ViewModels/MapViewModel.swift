@@ -41,7 +41,8 @@ public enum MapMode: String, CaseIterable, Identifiable {
 }
 
 /// Why the map is currently loading. Lets the UI distinguish a cold start
-/// from a manual refresh or a city switch without inferring it from timing.
+/// from a same-city viewport load or a city switch without inferring it from
+/// timing.
 public enum StopLoadingPhase: Equatable, Sendable {
     case initial
     case refresh
@@ -351,17 +352,10 @@ public final class MapViewModel {
 
     /// Loads stops for the selected city's current viewport. Idempotent while
     /// a request for the same viewport is in flight or a fresh enough cached
-    /// snapshot exists; manual refresh is available via
-    /// `refreshStopsForSelectedCity()`.
+    /// snapshot exists.
     public func loadStopsForSelectedCity() {
         debounceTask?.cancel()
         fetchCurrentViewport()
-    }
-
-    /// Forces a fresh fetch of the current viewport, discarding cached data.
-    public func refreshStopsForSelectedCity() {
-        invalidateViewportCache(cityID: selectedCity.id)
-        loadStopsForSelectedCity()
     }
 
     // MARK: - Scene phase (P2-5)
@@ -520,14 +514,6 @@ public final class MapViewModel {
         return snapshot
     }
 
-    private func invalidateViewportCache(cityID: String) {
-        let prefix = "\(cityID):"
-        for key in cacheAccessOrder where key.hasPrefix(prefix) {
-            viewportCache.removeValue(forKey: key)
-        }
-        cacheAccessOrder.removeAll(where: { $0.hasPrefix(prefix) })
-    }
-
     /// Cache key is the exact six-decimal viewport sent to the API. Coarser
     /// rounding (e.g. 0.01°) would let two different viewports share an entry
     /// and silently omit stops at high zoom; the debounce already prevents
@@ -554,8 +540,8 @@ public final class MapViewModel {
         if thinnedStops.count > Self.maxRenderedStops {
             thinnedStops = Self.thinnedStops(fetchedStops, region: cameraState.region)
         }
-        // Compare full values, not just IDs: a manual refresh can change a
-        // stop's bearing, routes, or name while keeping the same identifier.
+        // Compare full values, not just IDs: a later viewport fetch can change
+        // a stop's bearing, routes, or name while keeping the same identifier.
         // Camera-only changes still produce an equal array and are ignored.
         if thinnedStops != stops {
             stops = thinnedStops

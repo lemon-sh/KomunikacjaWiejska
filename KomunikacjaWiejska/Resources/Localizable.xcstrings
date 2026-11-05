@@ -460,23 +460,6 @@
         }
       }
     },
-    "map.control.refresh" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Refresh stops"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Odśwież przystanki"
-          }
-        }
-      }
-    },
     "map.error.retry" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -52,7 +52,7 @@
   The grid is cap-driven (15×16 = 240 slots), not derived from the stop count;
   a stop-count-derived grid collapsed dense viewports to a few markers.
 - **P2-3** Viewport cache with 10-minute TTL and 8-entry LRU; failures and
-  empty/partial results are never cached; explicit refresh API.
+  empty/partial results are never cached; explicit load API.
 - **P2-4** Camera metrics grouped into one `CameraState` with epsilon equality;
   markers re-render only when the thinned set changes.
 - **P2-5** Backgrounding cancels fetches and stops location updates; returning
@@ -97,10 +97,9 @@
   `glassEffect`/`glassEffectUnion` with an explanatory comment (native
   `GlassEffectContainer`); hand-drawn thumbnails replaced by simple native icon
   cards.
-- **P4-5** The status capsule distinguishes initial load / refresh / city
-  switch, shows a two-line localized error with an inline retry button, and the
-  top chrome includes a visible refresh control. Last successful data stays
-  visible during same-viewport refresh.
+- **P4-5** The status capsule distinguishes initial load / same-city viewport
+  load / city switch and shows a two-line localized error with an inline retry
+  button. Last successful data stays visible during a same-viewport reload.
 
 ### Phase 5 — Project hygiene, concurrency, docs
 - **P5-1** `xcuserdata` untracked; `.gitignore` covers user data and local build
@@ -127,8 +126,9 @@
   `Resources/InfoPlist.xcstrings` (Polish + English) instead of a single
   hardcoded Polish build setting; a test checks both localized strings.
 - **P2-3 follow-up** The rendered marker array is compared by full `Stop`
-  value instead of ID only, so a manual refresh that returns new bearings,
-  routes, or names for the same stops is applied (regression test added).
+  value instead of ID only, so a later viewport fetch that returns new
+  bearings, routes, or names for the same stops is applied (regression test
+  added).
 - **P2-3 follow-up** Viewport cache keys now use the exact six-decimal `bbox`
   sent to the API instead of a 0.01° grid, which could serve one viewport's
   snapshot to a different nearby viewport and omit stops at high zoom

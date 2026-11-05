@@ -392,7 +392,7 @@ struct KomunikacjaWiejskaTests {
         #expect(provider.requestedBBoxes.first??.queryValue.contains(",") == true)
     }
 
-    @Test("Loading phase distinguishes initial load, refresh, and completion")
+    @Test("Loading phase distinguishes initial load, same-city viewport load, and completion")
     func testLoadingPhases() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()], holdsRequests: true)
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
@@ -405,8 +405,14 @@ struct KomunikacjaWiejskaTests {
         while viewModel.isLoading { await Task.yield() }
         #expect(viewModel.loadingPhase == nil)
 
+        // A different viewport in the same city is a plain reload, not a city
+        // switch and not a cold start.
+        viewModel.visibleRegion = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.25, longitude: 21.01),
+            span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
+        )
         provider.holdRequests()
-        viewModel.refreshStopsForSelectedCity()
+        viewModel.loadStopsForSelectedCity()
         while provider.requestedCities.count < 2 { await Task.yield() }
         #expect(viewModel.loadingPhase == .refresh)
 
@@ -495,8 +501,8 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.count == 1)
     }
 
-    @Test("Manual refresh applies updated stop details with unchanged IDs")
-    func testRefreshAppliesUpdatedStopContent() async throws {
+    @Test("A new viewport applies updated stop details with unchanged IDs")
+    func testViewportLoadAppliesUpdatedStopContent() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample(bearing: 90)])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
 
@@ -506,7 +512,11 @@ struct KomunikacjaWiejskaTests {
 
         // Same ID, new details: the rendered marker array must update.
         provider.setStops([StopFixtures.sample(bearing: 180)])
-        viewModel.refreshStopsForSelectedCity()
+        viewModel.visibleRegion = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.25, longitude: 21.01),
+            span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
+        )
+        viewModel.loadStopsForSelectedCity()
         while viewModel.isLoading { await Task.yield() }
 
         #expect(viewModel.stops.first?.bearing == 180)

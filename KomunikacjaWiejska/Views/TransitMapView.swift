@@ -126,16 +126,6 @@ public struct TransitMapView: View {
 
     private var trailingControls: some View {
         VStack(alignment: .trailing, spacing: DesignTokens.controlSpacing) {
-            Button {
-                viewModel.refreshStopsForSelectedCity()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
-            }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .accessibilityLabel(Text("map.control.refresh"))
-
             // The compass is the native `MapCompass`; it deliberately keeps
             // Apple's own appearance and animations.
             MapCompass(scope: mapScope)
@@ -184,7 +174,7 @@ public struct TransitMapView: View {
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
-                    viewModel.refreshStopsForSelectedCity()
+                    viewModel.loadStopsForSelectedCity()
                 } label: {
                     Text("map.error.retry")
                         .font(.caption.weight(.semibold))

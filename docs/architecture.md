@@ -92,7 +92,7 @@ flowchart TD
 - [`MapViewModel.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/ViewModels/MapViewModel.swift):
   - Central `@Observable` state holder. Manages camera position, selected city, visible stops, active stop selection, loading phase (`initial` / `refresh` / `citySwitch`), localized errors, and cancellation of pending network tasks.
 - [`TransitMapView.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/TransitMapView.swift):
-  - Root map screen with MapKit standard layer (POI disabled for clarity), safe-area-aware top chrome, a retryable status capsule, and a visible refresh control.
+  - Root map screen with MapKit standard layer (POI disabled for clarity), safe-area-aware top chrome, and a retryable status capsule.
 - `DesignTokens.swift` — shared spacing, control, and marker metrics.
 - [`StopMarkerView.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/StopMarkerView.swift):
   - Circular transit badge showing transit icon and a triangle notch rotated to the stop's `bearing`.
