@@ -1,16 +1,21 @@
 # Refactor Status
 
 > Companion to [`refactor-plan.md`](refactor-plan.md). Updated 2026-11-05.
+> **Status: all phases complete.** The plan is retained as a historical record.
 
 ## Verification snapshot
 
-- `xcodebuild build` — app + tests build with **zero warnings** (project warning
-  state unchanged from baseline).
-- `xcodebuild test` — **33 tests in 2 suites, all passing**.
+- `xcodebuild build` — app + tests build in **Swift 6 language mode** with no
+  source warnings (the only build warning is Xcode's App Intents metadata note,
+  which is unrelated to app code).
+- `xcodebuild test` — **36 tests in 2 suites, all passing** on iPhone 17 /
+  iOS 27.2 with `IPHONEOS_DEPLOYMENT_TARGET = 26.0`.
 - Tests are **hermetic**: all `MapViewModel` tests inject `StubStopsProvider`;
   `ZbiorkomAPIClient` tests use `MockURLProtocol`. No test opens a socket.
 - `rg "isZoomedOutForStops|maxSpanForStops|selectStop"` in Swift sources returns
   nothing.
+- `scripts/check-toolchain.sh` reports Xcode 27.2 OK; the shared scheme is
+  committed and `xcuserdata` is untracked.
 
 ## Completed
 
@@ -38,7 +43,7 @@
   Settings" deep link; one-shot `requestLocation()` instead of a perpetual
   update loop; `didFailWithError` logs.
 
-### Phase 2 — Performance & data lifecycle (D1-A, D2-A, D6)
+### Phase 2 — Performance & data lifecycle (D1-A, D2-A)
 - **P2-1** Viewport `bbox` fetch on camera end with 350 ms debounce;
   `BoundingBox` wired end-to-end; docs updated.
 - **P2-2** Grid-based thinning bounds rendering to 250 markers, deterministic.
@@ -48,16 +53,17 @@
   markers re-render only when the thinned set changes.
 - **P2-5** Backgrounding cancels fetches and stops location updates; returning
   to `.active` reloads the current viewport.
-- ADRs: `docs/decisions/0001-fetch-strategy.md`, `0002-marker-density.md`,
-  `0003-deployment-target.md`.
+- ADRs: `docs/decisions/0001-fetch-strategy.md`, `0002-marker-density.md`.
 
 ### Phase 3 — API & model robustness
 - **P3-1** No force unwrap in the client; `URLComponents` built once; dedicated
-  `invalidResponse`/`transport`/`serverError` cases; honest Polish messages;
-  DEBUG decoding details; `Accept` header; documented 15 s timeout; one jittered
-  retry for transient errors/5xx, never 4xx. Covered by `MockURLProtocol` tests.
+  `invalidResponse`/`transport`/`serverError` cases; localized Polish/English
+  messages; DEBUG decoding details logged via `os.Logger`; `Accept` header;
+  documented 15 s timeout; one jittered retry for transient errors/5xx, never
+  4xx. Covered by `MockURLProtocol` tests.
 - **P3-2** `StopsResponse` isolation attribute documented with the exact
-  diagnostic and removal condition (P5-3).
+  diagnostic and removal condition; it remains the deliberate `nonisolated`
+  decoding entry point under Swift 6.
 - **P3-3** Positional tuple decoders validate element counts and coordinate
   ranges, decode with type/field/index diagnostics, normalize bearings, and
   tolerate extra trailing elements.
@@ -71,43 +77,56 @@
   (all 66 documented networks), `aliases` supported in picker search,
   `docs/cities.md` reconciled with the bundle.
 
-## Remaining work
+### Phase 4 — UI, UX, accessibility
+- **P4-1** `Localizable.xcstrings` with Polish and English; `MapMode` has a
+  localized `displayName` while `rawValue` stays a stable identifier; no literal
+  UI copy remains in views; `RouteType` display names moved to
+  `RouteType+UI.swift`.
+- **P4-2** The fixed 52 pt spacer is gone; top chrome is a safe-area-aware
+  stack; shared metrics live in `DesignTokens`; markers scale with Dynamic Type
+  up to a documented cap; the detail sheet is scrollable and offers `.large`
+  for accessibility sizes.
+- **P4-3** Icon-only controls have labels/values/hints; markers and route badges
+  are single accessibility elements; selected state is exposed with traits.
+- **P4-4** Single `MapControlsComboView` initializer, injected
+  `LocationManager`, no singleton fallback; grouped glass controls use
+  `glassEffect`/`glassEffectUnion` with an explanatory comment (native
+  `GlassEffectContainer`); hand-drawn thumbnails replaced by simple native icon
+  cards.
+- **P4-5** The status capsule distinguishes initial load / refresh / city
+  switch, shows a two-line localized error with an inline retry button, and the
+  top chrome includes a visible refresh control. Last successful data stays
+  visible during same-viewport refresh.
 
-### Phase 4 — UI, UX, accessibility (not started)
-- **P4-1** Localizable string catalog, `MapMode.displayName`, pl/en locale.
-  (D3 still open: Polish only vs Polish + English.)
-- **P4-2** Safe-area-aware layout instead of the fixed 52 pt spacer; Dynamic
-  Type audit; design tokens.
-- **P4-3** Accessibility labels/hints, combined marker elements, `.isSelected`.
-- **P4-4** Mostly done: the redundant `init(viewModel:)` singleton fallback was
-  removed with P1-7. Still open: unify glass styling and decide the fate of the
-  hand-drawn map thumbnails.
-- **P4-5** Actionable error capsule with retry, distinct loading states,
-  offline-friendly copy that doesn't cover controls.
-  (D4 resolved as TTL + manual refresh; a visible refresh control is still to
-  add with P4-5.)
+### Phase 5 — Project hygiene, concurrency, docs
+- **P5-1** `xcuserdata` untracked; `.gitignore` covers user data and local build
+  artifacts; shared scheme committed under `xcshareddata`.
+- **P5-2** `README.md` documents Xcode 27.2+ and the JSON project format;
+  `scripts/check-toolchain.sh` fails loudly on older toolchains.
+- **P5-3** `SWIFT_VERSION = 6.0`; strict concurrency; value types that cross
+  actors are `nonisolated` with comments; test doubles use documented
+  lock-guarded `@unchecked Sendable` only where access is protected.
+- **P5-4** `IPHONEOS_DEPLOYMENT_TARGET = 26.0` for app and tests (D6 applied).
+- **P5-5** Architecture/API/cities/AGENTS docs reconciled with the code; ADRs
+  0003–0006 added.
 
-### Phase 5 — Project hygiene, concurrency, docs (not started)
-- **P5-1** Untrack `xcuserdata`, verify ignores, commit a shared scheme.
-- **P5-2** Document minimum Xcode for the JSON project format + CI guard.
-- **P5-3** Swift 6 language mode + strict concurrency; remove/justify the
-  `nonisolated` attributes.
-- **P5-4** Apply **D6**: lower `IPHONEOS_DEPLOYMENT_TARGET` from 27.2 to 26.0
-  (decision accepted, setting not yet changed) and build on the lowest runtime.
-- **P5-5** Remaining doc reconciliation after Phase 4/5 (glass idiom wording,
-  AGENTS.md file map, ADRs already added).
+## Residual manual QA
 
-### Open decisions
-- **D3** localization scope — decide in P4-1.
-- **D5** entrance identity — resolved in P3-4 as tuple index (deterministic).
-- **D4** cache freshness — resolved in P2-3 as TTL + manual refresh API.
+Automated verification is complete. The following are release checks rather than
+open refactor work:
+
+- VoiceOver + Increase Contrast on a device.
+- Dynamic Type XXL on a notched and non-notched device, portrait/landscape.
+- Perceived performance panning Warsaw/GZM on hardware.
+- Airplane-mode launch, city switch, and retry recovery.
+- An iOS 26 runtime smoke test (current simulator is iOS 27.2).
 
 ## Notes for the next agent
-- `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` changes concurrency rules
-  materially; prefer explicit `nonisolated` on cross-actor value types and
-  document any escape hatch, as done for `StopsProviding`, `BoundingBox`, and
-  `StopsResponse`.
-- `MapViewModel` now caches **per viewport**, not per city. When changing fetch
+- `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` remains intentional; mark new pure
+  value types that cross actors as `nonisolated` with a reason.
+- `MapViewModel` caches **per viewport**, not per city. When changing fetch
   behaviour, update `docs/architecture.md` §1 and ADR-0001 in the same commit.
 - The API client retry doubles as the test of jittered backoff; keep 4xx
   non-retryable.
+- User-facing copy belongs in `Resources/Localizable.xcstrings`; identifiers
+  stay locale-independent.

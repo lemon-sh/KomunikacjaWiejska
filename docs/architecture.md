@@ -8,16 +8,23 @@ This document describes the software architecture, state flow, MapKit integratio
 
 1. **Native-First Design:**
    - Pure Apple frameworks: `SwiftUI`, `MapKit`, `CoreLocation`, `Observation`, and `Foundation`.
-   - Prefer Apple HIG idioms: glass materials (`.ultraThinMaterial`), SF Symbols, native MapKit controls, and standard bottom sheets (`.presentationDetents`).
+   - Prefer Apple HIG idioms: Liquid Glass via native `.buttonStyle(.glass)` / `glassEffect` / `GlassEffectContainer`, SF Symbols, native MapKit controls (`MapCompass`), and standard bottom sheets (`.presentationDetents`).
+   - The app never re-implements platform chrome (compass animations, glass buttons, map gestures).
 2. **Observation & Swift Concurrency:**
    - View models use the Swift `@Observable` macro and `@MainActor`.
    - No Combine pipelines or `ObservableObject` classes.
    - Network interactions are actor-isolated (`ZbiorkomAPIClient: actor`) with `async`/`await`.
+   - The app builds in **Swift 6 language mode** with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. Pure value types used across actors (`BoundingBox`, model types, `StopsProviding`) are explicitly `nonisolated`; no blanket `@preconcurrency` escapes.
 3. **Optimized Map Performance:**
    - Public transit networks in metropolitan areas contain tens of thousands of stop poles.
    - Stops are fetched **per visible viewport**: `.onMapCameraChange(frequency: .onEnd)` debounces camera changes (350 ms) and `MapViewModel` passes the viewport bounding box (`minLon,minLat,maxLon,maxLat`) to the backend.
    - Viewport results are cached in memory with a 10-minute TTL and LRU eviction (8 entries); failures and empty results are never cached.
    - When a viewport returns more than 250 stops, `MapViewModel` thins them deterministically (one representative per grid cell) before rendering.
+   - Camera metrics are grouped into one `CameraState` value, so annotations re-render only when the visible/thinned stop set changes.
+4. **Localization & Accessibility:**
+   - User-facing copy lives in `Resources/Localizable.xcstrings` with Polish (`pl`) and English (`en`) translations.
+   - `MapMode` and `RouteType` keep locale-independent identifiers/raw values; display names are localized in the UI layer.
+   - Icon-only controls have accessibility labels, markers combine into one element, and the selected stop/route type is announced.
 
 ---
 
@@ -27,12 +34,17 @@ This document describes the software architecture, state flow, MapKit integratio
 flowchart TD
     App["KomunikacjaWiejskaApp"] --> Content["ContentView"]
     Content --> MapView["TransitMapView (SwiftUI Map)"]
-    MapView --> TopBar["Top Floating Controls (City Picker & Reload)"]
+    MapView --> TopBar["Top Chrome (City Picker, Refresh, Status/Retry)"]
     MapView --> Annotations["Map Annotations (ForEach Stop)"]
     Annotations --> MarkerView["StopMarkerView (Icon + Bearing Arrow)"]
     MapView --> DetailSheet["StopDetailSheet (.sheet(item: selectedStop))"]
     DetailSheet --> RouteBadges["RouteBadgeView (Pill badge per StopRoute)"]
     MapView --> CitySheet["CityPickerSheet (Searchable City List)"]
+    MapView --> Controls["MapControlsComboView (Map mode, Location)"]
+
+    TopBar --> Localized["Localizable.xcstrings (pl/en)"]
+    Annotations --> Localized
+    DetailSheet --> Localized
 
     MapView <-->|Binds to| ViewModel["MapViewModel (@Observable @MainActor)"]
     ViewModel -->|BBox Query| Client["ZbiorkomAPIClient (actor)"]
@@ -62,15 +74,25 @@ flowchart TD
 - [`StopsProviding.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Services/StopsProviding.swift):
   - Injectable abstraction over the stops data source; `ZbiorkomAPIClient` conforms so `MapViewModel` can be built with a stub in tests.
 
+- [`LocationManager.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Services/LocationManager.swift):
+  - Wraps `CLLocationManager`, derives a UI-friendly authorization state, performs one-shot fixes, and logs failures.
+
 ### Extensions (`KomunikacjaWiejska/Extensions/`)
 - [`Color+Hex.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Extensions/Color+Hex.swift):
-  - Initializer for `Color(hex:)` supporting 3-, 6-, and 8-digit hex strings for route and vehicle badge styling.
+  - Failable `Color(hex:)` for 3-, 6-, and 8-digit (ARGB) strings, plus an explicit-fallback convenience.
+- [`RouteType+UI.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Extensions/RouteType+UI.swift):
+  - SwiftUI color and localized display name for `RouteType`; keeps the model UI-free.
+
+### Resources (`KomunikacjaWiejska/Resources/`)
+- `Localizable.xcstrings` — Polish and English copy (map chrome, errors, stop sheet, accessibility).
+- `cities.json` — the bundled 66-network city catalog.
 
 ### Presentation (`KomunikacjaWiejska/ViewModels/` & `Views/`)
 - [`MapViewModel.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/ViewModels/MapViewModel.swift):
-  - Central `@Observable` state holder. Manages camera position, selected city, visible stops, active stop selection, and cancellation of pending network tasks.
+  - Central `@Observable` state holder. Manages camera position, selected city, visible stops, active stop selection, loading phase (`initial` / `refresh` / `citySwitch`), localized errors, and cancellation of pending network tasks.
 - [`TransitMapView.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/TransitMapView.swift):
-  - Root map screen with MapKit standard layer (POI disabled for clarity).
+  - Root map screen with MapKit standard layer (POI disabled for clarity), safe-area-aware top chrome, a retryable status capsule, and a visible refresh control.
+- `DesignTokens.swift` — shared spacing, control, and marker metrics.
 - [`StopMarkerView.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/StopMarkerView.swift):
   - Circular transit badge showing transit icon and a triangle notch rotated to the stop's `bearing`.
 - [`StopDetailSheet.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/StopDetailSheet.swift):

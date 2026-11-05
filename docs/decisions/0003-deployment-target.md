@@ -1,6 +1,6 @@
 # ADR-0003 — Deployment target lowered to iOS 26 (Decision D6)
 
-**Status:** Accepted (2026-11-05) — implementation pending (refactor plan P5-4)
+**Status:** Accepted and implemented (2026-11-05, P5-4)
 
 ## Context
 The project shipped with `IPHONEOS_DEPLOYMENT_TARGET = 27.2`, which excludes
@@ -9,12 +9,13 @@ almost every device in circulation. All APIs the app actually uses
 `onMapCameraChange`) are available from iOS 26.
 
 ## Decision
-The developer chose to **lower the minimum to the glass-feature minimum (iOS 26.0)**
-rather than keep 27.2.
+The developer chose to **lower the minimum to the glass-feature minimum (iOS
+26.0)** rather than keep 27.2.
 
 ## Consequences
-- The project-level build setting `IPHONEOS_DEPLOYMENT_TARGET` changes to
-  `26.0` in `KomunikacjaWiejska.xcodeproj/project.xcproj` (tracked as P5-4).
+- `IPHONEOS_DEPLOYMENT_TARGET` is `26.0` for the app and test targets.
 - No `ultraThinMaterial` fallbacks are needed: all glass APIs remain available.
-- CI/builds must target the lowest supported runtime (iOS 26.0). A loud failure
-  on incompatible Xcode versions is planned alongside P5-2.
+- The project still requires **Xcode 27.2+** because of the JSON
+  `project.xcproj` format; `scripts/check-toolchain.sh` enforces that.
+- Releases should be smoke-tested on an iOS 26 runtime; the current development
+  simulator runs iOS 27.2.

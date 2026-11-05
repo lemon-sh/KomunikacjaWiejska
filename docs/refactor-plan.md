@@ -1,6 +1,8 @@
 # Code Quality Remediation Plan
 
-> Working backlog for future agents. Delete or archive this file once every phase is complete.
+> **Status: complete (2026-11-05).** All phases are implemented and verified;
+> this file is retained as the historical backlog and decision record. See
+> [`refactor-status.md`](refactor-status.md) for the verification snapshot.
 >
 > **Baseline:** `34671bd` (`initial implementation`, 2026-11-05) plus the uncommitted working-tree changes (`await [` in `ZbiorkomAPIClient`, `nonisolated struct StopsResponse`, `.onMapCameraChange(frequency: .onEnd)`).
 > **Line numbers** below refer to that baseline and will drift as the code changes; use the symbol names as the source of truth.
@@ -57,10 +59,10 @@ xcodebuild -project KomunikacjaWiejska.xcodeproj \
   -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO build
 
-# Tests
+# Tests (pick any installed simulator; iPhone 17 works on Xcode 27.2)
 xcodebuild test -project KomunikacjaWiejska.xcodeproj \
   -scheme KomunikacjaWiejska \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
   CODE_SIGNING_ALLOWED=NO
 ```
 
@@ -378,7 +380,7 @@ Specific items:
 
 ## 8. Phase 4 — UI, UX, and accessibility
 
-### [ ] P4-1 Localize strings and separate display names from identifiers
+### [x] P4-1 Localize strings and separate display names from identifiers
 
 **Files:** all views, `ViewModels/MapViewModel.swift:8-12`, `Views/MapControlsComboView.swift:74,130`.
 
@@ -389,7 +391,7 @@ Specific items:
 
 **Acceptance:** No user-visible literal strings in views; switching locale changes labels; `MapMode` identity is locale-independent. Add a test that raw values remain stable.
 
-### [ ] P4-2 Replace magic layout constants with safe-area-aware layout
+### [x] P4-2 Replace magic layout constants with safe-area-aware layout
 
 **Files:** `Views/TransitMapView.swift:42, 114-115, 124-125, 136`, `Views/StopMarkerView.swift`, `Views/StopDetailSheet.swift`.
 
@@ -400,7 +402,7 @@ Specific items:
 
 **Acceptance:** Controls never collide with the Dynamic Island/status bar; XXL Dynamic Type remains usable; no clipped content in the stop sheet.
 
-### [ ] P4-3 Accessibility pass
+### [x] P4-3 Accessibility pass
 
 **Files:** all interactive views.
 
@@ -411,7 +413,7 @@ Specific items:
 
 **Acceptance:** VoiceOver can identify every control and marker; no unlabeled buttons remain.
 
-### [ ] P4-4 Simplify map controls
+### [x] P4-4 Simplify map controls
 
 **Files:** `Views/MapControlsComboView.swift`.
 
@@ -423,7 +425,7 @@ Specific items:
 
 **Acceptance:** One initializer, no global singleton fallback, consistent glass styling, no unexplained drawing magic numbers.
 
-### [ ] P4-5 Error, loading, and offline UX
+### [x] P4-5 Error, loading, and offline UX
 
 **Files:** `Views/TransitMapView.swift:43-67`, `ViewModels/MapViewModel.swift:46-47`.
 
@@ -438,7 +440,7 @@ Specific items:
 
 ## 9. Phase 5 — Project hygiene, concurrency, docs
 
-### [ ] P5-1 Repository hygiene
+### [x] P5-1 Repository hygiene
 
 - Untrack `KomunikacjaWiejska.xcodeproj/xcuserdata/.../xcschememanagement.plist` (already in `.gitignore`, still tracked).
 - Confirm `.build/`, `.DS_Store`, and `buildServer.json` are ignored and not committed.
@@ -447,13 +449,13 @@ Specific items:
 
 **Acceptance:** `git ls-files` contains no user-specific Xcode files; a fresh clone builds.
 
-### [ ] P5-2 Confirm the project file format
+### [x] P5-2 Confirm the project file format
 
 `KomunikacjaWiejska.xcodeproj/project.xcproj` is a JSON-based project file rather than the conventional `project.pbxproj`. `xcodebuild -list` works with the installed Xcode, so this appears intentional (new project format). Document the minimum Xcode version in the README/AGENTS, and add a CI check that fails loudly on an incompatible Xcode.
 
 **Acceptance:** A documented minimum Xcode version; CI green on that version.
 
-### [ ] P5-3 Adopt Swift 6 language mode
+### [x] P5-3 Adopt Swift 6 language mode
 
 **Files:** project settings, `Services/LocationManager.swift`, `Models/Stop.swift`.
 
@@ -464,13 +466,13 @@ Specific items:
 
 **Acceptance:** Swift 6 mode builds and tests cleanly; no new warnings.
 
-### [ ] P5-4 Revisit the deployment target
+### [x] P5-4 Revisit the deployment target
 
 `IPHONEOS_DEPLOYMENT_TARGET = 27.2` excludes almost all current devices. Confirm this is a deliberate product decision. If not, lower it to the minimum version that supports `.glass`/`.glassEffect` and adjust APIs accordingly.
 
 **Acceptance:** Documented target; CI builds on the lowest supported runtime.
 
-### [ ] P5-5 Reconcile documentation with code
+### [x] P5-5 Reconcile documentation with code
 
 - `docs/architecture.md`: update the fetch strategy (P2-1), pruning/clustering (P2-2), component list (remove the stale `Color+Hex` path if it moves), and the “glass materials” idiom (`.glass` vs `.ultraThinMaterial`).
 - `docs/api.md`: add transport/error notes and confirm bbox semantics; keep the tuple reference in sync with P3-3.
@@ -510,6 +512,9 @@ Actual commit sequence used (2026-11-05):
 6. `fix: bearing notch orbits badge center` (P1-6)
 7. `fix: denied-location Settings deep link; one-shot fixes` (P1-7, + the redundant second init from P4-4)
 8. `perf: viewport bbox fetch + thinning + cache + background cancellation` (P2-1…P2-5, D1-A/D2-A/D6 ADRs)
+9. `feat: localize UI, safe-area chrome, accessibility, actionable errors` (P4-1…P4-5)
+10. `chore: shared scheme, toolchain guard, Swift 6 mode, iOS 26 target` (P5-1…P5-4)
+11. `docs: reconcile architecture/API/ADRs and close the remediation plan` (P5-5)
 
 ---
 
@@ -528,15 +533,21 @@ Actual commit sequence used (2026-11-05):
 
 - **D1 → A** (viewport bbox + debounce; 350 ms). ADR: [`docs/decisions/0001-fetch-strategy.md`](decisions/0001-fetch-strategy.md).
 - **D2 → A** (grid thinning, MVP; `MKMapView` clustering may be spiked later). ADR: [`docs/decisions/0002-marker-density.md`](decisions/0002-marker-density.md).
-- **D6 → lower to glass minimum (iOS 26.0)**. ADR: [`docs/decisions/0003-deployment-target.md`](decisions/0003-deployment-target.md). Setting change still pending as P5-4.
-- D4 resolved inside P2-3: both TTL (10 min) and manual refresh are implemented.
-- D3/D5 remain open inside their work packages (P4-1, P3-4).
+- **D3 → Polish + English** (full string catalog). ADR: [`docs/decisions/0004-localization.md`](decisions/0004-localization.md).
+- **D4 → TTL + manual refresh** (10-minute TTL, visible refresh control, cache invalidation).
+- **D5 → tuple index** (entrance IDs are `"{stopID}-entrance-{index}"`).
+- **D6 → lower to glass minimum (iOS 26.0)**, applied in P5-4. ADR: [`docs/decisions/0003-deployment-target.md`](decisions/0003-deployment-target.md).
+- **Swift 6 → enabled** with documented `nonisolated` value types. ADR: [`docs/decisions/0005-swift6-concurrency.md`](decisions/0005-swift6-concurrency.md).
+- **Toolchain → Xcode 27.2+** with a shared scheme and CI check. ADR: [`docs/decisions/0006-toolchain.md`](decisions/0006-toolchain.md).
 
 Progress log:
-- Phase 0, Phase 1, Phase 2, and Phase 3 are complete (2026-11-05); see
-  [`docs/refactor-status.md`](refactor-status.md) for the detailed status.
-- Phase 4 and Phase 5 are outstanding, including applying decision D6
-  (deployment target → iOS 26.0, P5-4).
+- Phase 0, Phase 1, Phase 2, and Phase 3 are complete (2026-11-05).
+- Phase 4 (localization, safe-area layout, accessibility, native control
+  cleanup, actionable errors/retry) is complete.
+- Phase 5 (hygiene, shared scheme, toolchain documentation, Swift 6 mode,
+  iOS 26.0 target, docs reconciliation) is complete.
+- Verification: build has zero source warnings; 36 tests pass hermetically in
+  Swift 6 mode. See [`docs/refactor-status.md`](refactor-status.md).
 
 
 ---
@@ -596,7 +607,7 @@ If there is only time for a short session, do these in order:
 - [x] P1-2: clear `stops` on city switch.
 - [x] P1-4: delete the three dead symbols and the stub assertion.
 - [x] P1-6: fix the notch rotation.
-- [ ] P3-1: remove `await [` and the force unwrap.
-- [ ] P3-5: make invalid hex colors explicit.
+- [x] P3-1: remove `await [` and the force unwrap.
+- [x] P3-5: make invalid hex colors explicit.
 
 These are low-risk, independently mergeable, and remove the most visible symptoms.

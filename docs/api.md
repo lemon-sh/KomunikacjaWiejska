@@ -142,18 +142,20 @@ Standard codes:
 
 ### Client-side error mapping (`ZbiorkomAPIError`)
 
-| Client case | Trigger | User-facing message (Polish) |
+| Client case | Trigger | User-facing message |
 |---|---|---|
-| `transport(URLError.Code)` | Offline, timeout, host unreachable | "Brak połączenia z internetem.", "Przekroczono czas oczekiwania…", etc. |
-| `invalidURL` | Base URL or query construction failure | "Nieprawidłowy adres URL zapytania." |
-| `invalidResponse` | Response is not an `HTTPURLResponse` | "Nieprawidłowa odpowiedź serwera." |
-| `serverError(String)` | Non-200 response with an `error` code | "Błąd serwera: `CODE`" |
-| `httpError(statusCode)` | Non-200 response without an error body | "Błąd HTTP (`code`)." |
-| `decodingError(String)` | Malformed payload | "Błąd parsowania danych…" |
+| `transport(URLError.Code)` | Offline, timeout, host unreachable | Localized: "Brak połączenia z internetem." / "No internet connection.", etc. |
+| `invalidURL` | Base URL or query construction failure | Localized "invalid request URL" copy. |
+| `invalidResponse` | Response is not an `HTTPURLResponse` | Localized "invalid server response" copy. |
+| `serverError(String)` | Non-200 response with an `error` code | Localized "server error: `CODE`". |
+| `httpError(statusCode)` | Non-200 response without an error body | Localized "HTTP error (`code`)". |
+| `decodingError(String)` | Malformed payload | Short localized copy; the associated diagnostic is DEBUG-only and logged with `os.Logger`, never shown in the UI. |
 
-Requests set `Accept: application/json`, use a 15 s timeout, and are retried
-**once with 200–600 ms jitter** for transient transport errors (timeout,
-connection loss, offline) and 5xx responses. 4xx responses are never retried.
+All copy is provided in Polish and English through
+`Resources/Localizable.xcstrings`. Requests set `Accept: application/json`, use a
+15 s timeout, and are retried **once with 200–600 ms jitter** for transient
+transport errors (timeout, connection loss, offline) and 5xx responses. 4xx
+responses are never retried.
 
 ### Bounding box semantics
 
