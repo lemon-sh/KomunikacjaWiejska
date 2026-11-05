@@ -266,17 +266,14 @@ struct KomunikacjaWiejskaTests {
     @Test("Compact display mode respects the threshold boundaries")
     func testCompactDisplayMode() {
         let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
+        let threshold = viewModel.compactDisplayDistanceThreshold
 
-        viewModel.visibleRegion = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 52.23, longitude: 21.01),
-            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-        )
+        // Below the threshold: full markers.
+        viewModel.currentDistance = threshold - 1
         #expect(viewModel.isCompactDisplayMode == false)
 
-        viewModel.visibleRegion = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 52.23, longitude: 21.01),
-            span: MKCoordinateSpan(latitudeDelta: 0.0501, longitudeDelta: 0.0501)
-        )
+        // Above the threshold (e.g. zoomed out to PKP scale): compact points.
+        viewModel.currentDistance = threshold + 1
         #expect(viewModel.isCompactDisplayMode == true)
     }
 }

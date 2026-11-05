@@ -73,13 +73,15 @@ public final class MapViewModel {
 
     private var loadState: LoadState = .idle
 
-    /// Threshold coordinate span delta above which stops are displayed as smaller compact points.
-    public let compactDisplayThreshold: Double = 0.05
+    /// Camera distance (in metres) above which stops are displayed as smaller
+    /// compact points. Distance-based so it is independent of each city's
+    /// default span: every normal city (span ≤ 0.15°) loads fully zoomed
+    /// markers, while the countrywide PKP view starts compact.
+    public let compactDisplayDistanceThreshold: Double = 50_000
 
-    /// Whether the map is zoomed out far enough that stops should be displayed as smaller points.
+    /// Whether the camera is far enough that stops should be displayed as smaller points.
     public var isCompactDisplayMode: Bool {
-        guard let region = visibleRegion else { return false }
-        return region.span.latitudeDelta > compactDisplayThreshold
+        return currentDistance > compactDisplayDistanceThreshold
     }
 
     /// Threshold above which we do not fetch/display stops to avoid lag and overloading the map.
