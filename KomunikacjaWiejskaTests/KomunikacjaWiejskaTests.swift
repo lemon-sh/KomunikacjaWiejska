@@ -201,6 +201,68 @@ struct KomunikacjaWiejskaTests {
         #expect(provider.callCount == 2)
     }
 
+    @Test("Switching city while a request is in flight shows no stale data")
+    func testCitySwitchWhileInFlightDiscardsStaleResponse() async throws {
+        let warsawStops = [StopFixtures.sample(id: "a", city: "warsaw")]
+        let krakowStops = [StopFixtures.sample(id: "b", city: "krakow")]
+        let provider = StubStopsProvider(
+            resultsByCity: [
+                "warsaw": .success(warsawStops),
+                "krakow": .success(krakowStops),
+            ],
+            holdsRequests: true
+        )
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while provider.requestedCities.count < 1 { await Task.yield() }
+        #expect(provider.requestedCities == ["warsaw"])
+        #expect(viewModel.isLoading == true)
+
+        // Switch to an uncached city: previous stops must vanish immediately.
+        viewModel.selectedCity = .krakow
+        while provider.requestedCities.count < 2 { await Task.yield() }
+        #expect(viewModel.stops.isEmpty)
+        #expect(provider.requestedCities == ["warsaw", "krakow"])
+
+        // Release both requests; the stale Warsaw response must not surface.
+        provider.openGate()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(provider.callCount == 2)
+        #expect(viewModel.stops == krakowStops)
+        #expect(viewModel.errorMessage == nil)
+    }
+
+    @Test("Switching back to a cached city shows data immediately without refetching")
+    func testCachedCitySwitchRefetchesNothing() async throws {
+        let warsawStops = [StopFixtures.sample(id: "a", city: "warsaw")]
+        let krakowStops = [StopFixtures.sample(id: "b", city: "krakow")]
+        let provider = StubStopsProvider(
+            resultsByCity: [
+                "warsaw": .success(warsawStops),
+                "krakow": .success(krakowStops),
+            ],
+            holdsRequests: true
+        )
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        provider.openGate()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(viewModel.stops == warsawStops)
+
+        // Switch away: the new city loads; then back: the cached copy must
+        // appear without another request.
+        viewModel.selectedCity = .krakow
+        while viewModel.isLoading { await Task.yield() }
+        #expect(viewModel.stops == krakowStops)
+
+        viewModel.selectedCity = .warsaw
+        #expect(viewModel.stops == warsawStops)
+        #expect(provider.callCount == 2)
+    }
+
     @Test("Compact display mode respects the threshold boundaries")
     func testCompactDisplayMode() {
         let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)

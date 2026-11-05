@@ -43,12 +43,24 @@ public final class MapViewModel {
     public var stops: [Stop] = []
     public var selectedStop: Stop?
     public var isShowingCityPicker: Bool = false
-    public var isLoading: Bool = false
-    public var errorMessage: String?
-
     public var selectedMapMode: MapMode = .explore
     public var isShowingMapModes: Bool = false
     public var isTrackingUser: Bool = false
+
+    /// Whether the currently selected city has a request in flight.
+    public var isLoading: Bool {
+        if case .loading(let cityID) = loadState, cityID == selectedCity.id {
+            return true
+        }
+        return false
+    }
+
+    /// Failure message for the currently selected city, if any. Errors are
+    /// tracked per city so a failed fetch for city A never surfaces while
+    /// viewing city B.
+    public var errorMessage: String? {
+        errorsByCity[selectedCity.id]
+    }
 
     /// Cycle a city's stop fetch can be in. Guarantees one in-flight request
     /// per city and makes `loadStopsForSelectedCity()` idempotent.
@@ -88,6 +100,10 @@ public final class MapViewModel {
     // from any context is safe; the reference itself is never read concurrently.
     @ObservationIgnored private nonisolated(unsafe) var activeFetchTask: Task<Void, Never>?
     private var stopsCache: [String: [Stop]] = [:]
+    private var errorsByCity: [String: String] = [:]
+    /// Generation token guarding against stale responses: each fetch gets a
+    /// fresh token, and a response only applies if it still matches.
+    private var requestGeneration = UUID()
 
     public init(
         apiClient: any StopsProviding = ZbiorkomAPIClient.shared,
@@ -203,9 +219,12 @@ public final class MapViewModel {
 
         // If stops for this city are already in memory, display them immediately and do not fetch
         if let cachedStops = stopsCache[city.id] {
+            // Cancel any request still in flight for the previous city so it
+            // cannot overwrite this cache hit.
+            activeFetchTask?.cancel()
+            requestGeneration = UUID()
             stops = cachedStops
-            isLoading = false
-            errorMessage = nil
+            errorsByCity[city.id] = nil
             loadState = .loaded(cityID: city.id)
             return
         }
@@ -222,26 +241,28 @@ public final class MapViewModel {
 
     private func fetchStops(for city: City) {
         activeFetchTask?.cancel()
-        isLoading = true
-        errorMessage = nil
+        requestGeneration = UUID()
+        let generation = requestGeneration
+        errorsByCity[city.id] = nil
         loadState = .loading(cityID: city.id)
+        // The previous city's stops must not linger on screen while the new
+        // city's request is in flight.
+        stops = []
 
         activeFetchTask = Task { [weak self] in
             guard let self = self else { return }
             do {
                 let fetchedStops = try await self.apiClient.fetchStops(city: city.id, bbox: nil)
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, generation == self.requestGeneration else { return }
                 self.stopsCache[city.id] = fetchedStops
                 if self.selectedCity.id == city.id {
                     self.stops = fetchedStops
-                    self.isLoading = false
                     self.loadState = .loaded(cityID: city.id)
                 }
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, generation == self.requestGeneration else { return }
                 if self.selectedCity.id == city.id {
-                    self.isLoading = false
-                    self.errorMessage = error.localizedDescription
+                    self.errorsByCity[city.id] = error.localizedDescription
                     self.loadState = .failed(cityID: city.id)
                 }
             }
