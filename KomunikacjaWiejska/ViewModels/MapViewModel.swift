@@ -517,18 +517,12 @@ public final class MapViewModel {
         cacheAccessOrder.removeAll(where: { $0.hasPrefix(prefix) })
     }
 
-    /// Cache key at 0.01° resolution so tiny camera nudges do not create new
-    /// entries; a moved meter boundary also triggers refetching.
+    /// Cache key is the exact six-decimal viewport sent to the API. Coarser
+    /// rounding (e.g. 0.01°) would let two different viewports share an entry
+    /// and silently omit stops at high zoom; the debounce already prevents
+    /// request storms from tiny camera nudges.
     private static func cacheKey(city: City, bbox: BoundingBox) -> String {
-        func rounded(_ value: Double) -> Double { (value * 100).rounded() / 100 }
-        let formatted = [
-            rounded(bbox.minLon),
-            rounded(bbox.minLat),
-            rounded(bbox.maxLon),
-            rounded(bbox.maxLat),
-        ].map { String(format: "%.2f", $0) }
-
-        return "\(city.id):\(formatted.joined(separator: ","))"
+        "\(city.id):\(bbox.queryValue)"
     }
 
     // MARK: - Marker thinning (P2-2)
@@ -549,7 +543,10 @@ public final class MapViewModel {
         if thinnedStops.count > Self.maxRenderedStops {
             thinnedStops = Self.thinnedStops(fetchedStops, region: cameraState.region)
         }
-        if thinnedStops.map(\.id) != stops.map(\.id) {
+        // Compare full values, not just IDs: a manual refresh can change a
+        // stop's bearing, routes, or name while keeping the same identifier.
+        // Camera-only changes still produce an equal array and are ignored.
+        if thinnedStops != stops {
             stops = thinnedStops
         }
     }

@@ -35,6 +35,9 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
     private let fixtureStops: [Stop]
     private let fixtureError: Error?
     private let fixturesByCity: [String: Result<[Stop], Error>]
+    /// Replaces every fixture after construction, so tests can simulate a
+    /// refresh returning updated details for the same stop IDs.
+    private let overrideStops = OSAllocatedUnfairLock<[Stop]?>(initialState: nil)
 
     init(
         stops: [Stop] = [],
@@ -74,6 +77,9 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
     }
 
     private func fixtureResult(for city: String) -> Result<[Stop], Error> {
+        if let override = overrideStops.withLock({ $0 }) {
+            return .success(override)
+        }
         if let result = fixturesByCity[city] {
             return result
         }
@@ -81,6 +87,11 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
             return .failure(fixtureError)
         }
         return .success(fixtureStops)
+    }
+
+    /// Changes what every subsequent request returns.
+    func setStops(_ stops: [Stop]) {
+        overrideStops.withLock { $0 = stops }
     }
 
     /// Parks the calling task while the gate holds requests.

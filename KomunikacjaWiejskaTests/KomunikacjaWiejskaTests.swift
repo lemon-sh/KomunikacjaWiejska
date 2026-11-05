@@ -464,6 +464,51 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.count == 1)
     }
 
+    @Test("Manual refresh applies updated stop details with unchanged IDs")
+    func testRefreshAppliesUpdatedStopContent() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample(bearing: 90)])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(viewModel.stops.first?.bearing == 90)
+
+        // Same ID, new details: the rendered marker array must update.
+        provider.setStops([StopFixtures.sample(bearing: 180)])
+        viewModel.refreshStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(viewModel.stops.first?.bearing == 180)
+    }
+
+    @Test("Cache entries are keyed by the exact viewport, not a coarse grid")
+    func testCacheDoesNotAliasNearbyViewports() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()])
+        let startingCity = City(
+            id: "warsaw",
+            name: "Warszawa",
+            coordinate: CLLocationCoordinate2D(latitude: 52.2300, longitude: 21.0100),
+            defaultLatitudeDelta: 0.002,
+            defaultLongitudeDelta: 0.002
+        )
+        let viewModel = MapViewModel(apiClient: provider, initialCity: startingCity)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(provider.callCount == 1)
+
+        // Nearby but distinct viewport: must not be served the previous
+        // viewport's snapshot as if it were the same cache entry.
+        viewModel.visibleRegion = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.2310, longitude: 21.0100),
+            span: MKCoordinateSpan(latitudeDelta: 0.002, longitudeDelta: 0.002)
+        )
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(provider.callCount == 2)
+    }
+
     @Test("Fetch errors surface a message and mark the city as failed")
     func testFetchErrorSurfacesMessage() async throws {
         struct NetworkFailure: Error {}

@@ -546,7 +546,7 @@ Progress log:
   cleanup, actionable errors/retry) is complete.
 - Phase 5 (hygiene, shared scheme, toolchain documentation, Swift 6 mode,
   iOS 26.0 target, docs reconciliation) is complete.
-- Verification: build has zero source warnings; 37 tests pass hermetically in
+- Verification: build has zero source warnings; 39 tests pass hermetically in
   Swift 6 mode. See [`docs/refactor-status.md`](refactor-status.md).
 
 

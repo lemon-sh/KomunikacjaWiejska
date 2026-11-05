@@ -15,8 +15,9 @@ Option **A — viewport bbox fetch**, as recorded in `docs/refactor-plan.md` §1
   350 ms in `MapViewModel`.
 - The visible `MKCoordinateRegion` is converted by `BoundingBox` to the API's
   `bbox` query parameter (`minLon,minLat,maxLon,maxLat`).
-- Results are cached per viewport key (`city` + box rounded to 0.01°) with a
-  10-minute TTL, LRU-capped at 8 entries. Empty or failing responses are never cached.
+- Results are cached per viewport key (`city` + the exact six-decimal `bbox`
+  sent to the API) with a 10-minute TTL, LRU-capped at 8 entries. Empty or
+  failing responses are never cached.
 - A refresh keeps the previously displayed stops on screen; a new viewport
   (pan/zoom/city switch) clears the old data first.
 
