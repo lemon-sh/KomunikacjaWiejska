@@ -310,6 +310,33 @@ struct KomunikacjaWiejskaTests {
         )
     }
 
+    @Test("The location permission prompt is localized in both languages")
+    func testLocationUsageDescriptionLocalization() throws {
+        let enPath = try #require(
+            Bundle.main.path(
+                forResource: "InfoPlist",
+                ofType: "strings",
+                inDirectory: nil,
+                forLocalization: "en"
+            )
+        )
+        let plPath = try #require(
+            Bundle.main.path(
+                forResource: "InfoPlist",
+                ofType: "strings",
+                inDirectory: nil,
+                forLocalization: "pl"
+            )
+        )
+        let enStrings = try #require(NSDictionary(contentsOfFile: enPath) as? [String: String])
+        let plStrings = try #require(NSDictionary(contentsOfFile: plPath) as? [String: String])
+
+        let key = "NSLocationWhenInUseUsageDescription"
+        #expect(enStrings[key]?.isEmpty == false)
+        #expect(plStrings[key]?.isEmpty == false)
+        #expect(enStrings[key] != plStrings[key])
+    }
+
     // MARK: - Hermetic MapViewModel behaviour
 
     @Test("MapViewModel map mode and user location controls")

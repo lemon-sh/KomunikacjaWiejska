@@ -1,0 +1,23 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSLocationWhenInUseUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your location is used to show your position on the map and find nearby stops."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Twoja lokalizacja jest używana, aby pokazać Twoją pozycję na mapie i znaleźć najbliższe przystanki."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

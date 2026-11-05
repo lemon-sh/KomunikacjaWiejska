@@ -8,7 +8,7 @@
 - `xcodebuild build` — app + tests build in **Swift 6 language mode** with no
   source warnings (the only build warning is Xcode's App Intents metadata note,
   which is unrelated to app code).
-- `xcodebuild test` — **40 tests in 2 suites, all passing** on iPhone 17 /
+- `xcodebuild test` — **41 tests in 2 suites, all passing** on iPhone 17 /
   iOS 27.2 with `IPHONEOS_DEPLOYMENT_TARGET = 26.0`.
 - Tests are **hermetic**: all `MapViewModel` tests inject `StubStopsProvider`;
   `ZbiorkomAPIClient` tests use `MockURLProtocol`. No test opens a socket.
@@ -121,6 +121,9 @@
   `LocationAuthorizationState.resolve` is covered by a hermetic test.
 - Additional copy: `location.error.title`, `location.error.message`,
   `location.error.ok` (Polish and English).
+- **P4-1 follow-up** The location permission prompt now lives in
+  `Resources/InfoPlist.xcstrings` (Polish + English) instead of a single
+  hardcoded Polish build setting; a test checks both localized strings.
 - **P2-3 follow-up** The rendered marker array is compared by full `Stop`
   value instead of ID only, so a manual refresh that returns new bearings,
   routes, or names for the same stops is applied (regression test added).

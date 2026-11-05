@@ -85,6 +85,7 @@ flowchart TD
 
 ### Resources (`KomunikacjaWiejska/Resources/`)
 - `Localizable.xcstrings` — Polish and English copy (map chrome, errors, stop sheet, accessibility).
+- `InfoPlist.xcstrings` — localized system permission prompts (location usage description).
 - `cities.json` — the bundled 66-network city catalog.
 
 ### Presentation (`KomunikacjaWiejska/ViewModels/` & `Views/`)
