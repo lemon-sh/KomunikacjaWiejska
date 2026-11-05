@@ -90,6 +90,48 @@ struct KomunikacjaWiejskaTests {
         }
     }
 
+    @Test("Tile grid covers the viewport and stays within a useful zoom range")
+    func testTileGridCoverage() throws {
+        let region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.2297, longitude: 21.0122),
+            span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
+        )
+        let tiles = MapTileGrid.visibleTiles(in: region)
+        #expect(!tiles.isEmpty)
+        #expect(tiles.count <= 40)
+
+        let zoom = MapTileGrid.zoom(forLongitudeDelta: region.span.longitudeDelta)
+        let tileWidth = 360.0 / Double(1 << zoom)
+        let tilesAcross = region.span.longitudeDelta / tileWidth
+        #expect(tilesAcross >= 2)
+        #expect(tilesAcross <= 5)
+
+        let coverage = try #require(MapTileGrid.boundingBox(covering: tiles))
+        let halfLat = region.span.latitudeDelta / 2
+        let halfLon = region.span.longitudeDelta / 2
+        #expect(coverage.minLat <= region.center.latitude - halfLat + 1e-9)
+        #expect(coverage.maxLat >= region.center.latitude + halfLat - 1e-9)
+        #expect(coverage.minLon <= region.center.longitude - halfLon + 1e-9)
+        #expect(coverage.maxLon >= region.center.longitude + halfLon - 1e-9)
+
+        for tile in tiles {
+            let bounds = MapTileGrid.bounds(of: tile)
+            #expect(bounds.minLat < bounds.maxLat)
+            #expect(bounds.minLon < bounds.maxLon)
+            #expect(MapTileGrid.latitude(tileY: Double(tile.y), zoom: tile.zoom) == bounds.maxLat)
+            #expect(MapTileGrid.latitude(tileY: Double(tile.y + 1), zoom: tile.zoom) == bounds.minLat)
+        }
+    }
+
+    @Test("A tile is covered by its ancestors")
+    func testTileAncestorCoverage() {
+        let tile = MapTile(zoom: 16, x: 36_000, y: 22_000)
+        let parent = MapTile(zoom: 15, x: 18_000, y: 11_000)
+        #expect(tile.parent == parent)
+        #expect(parent.parent?.zoom == 14)
+        #expect(MapTile(zoom: 0, x: 0, y: 0).parent == nil)
+    }
+
     @Test("RouteType properties and fallback")
     func testRouteType() {
         #expect(RouteType.tram.systemImageName == "tram.fill")
@@ -474,13 +516,14 @@ struct KomunikacjaWiejskaTests {
         viewModel.loadStopsForSelectedCity()
         while viewModel.isLoading { await Task.yield() }
 
-        // Loading the same viewport again must be served from cache/state, not the network
+        // Loading the same viewport again must be served from the tile cache,
+        // not the network.
         viewModel.loadStopsForSelectedCity()
         #expect(provider.callCount == 1)
         #expect(viewModel.stops.count == 1)
 
         // Camera changes should not clear or refresh stops (a fetch only ever
-        // starts from a debounced camera-change event or explicit load)
+        // starts from a debounced camera-change event or explicit load).
         let dummyRegion = MKCoordinateRegion(
             center: CLLocationCoordinate2D(latitude: 52.0, longitude: 21.0),
             span: MKCoordinateSpan(latitudeDelta: 1.0, longitudeDelta: 1.0)
@@ -488,7 +531,7 @@ struct KomunikacjaWiejskaTests {
         viewModel.visibleRegion = dummyRegion
         #expect(viewModel.stops.count == 1)
 
-        // Restoring the initial viewport still uses the fresh cached snapshot
+        // Restoring the initial viewport is still covered by the session tiles.
         viewModel.visibleRegion = MKCoordinateRegion(
             center: City.warsaw.coordinate,
             span: MKCoordinateSpan(
@@ -522,8 +565,8 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.first?.bearing == 180)
     }
 
-    @Test("Cache entries are keyed by the exact viewport, not a coarse grid")
-    func testCacheDoesNotAliasNearbyViewports() async throws {
+    @Test("A viewport that leaves fetched tile coverage requests new tiles")
+    func testViewportOutsideCoverageFetches() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let startingCity = City(
             id: "warsaw",
@@ -538,16 +581,151 @@ struct KomunikacjaWiejskaTests {
         while viewModel.isLoading { await Task.yield() }
         #expect(provider.callCount == 1)
 
-        // Nearby but distinct viewport: must not be served the previous
-        // viewport's snapshot as if it were the same cache entry.
+        // Far outside the previous coverage: none of the fetched tiles cover
+        // this viewport, so a new request is required.
         viewModel.visibleRegion = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 52.2310, longitude: 21.0100),
+            center: CLLocationCoordinate2D(latitude: 52.2400, longitude: 21.0100),
             span: MKCoordinateSpan(latitudeDelta: 0.002, longitudeDelta: 0.002)
         )
         viewModel.loadStopsForSelectedCity()
         while viewModel.isLoading { await Task.yield() }
 
         #expect(provider.callCount == 2)
+    }
+
+    @Test("A viewport inside fetched tile coverage reuses the cache")
+    func testViewportInsideCoverageDoesNotFetch() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        let initialRegion = MKCoordinateRegion(
+            center: City.warsaw.coordinate,
+            span: MKCoordinateSpan(
+                latitudeDelta: City.warsaw.defaultLatitudeDelta,
+                longitudeDelta: City.warsaw.defaultLongitudeDelta
+            )
+        )
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(provider.callCount == 1)
+
+        let coverage = try #require(
+            MapTileGrid.boundingBox(covering: MapTileGrid.visibleTiles(in: initialRegion))
+        )
+        let coveredRegion = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(
+                latitude: (coverage.minLat + coverage.maxLat) / 2,
+                longitude: (coverage.minLon + coverage.maxLon) / 2
+            ),
+            span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03)
+        )
+
+        viewModel.visibleRegion = coveredRegion
+        viewModel.loadStopsForSelectedCity()
+        #expect(provider.callCount == 1)
+        #expect(viewModel.stops.count == 1)
+    }
+
+    @Test("Zooming in after a coarse fetch is served by ancestor tile coverage")
+    func testZoomingInUsesAncestorCoverage() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(provider.callCount == 1)
+
+        // A tighter viewport is entirely inside the tiles fetched above; its
+        // tiles are descendants and therefore covered.
+        viewModel.visibleRegion = MKCoordinateRegion(
+            center: City.warsaw.coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+        )
+        viewModel.loadStopsForSelectedCity()
+        #expect(provider.callCount == 1)
+        #expect(viewModel.stops.count == 1)
+    }
+
+    @Test("Zooming out fetches coarser tiles once and then reuses them")
+    func testZoomingOutFetchesCoarserCoverage() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        let wideRegion = MKCoordinateRegion(
+            center: City.warsaw.coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.3, longitudeDelta: 0.3)
+        )
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        viewModel.visibleRegion = wideRegion
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(provider.callCount == 2)
+
+        // The coarse tiles now cover the wide viewport.
+        viewModel.loadStopsForSelectedCity()
+        #expect(provider.callCount == 2)
+    }
+
+    @Test("Stops merge across fetches and rendering is filtered to the viewport")
+    func testStopsMergeAndFilterAcrossViewports() async throws {
+        let stopA = StopFixtures.sample(
+            id: "warsaw-a",
+            city: "warsaw",
+            longitude: 21.0100,
+            latitude: 52.2300
+        )
+        let stopB = StopFixtures.sample(
+            id: "warsaw-b",
+            city: "warsaw",
+            longitude: 21.5000,
+            latitude: 52.5000
+        )
+        let provider = StubStopsProvider(stops: [stopA])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(viewModel.stops == [stopA])
+
+        provider.setStops([stopB])
+        viewModel.visibleRegion = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.5000, longitude: 21.5000),
+            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+        )
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        // The new viewport renders only B, while A stays in the session cache.
+        #expect(viewModel.stops == [stopB])
+
+        // Returning to the first viewport is covered by its tiles: no new
+        // request, and A is still available.
+        viewModel.visibleRegion = MKCoordinateRegion(
+            center: City.warsaw.coordinate,
+            span: MKCoordinateSpan(
+                latitudeDelta: City.warsaw.defaultLatitudeDelta,
+                longitudeDelta: City.warsaw.defaultLongitudeDelta
+            )
+        )
+        viewModel.loadStopsForSelectedCity()
+        #expect(provider.callCount == 2)
+        #expect(viewModel.stops == [stopA])
+    }
+
+    @Test("An empty successful response still marks tiles as fetched")
+    func testEmptyResponseMarksTiles() async throws {
+        let provider = StubStopsProvider(stops: [])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(provider.callCount == 1)
+        #expect(viewModel.stops.isEmpty)
+
+        viewModel.loadStopsForSelectedCity()
+        #expect(provider.callCount == 1)
     }
 
     @Test("Fetch errors surface a message and mark the city as failed")
@@ -573,7 +751,12 @@ struct KomunikacjaWiejskaTests {
     @Test("Switching city while a request is in flight shows no stale data")
     func testCitySwitchWhileInFlightDiscardsStaleResponse() async throws {
         let warsawStops = [StopFixtures.sample(id: "a", city: "warsaw")]
-        let krakowStops = [StopFixtures.sample(id: "b", city: "krakow")]
+        let krakowStops = [StopFixtures.sample(
+            id: "b",
+            city: "krakow",
+            longitude: City.krakow.coordinate.longitude,
+            latitude: City.krakow.coordinate.latitude
+        )]
         let provider = StubStopsProvider(
             resultsByCity: [
                 "warsaw": .success(warsawStops),
@@ -604,33 +787,39 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.errorMessage == nil)
     }
 
-    @Test("Switching back to a cached city shows data immediately without refetching")
-    func testCachedCitySwitchRefetchesNothing() async throws {
+    @Test("Switching cities clears the session cache and refetches on return")
+    func testCitySwitchClearsCache() async throws {
         let warsawStops = [StopFixtures.sample(id: "a", city: "warsaw")]
-        let krakowStops = [StopFixtures.sample(id: "b", city: "krakow")]
+        let krakowStops = [StopFixtures.sample(
+            id: "b",
+            city: "krakow",
+            longitude: City.krakow.coordinate.longitude,
+            latitude: City.krakow.coordinate.latitude
+        )]
         let provider = StubStopsProvider(
             resultsByCity: [
                 "warsaw": .success(warsawStops),
                 "krakow": .success(krakowStops),
-            ],
-            holdsRequests: true
+            ]
         )
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
 
         viewModel.loadStopsForSelectedCity()
-        provider.openGate()
         while viewModel.isLoading { await Task.yield() }
         #expect(viewModel.stops == warsawStops)
 
-        // Switch away: the new city loads; then back: the cached copy must
-        // appear without another request.
+        // The previous city's stops must disappear immediately; switching back
+        // later refetches because the cache is session-scoped per city.
         viewModel.selectedCity = .krakow
+        #expect(viewModel.stops.isEmpty)
         while viewModel.isLoading { await Task.yield() }
         #expect(viewModel.stops == krakowStops)
 
         viewModel.selectedCity = .warsaw
+        #expect(viewModel.stops.isEmpty)
+        while viewModel.isLoading { await Task.yield() }
         #expect(viewModel.stops == warsawStops)
-        #expect(provider.callCount == 2)
+        #expect(provider.callCount == 3)
     }
 
     @Test("Compact mode is correct from launch and after switching to a wide network")

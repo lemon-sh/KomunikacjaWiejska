@@ -8,7 +8,7 @@
 - `xcodebuild build` — app + tests build in **Swift 6 language mode** with no
   source warnings (the only build warning is Xcode's App Intents metadata note,
   which is unrelated to app code).
-- `xcodebuild test` — **42 tests in 2 suites, all passing** on iPhone 17 /
+- `xcodebuild test` — **49 tests in 2 suites, all passing** on iPhone 17 /
   iOS 27.2 with `IPHONEOS_DEPLOYMENT_TARGET = 26.0`.
 - Tests are **hermetic**: all `MapViewModel` tests inject `StubStopsProvider`;
   `ZbiorkomAPIClient` tests use `MockURLProtocol`. No test opens a socket.
@@ -51,13 +51,18 @@
 - **P2-2** Grid-based thinning bounds rendering to 250 markers, deterministic.
   The grid is cap-driven (15×16 = 240 slots), not derived from the stop count;
   a stop-count-derived grid collapsed dense viewports to a few markers.
-- **P2-3** Viewport cache with 10-minute TTL and 8-entry LRU; failures and
-  empty/partial results are never cached; explicit load API.
+- **P2-3** Session-only per-city tile cache: Web Mercator coverage cells at
+  roughly three per viewport, one union-bbox request for missing tiles, merge
+  by stop ID, ancestor coverage for zoom-ins, and viewport filtering on render.
+  Failed requests are not cached; the cache is cleared on city switch and never
+  persisted. There is no TTL or LRU (ADR-0007).
 - **P2-4** Camera metrics grouped into one `CameraState` with epsilon equality;
   markers re-render only when the thinned set changes.
 - **P2-5** Backgrounding cancels fetches and stops location updates; returning
-  to `.active` reloads the current viewport.
-- ADRs: `docs/decisions/0001-fetch-strategy.md`, `0002-marker-density.md`.
+  to `.active` checks the current viewport and reuses tile coverage when it is
+  already cached.
+- ADRs: `docs/decisions/0001-fetch-strategy.md`, `0002-marker-density.md`,
+  `0007-tile-cache.md`.
 
 ### Phase 3 — API & model robustness
 - **P3-1** No force unwrap in the client; `URLComponents` built once; dedicated
@@ -99,7 +104,7 @@
   cards.
 - **P4-5** The status capsule distinguishes initial load / same-city viewport
   load / city switch and shows a two-line localized error with an inline retry
-  button. Last successful data stays visible during a same-viewport reload.
+  button. Cached stops stay visible while additional tiles load.
 
 ### Phase 5 — Project hygiene, concurrency, docs
 - **P5-1** `xcuserdata` untracked; `.gitignore` covers user data and local build
@@ -129,10 +134,10 @@
   value instead of ID only, so a later viewport fetch that returns new
   bearings, routes, or names for the same stops is applied (regression test
   added).
-- **P2-3 follow-up** Viewport cache keys now use the exact six-decimal `bbox`
-  sent to the API instead of a 0.01° grid, which could serve one viewport's
-  snapshot to a different nearby viewport and omit stops at high zoom
-  (regression test added). ADR-0001 updated.
+- **P2-3 follow-up** The exact-bbox snapshot cache was replaced by the tile
+  cache in ADR-0007. Cache entries no longer expire, are not LRU-bounded, are
+  cleared on city switch, and are never written to disk. Overlapping viewports
+  reuse merged stops instead of being treated as cache misses. ADR-0001 updated.
 
 ## Residual manual QA
 

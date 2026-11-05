@@ -18,7 +18,7 @@ This document describes the software architecture, state flow, MapKit integratio
 3. **Optimized Map Performance:**
    - Public transit networks in metropolitan areas contain tens of thousands of stop poles.
    - Stops are fetched **per visible viewport**: `.onMapCameraChange(frequency: .onEnd)` debounces camera changes (350 ms) and `MapViewModel` passes the viewport bounding box (`minLon,minLat,maxLon,maxLat`) to the backend.
-   - Viewport results are cached in memory with a 10-minute TTL and LRU eviction (8 entries); failures and empty results are never cached.
+   - Fetched stops live in a session-only, per-city tile cache. Web Mercator tiles at roughly three-per-viewport act as coverage cells: a fetched tile (or any ancestor) covers its descendants, so overlapping pans and zoom-ins reuse data. Missing tiles are requested as one union bbox and merged by stop ID; the cache is cleared on city switch and never persisted.
    - When a viewport returns more than 250 stops, `MapViewModel` thins them deterministically (one representative per grid cell) before rendering.
    - Camera metrics are grouped into one `CameraState` value, so annotations re-render only when the visible/thinned stop set changes.
 4. **Localization & Accessibility:**
@@ -34,7 +34,7 @@ This document describes the software architecture, state flow, MapKit integratio
 flowchart TD
     App["KomunikacjaWiejskaApp"] --> Content["ContentView"]
     Content --> MapView["TransitMapView (SwiftUI Map)"]
-    MapView --> TopBar["Top Chrome (City Picker, Refresh, Status/Retry)"]
+    MapView --> TopBar["Top Chrome (City Picker, Status/Retry)"]
     MapView --> Annotations["Map Annotations (ForEach Stop)"]
     Annotations --> MarkerView["StopMarkerView (Icon + Bearing Arrow)"]
     MapView --> DetailSheet["StopDetailSheet (.sheet(item: selectedStop))"]
@@ -61,6 +61,8 @@ flowchart TD
   - Maps route types to SF Symbols (`tram.fill`, `bus.fill`, etc.) and brand colors.
 - [`BoundingBox.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Models/BoundingBox.swift):
   - Calculates `minLon,minLat,maxLon,maxLat` from an `MKCoordinateRegion` for API requests.
+- [`MapTile.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Models/MapTile.swift):
+  - Pure Web Mercator tile math for the session cache: visible tiles for a region, tile bounds, and the union bbox used for one fetch.
 - [`Stop.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Models/Stop.swift):
   - `Stop`, `StopRoute`, `StopEntrance` models.
   - Implements custom `Decodable` parsing of the unkeyed positional arrays (`unkeyedContainer()`).
@@ -90,7 +92,7 @@ flowchart TD
 
 ### Presentation (`KomunikacjaWiejska/ViewModels/` & `Views/`)
 - [`MapViewModel.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/ViewModels/MapViewModel.swift):
-  - Central `@Observable` state holder. Manages camera position, selected city, visible stops, active stop selection, loading phase (`initial` / `refresh` / `citySwitch`), localized errors, and cancellation of pending network tasks.
+  - Central `@Observable` state holder. Manages camera position, selected city, the session tile cache, visible stops, active stop selection, loading phase (`initial` / `refresh` / `citySwitch`), localized errors, and cancellation of pending network tasks.
 - [`TransitMapView.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/TransitMapView.swift):
   - Root map screen with MapKit standard layer (POI disabled for clarity), safe-area-aware top chrome, and a retryable status capsule.
 - `DesignTokens.swift` — shared spacing, control, and marker metrics.

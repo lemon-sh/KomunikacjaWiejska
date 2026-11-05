@@ -252,19 +252,21 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 **Acceptance:** Pan/zoom a large city (Warsaw, GZM) at 120 Hz-capable device and confirm no sustained frame drops; marker count on screen is bounded. Document the chosen strategy.
 
-### [x] P2-3 Bound the cache and add refresh semantics
+### [x] P2-3 Define cache semantics for viewport coverage
 
 **Files:** `ViewModels/MapViewModel.swift:76, 180-185`.
 
 **Problem:** `stopsCache` is an unbounded in-memory dictionary with no TTL. A cached city never refreshes. Empty/partial arrays cache forever.
 
-**Change:**
-- Add a TTL (e.g. 5–10 minutes) and an explicit retry action.
-- Cap entries with LRU eviction (e.g. 5 cities) or drop non-selected cities when memory pressure is received.
-- Do not cache failed or cancelled results.
-- Consider a discriminator key (`city + bbox` if Option A).
+**Change (implemented):**
+- Cache stops in a session-only, per-city dictionary plus a set of fetched Web Mercator tiles.
+- Fetch the union bbox of missing tiles in one request and merge results by stop ID.
+- Treat a tile as covered by itself or any ancestor so zooming in needs no new data.
+- Keep existing markers while new tiles load; do not cache failed requests.
+- Keep an explicit retry action (`loadStopsForSelectedCity`).
+- Clear the cache on city switch; never persist it. No TTL or LRU (ADR-0007).
 
-**Acceptance:** Visiting 10 cities keeps cache size bounded; pull-to-refresh/reload fetches fresh data after TTL; failure does not poison the cache.
+**Acceptance:** Overlapping pans reuse cached stops without blanking; repeated exact viewports issue no request; failure does not poison the cache; city switch clears all stop data.
 
 ### [x] P2-4 Reduce observation churn on camera changes
 
@@ -525,7 +527,7 @@ Actual commit sequence used (2026-11-05):
 | D1 | Stops fetch strategy | A: viewport bbox + debounce; B: full-city fetch | A for large networks; B only if simplicity is preferred and docs are updated | P2-1, P2-3, P3-1 |
 | D2 | Marker density strategy | A: grid thinning; B: `MKMapView` clustering; C: SwiftUI `Marker` clustering | B (native) if the architecture can absorb a representable; A as an interim | P2-2 |
 | D3 | Localization scope | Polish only; Polish + English | Polish primary + English if App Store requires it | P4-1 |
-| D4 | Cache freshness | TTL only; manual refresh only; both | TTL only (viewport changes refetch automatically) | P2-3 |
+| D4 | Cache freshness | TTL/LRU; session-only tiles; manual refresh | Session-only tile cache, cleared on city switch, never persisted | P2-3 |
 | D5 | Entrance identity | Tuple index; name + coordinates; server ID if added | Tuple index (deterministic) | P3-4 |
 | D6 | Minimum iOS | 27.2 (current); lower to glass minimum | Ask the developer | P5-4 |
 
@@ -534,7 +536,7 @@ Actual commit sequence used (2026-11-05):
 - **D1 → A** (viewport bbox + debounce; 350 ms). ADR: [`docs/decisions/0001-fetch-strategy.md`](decisions/0001-fetch-strategy.md).
 - **D2 → A** (grid thinning, MVP; `MKMapView` clustering may be spiked later). ADR: [`docs/decisions/0002-marker-density.md`](decisions/0002-marker-density.md).
 - **D3 → Polish + English** (full string catalog). ADR: [`docs/decisions/0004-localization.md`](decisions/0004-localization.md).
-- **D4 → TTL only** (10-minute TTL; viewport changes and the error retry trigger fetches, so a separate refresh control was removed).
+- **D4 → session-only tile cache** (no TTL or LRU; cleared on city switch; never persisted). See [`docs/decisions/0007-tile-cache.md`](decisions/0007-tile-cache.md).
 - **D5 → tuple index** (entrance IDs are `"{stopID}-entrance-{index}"`).
 - **D6 → lower to glass minimum (iOS 26.0)**, applied in P5-4. ADR: [`docs/decisions/0003-deployment-target.md`](decisions/0003-deployment-target.md).
 - **Swift 6 → enabled** with documented `nonisolated` value types. ADR: [`docs/decisions/0005-swift6-concurrency.md`](decisions/0005-swift6-concurrency.md).
@@ -546,7 +548,7 @@ Progress log:
   cleanup, actionable errors/retry) is complete.
 - Phase 5 (hygiene, shared scheme, toolchain documentation, Swift 6 mode,
   iOS 26.0 target, docs reconciliation) is complete.
-- Verification: build has zero source warnings; 42 tests pass hermetically in
+- Verification: build has zero source warnings; 49 tests pass hermetically in
   Swift 6 mode. See [`docs/refactor-status.md`](refactor-status.md).
 
 
@@ -560,7 +562,7 @@ Progress log:
 | Swift 6 mode surfaces many concurrency errors | High | Do it after functional fixes, one module/type at a time; no blanket `@preconcurrency` |
 | Lowering the deployment target removes `.glass` APIs | Medium | Confirm D6 first; keep a fallback branch for `ultraThinMaterial` only if the developer approves, not silently |
 | Backend tuple order changes | Low | P3-3 count checks yield descriptive errors; add a contract test with a recorded payload |
-| Cache TTL makes the map feel stale | Low | Refresh on city re-entry and expose manual reload |
+| Session cache shows server-side changes until relaunch or city switch | Low | Accepted trade-off: stop data changes rarely while the app is open; switching city clears the cache |
 | Full-city fetch causes memory spikes on GZM/Warsaw | High (current) | P2-1/P2-2/P2-3 are the mitigation; measure with Instruments |
 
 ---

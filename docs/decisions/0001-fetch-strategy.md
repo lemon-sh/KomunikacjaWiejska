@@ -15,16 +15,17 @@ Option **A — viewport bbox fetch**, as recorded in `docs/refactor-plan.md` §1
   350 ms in `MapViewModel`.
 - The visible `MKCoordinateRegion` is converted by `BoundingBox` to the API's
   `bbox` query parameter (`minLon,minLat,maxLon,maxLat`).
-- Results are cached per viewport key (`city` + the exact six-decimal `bbox`
-  sent to the API) with a 10-minute TTL, LRU-capped at 8 entries. Empty or
-  failing responses are never cached.
-- A refresh keeps the previously displayed stops on screen; a new viewport
-  (pan/zoom/city switch) clears the old data first.
+- Results are cached per city in a session-only tile cache: fetched stops are
+  merged by ID, and successful tile coverage is recorded so overlapping
+  viewports reuse it. Failed requests are not cached, and the cache is cleared
+  on city switch. See [ADR-0007](0007-tile-cache.md).
+- Existing markers stay on screen while additional tiles load; rendering is
+  always filtered to the current viewport.
 
 Rejected: Option B (full-city fetch) — unbounded memory/latency on large networks.
 
 ## Consequences
 - Request pattern must match `docs/architecture.md` §1.
 - `BoundingBox` is production-wired (previously dead code).
-- Zooming out does not merge previously fetched viewports; the viewport cache
-  covers repeated round-trips instead.
+- The tile cache covers overlapping pans and repeated round-trips; zooming out
+  fetches coarser tiles once so later zoom-ins can reuse them.

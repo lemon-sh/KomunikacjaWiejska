@@ -93,6 +93,7 @@ public final class MapViewModel {
             guard selectedCity != oldValue else { return }
             UserDefaults.standard.set(selectedCity.id, forKey: "lastSelectedCityId")
             selectedStopID = nil
+            clearStopCache()
             repositionCameraForCurrentCity()
             loadStopsForSelectedCity()
         }
@@ -100,8 +101,8 @@ public final class MapViewModel {
 
     public var cameraPosition: MapCameraPosition
     public var cameraState: CameraState
-    /// Markers currently rendered on the map. This is the thinned view of the
-    /// fetched stop set; the full fetched set is kept off-screen.
+    /// Markers currently rendered on the map. This is the visible, thinned
+    /// view of the session stop cache.
     public private(set) var stops: [Stop] = []
     /// Marker selection source of truth: the map writes the tagged stop ID,
     /// the detail sheet is derived from it. Identify by ID instead of the full
@@ -163,7 +164,7 @@ public final class MapViewModel {
     /// never set this; write to `selectedStopID` instead.
     public var selectedStop: Stop? {
         guard let selectedStopID = selectedStopID else { return nil }
-        return fetchedStops.first(where: { $0.id == selectedStopID })
+        return cachedStopsByID[selectedStopID]
     }
 
     /// Cycle a city's stop fetch can be in. Guarantees one in-flight request
@@ -198,15 +199,6 @@ public final class MapViewModel {
     static let maxRenderedStops = 250
     /// Debounce applied to fetches triggered by camera movement.
     private static let cameraFetchDebounce: Duration = .milliseconds(350)
-    /// How long a cached viewport snapshot is served without refetching.
-    private static let stopsCacheTTL: TimeInterval = 600
-    /// Maximum number of cached viewport snapshots kept in memory (LRU).
-    private static let stopsCacheCapacity = 8
-
-    private struct CacheSnapshot {
-        let stops: [Stop]
-        let cachedAt: Date
-    }
 
     private let apiClient: any StopsProviding
     // `nonisolated(unsafe)`: only mutated from `@MainActor` methods, read from
@@ -214,16 +206,17 @@ public final class MapViewModel {
     // from any context is safe; the reference itself is never read concurrently.
     @ObservationIgnored private nonisolated(unsafe) var activeFetchTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var debounceTask: Task<Void, Never>?
-    private var viewportCache: [String: CacheSnapshot] = [:]
-    private var cacheAccessOrder: [String] = []
+    /// Session-only stop cache for the selected city. Never persisted, and
+    /// cleared on every city switch. Stop data is treated as stable for the
+    /// lifetime of the app process, so entries never expire.
+    private var cachedStopsByID: [String: Stop] = [:]
+    /// Tiles whose bbox has been fetched successfully in this session. A tile
+    /// also covers all of its descendants, so zooming in needs no new data.
+    private var fetchedTiles: Set<MapTile> = []
     private var errorsByCity: [String: String] = [:]
     /// Generation token guarding against stale responses: each fetch gets a
     /// fresh token, and a response only applies if it still matches.
     private var requestGeneration = UUID()
-    /// Un-thinned results for the viewport currently displayed.
-    private var fetchedStops: [Stop] = []
-    /// Cache key of the data currently on screen, if any.
-    private var displayedKey: String?
     /// City of the last request, even when no data has arrived yet. Lets the
     /// loading phase distinguish a switch from a cold start.
     private var lastRequestedCityID: String?
@@ -348,29 +341,32 @@ public final class MapViewModel {
         }
     }
 
-    // MARK: - Stop fetching (viewport bbox strategy, D1-A)
+    // MARK: - Stop fetching (tiled viewport coverage, D1-A)
+
+    /// Why the current viewport does or does not need a request.
+    private enum ViewportLoad {
+        case cached
+        case fetch(bbox: BoundingBox, tiles: Set<MapTile>)
+        case invalid
+    }
 
     /// Loads stops for the selected city's current viewport. Idempotent while
-    /// a request for the same viewport is in flight or a fresh enough cached
-    /// snapshot exists.
+    /// a request for the same area is in flight or every required tile is
+    /// already cached.
     public func loadStopsForSelectedCity() {
         debounceTask?.cancel()
+        debounceTask = nil
         fetchCurrentViewport()
     }
 
     // MARK: - Scene phase (P2-5)
 
-    /// Cancels in-flight network work when the scene backgrounds.
+    /// Cancels in-flight network work when the scene backgrounds. The session
+    /// cache is kept in memory so returning to the foreground stays instant.
     public func pauseForBackground() {
-        activeFetchTask?.cancel()
         debounceTask?.cancel()
-        // Invalidate the generation so a task that already past its guard
-        // writes nothing after resume.
-        requestGeneration = UUID()
-        loadingPhase = nil
-        if case .loading = fetchState {
-            fetchState = .idle
-        }
+        debounceTask = nil
+        cancelActiveFetch()
     }
 
     /// Maps an error to a short, localized message. Non-`LocalizedError`
@@ -387,26 +383,18 @@ public final class MapViewModel {
 
     private func fetchCurrentViewport() {
         let city = selectedCity
-        guard let bbox = BoundingBox(region: cameraState.region) else {
-            loadingPhase = nil
-            return
-        }
-        let key = Self.cacheKey(city: city, bbox: bbox)
-
-        // A fresh snapshot for exactly this viewport needs no network at all.
-        if let freshSnapshot = freshSnapshot(key: key) {
-            fetchState = .loaded(cityKey: key)
-            loadingPhase = nil
-            // A cached viewport is a successful load; do not keep showing an
-            // error from an earlier failed attempt.
+        switch loadDecision(for: cameraState.region) {
+        case .cached:
+            cancelActiveFetch()
+            fetchState = .loaded(cityKey: "\(city.id):tiles")
             errorsByCity[city.id] = nil
-            if displayedKey != key {
-                display(freshSnapshot.stops, forKey: key)
-            }
-            return
+            loadingPhase = nil
+            updateStops()
+        case .fetch(let bbox, let tiles):
+            startFetch(city: city, bbox: bbox, tiles: tiles)
+        case .invalid:
+            cancelActiveFetch()
         }
-
-        startFetch(city: city, bbox: bbox, key: key)
     }
 
     /// Debounces fetches triggered by `.onEnd` camera changes (P1/P2-1).
@@ -416,66 +404,79 @@ public final class MapViewModel {
             guard let self = self else { return }
             try? await Task.sleep(for: Self.cameraFetchDebounce)
             guard !Task.isCancelled else { return }
-            let city = self.selectedCity
-            guard let bbox = BoundingBox(region: self.cameraState.region) else { return }
-            let key = Self.cacheKey(city: city, bbox: bbox)
-            if case .loading(let loadingKey) = self.fetchState, loadingKey == key { return }
-            if case .loaded(let loadedKey) = self.fetchState, loadedKey == key, self.freshSnapshot(key: key) != nil {
-                return
-            }
-            self.startFetch(city: city, bbox: bbox, key: key)
+            self.debounceTask = nil
+            self.fetchCurrentViewport()
         }
     }
 
-    private func startFetch(city: City, bbox: BoundingBox, key: String) {
+    /// Decides whether the visible tiles are already covered by the session
+    /// cache, and if not, which missing tiles to request in one bbox.
+    private func loadDecision(for region: MKCoordinateRegion) -> ViewportLoad {
+        let visibleTiles = MapTileGrid.visibleTiles(in: region)
+        guard !visibleTiles.isEmpty else { return .invalid }
+        let missingTiles = visibleTiles.filter { !isTileCovered($0) }
+        guard !missingTiles.isEmpty else { return .cached }
+        guard let bbox = MapTileGrid.boundingBox(covering: missingTiles) else {
+            return .invalid
+        }
+        return .fetch(bbox: bbox, tiles: missingTiles)
+    }
+
+    /// A tile is covered by itself or any of its ancestors: a coarser fetch
+    /// already returned every stop inside the finer tile. Descendants are not
+    /// consulted; zooming out of a deeply zoomed area fetches the coarser
+    /// tiles once, after which zooming back in is free.
+    private func isTileCovered(_ tile: MapTile) -> Bool {
+        var candidate: MapTile? = tile
+        while let current = candidate {
+            if fetchedTiles.contains(current) {
+                return true
+            }
+            candidate = current.parent
+        }
+        return false
+    }
+
+    private func startFetch(city: City, bbox: BoundingBox, tiles: Set<MapTile>) {
+        let key = "\(city.id):\(bbox.queryValue)"
         guard fetchState != .loading(cityKey: key) else { return }
 
         activeFetchTask?.cancel()
         debounceTask?.cancel()
+        debounceTask = nil
         requestGeneration = UUID()
         let generation = requestGeneration
         errorsByCity[city.id] = nil
         fetchState = .loading(cityKey: key)
 
-        // Classify the load before any displayed data is cleared. Fall back to
-        // the last requested city when the previous request has not produced
-        // data yet (e.g. switching while the first city is still loading).
-        let previousCityID = displayedKey
-            .map { String($0.prefix(while: { $0 != ":" })) } ?? lastRequestedCityID
-        if previousCityID == nil {
+        if lastRequestedCityID == nil {
             loadingPhase = .initial
-        } else if previousCityID == city.id {
+        } else if lastRequestedCityID == city.id {
             loadingPhase = .refresh
         } else {
             loadingPhase = .citySwitch
         }
         lastRequestedCityID = city.id
 
-        // Keep previously fetched results on screen while refreshing the same
-        // viewport; for a new viewport (pan/zoom/city switch) drop the stale
-        // set first so old data never lingers.
-        if displayedKey != key {
-            if let snapshot = viewportCache[key] {
-                display(snapshot.stops, forKey: key)
-            } else {
-                clearDisplayedData()
-            }
-        }
+        // Existing cached stops stay on screen while the new tiles load.
+        updateStops()
 
         activeFetchTask = Task { [weak self] in
             guard let self = self else { return }
             do {
                 let fetchedStops = try await self.apiClient.fetchStops(city: city.id, bbox: bbox)
                 guard !Task.isCancelled, generation == self.requestGeneration else { return }
-                // Empty or partial results must not poison the cache.
-                if !fetchedStops.isEmpty {
-                    self.storeInCache(fetchedStops, key: key)
+                guard self.selectedCity.id == city.id else { return }
+                for stop in fetchedStops {
+                    self.cachedStopsByID[stop.id] = stop
                 }
-                if self.selectedCity.id == city.id {
-                    self.display(fetchedStops, forKey: key)
-                    self.fetchState = .loaded(cityKey: key)
-                    self.loadingPhase = nil
-                }
+                // Empty results still mark the tiles as fetched: an empty
+                // viewport is authoritative for this session and must not
+                // trigger a request on every settle.
+                self.fetchedTiles.formUnion(tiles)
+                self.fetchState = .loaded(cityKey: key)
+                self.loadingPhase = nil
+                self.updateStops()
             } catch {
                 guard !Task.isCancelled, generation == self.requestGeneration else { return }
                 if self.selectedCity.id == city.id {
@@ -487,65 +488,61 @@ public final class MapViewModel {
         }
     }
 
-    // MARK: - Viewport cache (bounded, TTL, LRU — P2-3)
-
-    private func storeInCache(_ stops: [Stop], key: String) {
-        viewportCache[key] = CacheSnapshot(stops: stops, cachedAt: Date.now)
-        // Refresh LRU order.
-        if let index = cacheAccessOrder.firstIndex(of: key) {
-            cacheAccessOrder.remove(at: index)
-        }
-        cacheAccessOrder.append(key)
-        while cacheAccessOrder.count > Self.stopsCacheCapacity {
-            let evicted = cacheAccessOrder.removeFirst()
-            viewportCache.removeValue(forKey: evicted)
+    private func cancelActiveFetch() {
+        activeFetchTask?.cancel()
+        activeFetchTask = nil
+        // Invalidate the generation so a task already past its guard writes
+        // nothing after cancellation.
+        requestGeneration = UUID()
+        loadingPhase = nil
+        if case .loading = fetchState {
+            fetchState = .idle
         }
     }
 
-    private func freshSnapshot(key: String) -> CacheSnapshot? {
-        guard let snapshot = viewportCache[key],
-              Date.now.timeIntervalSince(snapshot.cachedAt) < Self.stopsCacheTTL
-        else { return nil }
-        // LRU touch.
-        if let index = cacheAccessOrder.firstIndex(of: key) {
-            cacheAccessOrder.remove(at: index)
-            cacheAccessOrder.append(key)
-        }
-        return snapshot
-    }
-
-    /// Cache key is the exact six-decimal viewport sent to the API. Coarser
-    /// rounding (e.g. 0.01°) would let two different viewports share an entry
-    /// and silently omit stops at high zoom; the debounce already prevents
-    /// request storms from tiny camera nudges.
-    private static func cacheKey(city: City, bbox: BoundingBox) -> String {
-        "\(city.id):\(bbox.queryValue)"
-    }
-
-    // MARK: - Marker thinning (P2-2)
-    private func display(_ stops: [Stop], forKey key: String) {
-        fetchedStops = stops
-        displayedKey = key
+    /// Drops every cached stop and tile for the previous city. The cache is
+    /// session-only and never written to UserDefaults or disk.
+    private func clearStopCache() {
+        debounceTask?.cancel()
+        debounceTask = nil
+        cancelActiveFetch()
+        cachedStopsByID.removeAll()
+        fetchedTiles.removeAll()
         updateStops()
     }
 
-    private func clearDisplayedData() {
-        fetchedStops = []
-        displayedKey = nil
-        updateStops()
-    }
+    // MARK: - Marker rendering (P2-2)
 
     private func updateStops() {
-        var thinnedStops = fetchedStops
-        if thinnedStops.count > Self.maxRenderedStops {
-            thinnedStops = Self.thinnedStops(fetchedStops, region: cameraState.region)
+        let region = cameraState.region
+        let visibleStops = cachedStopsByID.values.filter { Self.contains($0, in: region) }
+
+        let renderedStops: [Stop]
+        if visibleStops.count > Self.maxRenderedStops {
+            renderedStops = Self.thinnedStops(visibleStops, region: region)
+        } else {
+            renderedStops = visibleStops.sorted { $0.id < $1.id }
         }
+
         // Compare full values, not just IDs: a later viewport fetch can change
         // a stop's bearing, routes, or name while keeping the same identifier.
         // Camera-only changes still produce an equal array and are ignored.
-        if thinnedStops != stops {
-            stops = thinnedStops
+        if renderedStops != stops {
+            stops = renderedStops
         }
+    }
+
+    /// Whether a stop lies inside the visible viewport. The cache is
+    /// city-wide, so this filter is required even when no thinning runs.
+    private static func contains(_ stop: Stop, in region: MKCoordinateRegion) -> Bool {
+        let latitudeSpan = region.span.latitudeDelta
+        let longitudeSpan = region.span.longitudeDelta
+        guard latitudeSpan.isFinite, longitudeSpan.isFinite,
+              latitudeSpan > 0, longitudeSpan > 0
+        else { return false }
+        let dx = (stop.longitude - region.center.longitude) / longitudeSpan
+        let dy = (stop.latitude - region.center.latitude) / latitudeSpan
+        return abs(dx) <= 0.5 && abs(dy) <= 0.5
     }
 
     /// Grid-based thinning: keep one deterministic representative per cell of
