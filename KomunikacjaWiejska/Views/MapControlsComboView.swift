@@ -87,13 +87,13 @@ public struct MapControlsComboView: View {
                 do {
                     let location = try await locationManager.requestCurrentLocation()
                     viewModel.centerOnUserLocation(coordinate: location.coordinate)
-                } catch LocationError.denied, LocationError.servicesDisabled {
+                } catch LocationError.denied {
                     locationAlert = .settings
                 } catch {
                     locationAlert = .unavailable
                 }
             }
-        case .denied, .servicesDisabled:
+        case .denied:
             // Requesting again can never succeed; offer the Settings deep link.
             locationAlert = .settings
         }

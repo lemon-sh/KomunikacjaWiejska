@@ -7,15 +7,14 @@ public enum LocationAuthorizationState: Equatable, Sendable {
     case notDetermined
     case denied
     case authorized
-    case servicesDisabled
 
     /// Pure mapping so the policy can be unit-tested without instantiating
     /// `CLLocationManager`.
-    public static func resolve(
-        status: CLAuthorizationStatus,
-        servicesEnabled: Bool
-    ) -> LocationAuthorizationState {
-        guard servicesEnabled else { return .servicesDisabled }
+    ///
+    /// Disabling Location Services system-wide makes Core Location report
+    /// `.denied` to the delegate, so a separate `locationServicesEnabled()`
+    /// check is redundant — and that call must not run on the main thread.
+    public static func resolve(status: CLAuthorizationStatus) -> LocationAuthorizationState {
         switch status {
         case .notDetermined:
             return .notDetermined
@@ -32,14 +31,11 @@ public enum LocationAuthorizationState: Equatable, Sendable {
 /// Failures the location button can surface to the user.
 public enum LocationError: LocalizedError, Equatable, Sendable {
     case denied
-    case servicesDisabled
     case unavailable
 
     public var errorDescription: String? {
         switch self {
         case .denied:
-            return String(localized: "location.alert.message")
-        case .servicesDisabled:
             return String(localized: "location.alert.message")
         case .unavailable:
             return String(localized: "location.error.message")
@@ -74,10 +70,7 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate {
 
     /// Derived, UI-friendly view of what the location button should do.
     public var authorizationState: LocationAuthorizationState {
-        LocationAuthorizationState.resolve(
-            status: authorizationStatus,
-            servicesEnabled: CLLocationManager.locationServicesEnabled()
-        )
+        LocationAuthorizationState.resolve(status: authorizationStatus)
     }
 
     public func requestWhenInUseAuthorization() {
@@ -96,8 +89,6 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate {
         switch authorizationState {
         case .denied:
             throw LocationError.denied
-        case .servicesDisabled:
-            throw LocationError.servicesDisabled
         case .notDetermined:
             let status = await awaitAuthorizationDecision()
             switch status {

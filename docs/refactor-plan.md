@@ -215,7 +215,7 @@ ZStack {
 **Problem:** Once denied, the location button re-requests an authorization that can never appear. Updates run forever. Failure callback is empty.
 
 **Change:**
-- Expose a derived state (`notDetermined`, `denied`, `authorized`, `servicesDisabled`).
+- Expose a derived state (`notDetermined`, `denied`, `authorized`).
 - When denied/restricted, show an alert with “Open Settings” (`UIApplication.openSettingsURLString`) instead of silently doing nothing.
 - Call `stopUpdatingLocation()` when the app backgrounds or when the user is not tracking, and `requestLocation()` for a one-shot fix.
 - Implement `didFailWithError` with `Logger`/`os.Logger` and a user-visible message for `kCLErrorDenied`.
