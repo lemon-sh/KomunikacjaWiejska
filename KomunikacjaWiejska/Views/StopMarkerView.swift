@@ -31,15 +31,20 @@ public struct StopMarkerView: View {
                 .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 0.5)
         } else {
             ZStack {
-                // Directional pointer / triangle notch if bearing is known
+                // Directional pointer / triangle notch if bearing is known.
+                // The triangle is offset inside a ZStack whose centre is the
+                // badge centre, then the whole container rotates, so the notch
+                // orbits the badge instead of spinning in place.
                 if let bearing = stop.bearing {
-                    Image(systemName: "triangle.fill")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 8, height: 8)
-                        .foregroundStyle(markerColor)
-                        .offset(y: -14)
-                        .rotationEffect(.degrees(Double(bearing)))
+                    ZStack {
+                        Image(systemName: "triangle.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 8, height: 8)
+                            .foregroundStyle(markerColor)
+                            .offset(y: -14)
+                    }
+                    .rotationEffect(.degrees(Double(bearing)))
                 }
 
                 // Main circular badge
