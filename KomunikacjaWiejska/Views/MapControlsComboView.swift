@@ -1,4 +1,3 @@
-import CoreLocation
 import SwiftUI
 
 @MainActor
@@ -6,15 +5,12 @@ public struct MapControlsComboView: View {
     @Bindable var viewModel: MapViewModel
     @Namespace private var namespace
     var locationManager: LocationManager
+    @State private var isShowingLocationAlert = false
+    @Environment(\.openURL) private var openURL
 
     public init(viewModel: MapViewModel, locationManager: LocationManager) {
         self.viewModel = viewModel
         self.locationManager = locationManager
-    }
-
-    public init(viewModel: MapViewModel) {
-        self.viewModel = viewModel
-        self.locationManager = LocationManager.shared
     }
 
     public var body: some View {
@@ -46,15 +42,34 @@ public struct MapControlsComboView: View {
                 .glassEffectUnion(id: "mainCapsule", namespace: namespace)
             }
         }
+        .alert("Włącz lokalizację w Ustawieniach", isPresented: $isShowingLocationAlert) {
+            Button("Otwórz Ustawienia", action: openAppSettings)
+            Button("Anuluj", role: .cancel) {}
+        } message: {
+            Text("Dostęp do lokalizacji jest zablokowany, więc nie można wyświetlić Twojego położenia na mapie.")
+        }
     }
 
     private func handleLocationTap() {
-        if locationManager.authorizationStatus == .notDetermined {
+        switch locationManager.authorizationState {
+        case .notDetermined:
             locationManager.requestWhenInUseAuthorization()
-        } else if let coord = locationManager.userLocation?.coordinate {
-            viewModel.centerOnUserLocation(coordinate: coord)
-        } else {
-            locationManager.requestWhenInUseAuthorization()
+        case .authorized:
+            if let coordinate = locationManager.userLocation?.coordinate {
+                viewModel.centerOnUserLocation(coordinate: coordinate)
+            } else {
+                // No fix yet: request a one-shot location update.
+                locationManager.requestLocationUpdate()
+            }
+        case .denied, .servicesDisabled:
+            // Requesting again can never succeed; offer the Settings deep link.
+            isShowingLocationAlert = true
+        }
+    }
+
+    private func openAppSettings() {
+        if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+            openURL(settingsURL)
         }
     }
 }
