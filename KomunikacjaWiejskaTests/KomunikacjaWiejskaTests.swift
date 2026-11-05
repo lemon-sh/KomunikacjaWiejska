@@ -644,6 +644,21 @@ struct KomunikacjaWiejskaTests {
         #expect(provider.callCount == 2)
     }
 
+    @Test("Compact mode is correct from launch and after switching to a wide network")
+    func testCompactModeAtLaunchAndSwitch() {
+        let warsawViewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
+        #expect(warsawViewModel.isCompactDisplayMode == false)
+
+        let pkp = City.city(id: "pkp")
+        let pkpViewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: pkp)
+        #expect(pkpViewModel.isCompactDisplayMode == true)
+
+        // Switching to a countrywide network must not keep the old city's
+        // distance until MapKit sends its first camera callback.
+        warsawViewModel.selectedCity = pkp
+        #expect(warsawViewModel.isCompactDisplayMode == true)
+    }
+
     @Test("Compact display mode respects the threshold boundaries")
     func testCompactDisplayMode() {
         let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)

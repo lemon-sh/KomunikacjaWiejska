@@ -253,7 +253,7 @@ public final class MapViewModel {
         )
         self.cameraState = CameraState(
             region: initialRegion,
-            distance: 15_000,
+            distance: Self.approximateDistance(for: initialRegion),
             center: chosenCity.coordinate
         )
         self.cameraPosition = .region(initialRegion)
@@ -275,8 +275,19 @@ public final class MapViewModel {
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
             cameraPosition = .region(newRegion)
         }
-        cameraState = CameraState(region: newRegion, distance: currentDistance, center: selectedCity.coordinate)
+        cameraState = CameraState(
+            region: newRegion,
+            distance: Self.approximateDistance(for: newRegion),
+            center: selectedCity.coordinate
+        )
         isTrackingUser = false
+    }
+
+    /// MapKit does not expose a synchronous camera distance when only a region
+    /// is known. The visible height in metres is a close enough proxy for the
+    /// compact-mode threshold: 0.08° ≈ 9 km for a city, 5° ≈ 555 km for PKP.
+    static func approximateDistance(for region: MKCoordinateRegion) -> Double {
+        region.span.latitudeDelta * 111_000
     }
 
     public func handleCameraChange(to context: MapCameraUpdateContext) {

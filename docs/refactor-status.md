@@ -8,7 +8,7 @@
 - `xcodebuild build` — app + tests build in **Swift 6 language mode** with no
   source warnings (the only build warning is Xcode's App Intents metadata note,
   which is unrelated to app code).
-- `xcodebuild test` — **41 tests in 2 suites, all passing** on iPhone 17 /
+- `xcodebuild test` — **42 tests in 2 suites, all passing** on iPhone 17 /
   iOS 27.2 with `IPHONEOS_DEPLOYMENT_TARGET = 26.0`.
 - Tests are **hermetic**: all `MapViewModel` tests inject `StubStopsProvider`;
   `ZbiorkomAPIClient` tests use `MockURLProtocol`. No test opens a socket.
@@ -33,7 +33,9 @@
 - **P1-2** Switching city clears the old markers immediately; generation token
   discards stale responses; loading/errors are tracked per city.
 - **P1-3** Compact marker mode is derived from camera **distance** (50 km), not
-  latitude span; all normal cities launch with full markers.
+  latitude span; the initial and city-switch distance is derived from the new
+  region's span, so PKP starts compact while all normal cities launch with full
+  markers.
 - **P1-4** Removed `isZoomedOutForStops`, `maxSpanForStops`, `selectStop`;
   `BoundingBox` is now production-wired instead of dead.
 - **P1-5** Selection is a single `selectedStopID` source of truth using
