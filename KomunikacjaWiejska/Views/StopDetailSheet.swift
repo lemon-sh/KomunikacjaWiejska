@@ -27,11 +27,12 @@ public struct RouteBadgeView: View {
         HStack(spacing: 4) {
             Image(systemName: route.type.systemImageName)
                 .font(.caption2.weight(.bold))
+                .frame(width: 14, height: 14)
             Text(route.name)
                 .font(.system(.caption, design: .rounded).weight(.bold))
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .frame(height: 24)
         .background(badgeColor)
         .foregroundStyle(.white)
         .clipShape(Capsule())
@@ -81,7 +82,7 @@ public struct StopDetailSheet: View {
             Image(systemName: stop.primaryVehicleType.systemImageName)
                 .font(.title2)
                 .foregroundStyle(stop.primaryVehicleType.defaultColor)
-                .padding(8)
+                .frame(width: 40, height: 40)
                 .background(stop.primaryVehicleType.defaultColor.opacity(0.15))
                 .clipShape(Circle())
                 .accessibilityHidden(true)
@@ -123,7 +124,6 @@ public struct StopDetailSheet: View {
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(.secondary)
             }
             .accessibilityLabel(Text("stopDetail.close"))
         }

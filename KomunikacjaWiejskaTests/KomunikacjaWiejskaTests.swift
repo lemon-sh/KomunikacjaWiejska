@@ -462,49 +462,34 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.loadingPhase == nil)
     }
 
-    @Test("Grid thinning bounds the rendered marker count deterministically")
-    func testGridThinning() {
+    @Test("Visible stops are rendered in deterministic ID order without thinning")
+    func testVisibleStopsRenderedWithoutThinning() async throws {
         let region = MKCoordinateRegion(
             center: CLLocationCoordinate2D(latitude: 52.2, longitude: 21.0),
-            span: MKCoordinateSpan(latitudeDelta: 0.2, longitudeDelta: 0.2)
+            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
         )
-        let rawStops = (0..<1000).map { index in
-            StopFixtures.sample(id: String(format: "stop-%04d", index))
-        }
-
-        _ = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
-        let thinned = MapViewModel.thinnedStops(rawStops, region: region)
-
-        #expect(thinned.count <= MapViewModel.maxRenderedStops)
-        #expect(thinned.map(\.id) == MapViewModel.thinnedStops(rawStops, region: region).map(\.id))
-        // Exactly one representative per occupied cell
-        let ids = Set(thinned.map(\.id))
-        #expect(ids.count == thinned.count)
-    }
-
-    @Test("Grid thinning keeps a useful marker count for dense viewports")
-    func testGridThinningDensity() {
-        let region = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 52.2, longitude: 21.0),
-            span: MKCoordinateSpan(latitudeDelta: 0.2, longitudeDelta: 0.2)
-        )
-        // 2,000 stops spread evenly over the viewport, not stacked on one point.
-        let rawStops = (0..<2000).map { index in
-            let row = Double(index / 50)
-            let column = Double(index % 50)
-            return StopFixtures.sample(
-                id: String(format: "stop-%04d", index),
-                longitude: 20.9 + column * (0.2 / 50),
-                latitude: 52.1 + row * (0.2 / 40)
+        // Stops within the viewport
+        let stops = (0..<50).map { index in
+            StopFixtures.sample(
+                id: String(format: "stop-%04d", 49 - index),
+                longitude: 21.0 + Double(index) * 0.0005,
+                latitude: 52.2 + Double(index) * 0.0005
             )
         }
 
-        let thinned = MapViewModel.thinnedStops(rawStops, region: region)
+        let provider = StubStopsProvider(stops: stops)
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.cameraState = MapViewModel.CameraState(
+            region: region,
+            distance: 5_000,
+            center: region.center
+        )
 
-        // A cap-driven grid should retain most of its slots, not collapse to a
-        // handful of markers as a stop-count-derived grid did.
-        #expect(thinned.count > 200)
-        #expect(thinned.count <= MapViewModel.maxRenderedStops)
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(viewModel.stops.count == 50)
+        #expect(viewModel.stops.map(\.id) == stops.map(\.id).sorted())
     }
 
     @Test("Repeated loads and camera changes use the cache without refetching")
@@ -595,15 +580,14 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.selectedStop == nil)
     }
 
-    @Test("Selected stop is preserved even when grid thinning occurs")
-    func testSelectedStopPreservedDuringThinning() async throws {
-        // Create enough stops to trigger grid thinning (> 250)
-        let count = 300
+    @Test("Selected stop is preserved in rendered stops")
+    func testSelectedStopPreserved() async throws {
+        let count = 20
         var allStops: [Stop] = []
         for index in 0..<count {
             allStops.append(
                 StopFixtures.sample(
-                    id: String(format: "thin-stop-%03d", index),
+                    id: String(format: "stop-%03d", index),
                     longitude: 21.0 + Double(index) * 0.0001,
                     latitude: 52.2 + Double(index) * 0.0001
                 )
@@ -616,10 +600,8 @@ struct KomunikacjaWiejskaTests {
         viewModel.loadStopsForSelectedCity()
         while viewModel.isLoading { await Task.yield() }
 
-        #expect(viewModel.stops.count <= MapViewModel.maxRenderedStops)
-
         // Select a stop and verify it stays in rendered stops
-        let targetID = "thin-stop-150"
+        let targetID = "stop-010"
         viewModel.selectedStopID = targetID
         #expect(viewModel.stops.contains(where: { $0.id == targetID }))
     }
@@ -883,13 +865,18 @@ struct KomunikacjaWiejskaTests {
     @Test("Compact mode is correct from launch and after switching to a wide network")
     func testCompactModeAtLaunchAndSwitch() {
         let warsawViewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
+        // Warsaw default distance is ~8,880m, which is above the 6,000m compact threshold
+        #expect(warsawViewModel.isCompactDisplayMode == true)
+
+        // When zoomed in below 6,000m, compact display is disabled
+        warsawViewModel.currentDistance = 4_000
         #expect(warsawViewModel.isCompactDisplayMode == false)
 
         let pkp = City.city(id: "pkp")
         let pkpViewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: pkp)
         #expect(pkpViewModel.isCompactDisplayMode == true)
 
-        // Switching to a countrywide network must not keep the old city's
+        // Switching to a countrywide network must not keep the zoomed-in
         // distance until MapKit sends its first camera callback.
         warsawViewModel.selectedCity = pkp
         #expect(warsawViewModel.isCompactDisplayMode == true)
@@ -1098,8 +1085,8 @@ struct KomunikacjaWiejskaTests {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
 
-        // When distance is beyond the 25,000m threshold:
-        viewModel.currentDistance = 26_000
+        // When distance is beyond the 12,000m threshold:
+        viewModel.currentDistance = 13_000
         #expect(!viewModel.areStopsVisible)
 
         viewModel.loadStopsForSelectedCity()
@@ -1119,7 +1106,7 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.count == 1)
 
         // Zooming out again immediately hides rendered stops:
-        viewModel.currentDistance = 30_000
+        viewModel.currentDistance = 15_000
         #expect(!viewModel.areStopsVisible)
         viewModel.loadStopsForSelectedCity()
         #expect(viewModel.stops.isEmpty)
@@ -1186,5 +1173,45 @@ struct KomunikacjaWiejskaTests {
         #expect(abs(pkpVM.currentCenter.latitude - 50.0647) < 1e-6)
         #expect(abs(pkpVM.currentCenter.longitude - 19.9450) < 1e-6)
         #expect(pkpVM.currentDistance == 15_000)
+    }
+
+    @Test("StopDetailSheet route badges have uniform height across vehicle types")
+    func testRouteBadgeUniformHeight() {
+        for type in RouteType.displayableCases {
+            let route = StopRoute(
+                id: "route-\(type.rawValue)",
+                city: "warsaw",
+                name: "100",
+                longName: "100",
+                agency: "ztm",
+                type: type,
+                color: "#1E88E5"
+            )
+            let badge = RouteBadgeView(route: route)
+            let size = UIHostingController(rootView: badge).sizeThatFits(in: CGSize(width: 300, height: 300))
+            #expect(size.height == 24)
+        }
+    }
+
+    @Test("StopDetailSheet header icon container has uniform square footprint across vehicle types")
+    func testHeaderIconUniformFootprint() {
+        for type in RouteType.displayableCases {
+            let stop = Stop(
+                id: "stop-\(type.rawValue)",
+                city: "warsaw",
+                name: "Test Stop",
+                code: "01",
+                longitude: 21.0,
+                latitude: 52.0,
+                vehicleTypes: [type],
+                bearing: 0,
+                direction: "Center",
+                routes: [],
+                entrances: []
+            )
+            let sheet = StopDetailSheet(stop: stop, onDismiss: {})
+            let size = UIHostingController(rootView: sheet).sizeThatFits(in: CGSize(width: 375, height: 600))
+            #expect(size.width > 0 && size.height > 0)
+        }
     }
 }

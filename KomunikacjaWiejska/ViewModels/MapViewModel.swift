@@ -112,7 +112,7 @@ public final class MapViewModel {
 
     public var cameraPosition: MapCameraPosition
     public var cameraState: CameraState
-    /// Markers currently rendered on the map. This is the visible, thinned
+    /// Markers currently rendered on the map. This is the visible
     /// view of the session stop cache.
     public private(set) var stops: [Stop] = []
     /// Marker selection source of truth: the map writes the tagged stop ID,
@@ -200,13 +200,11 @@ public final class MapViewModel {
     private var fetchState: FetchState = .idle
 
     /// Camera distance (in metres) above which stops are displayed as smaller
-    /// compact points. Distance-based so it is independent of each city's
-    /// default span: every normal city (span ≤ 0.15°) loads fully zoomed
-    /// markers, while the countrywide PKP view starts compact.
-    public let compactDisplayDistanceThreshold: Double = 10_000
+    /// compact points.
+    public let compactDisplayDistanceThreshold: Double = 6_000
 
     /// Camera distance (in metres) above which stops are no longer displayed at all.
-    public let stopVisibilityDistanceThreshold: Double = 25_000
+    public let stopVisibilityDistanceThreshold: Double = 12_000
 
     /// Whether the camera is far enough that stops should be displayed as smaller points.
     public var isCompactDisplayMode: Bool {
@@ -228,9 +226,6 @@ public final class MapViewModel {
         return currentPitch > 1.0
     }
 
-    /// Hard ceiling on markers rendered at once; extra stops are thinned to
-    /// one representative per grid cell (see `thinnedStops`).
-    static let maxRenderedStops = 250
     /// Debounce applied to fetches triggered by camera movement.
     private static let cameraFetchDebounce: Duration = .milliseconds(350)
 
@@ -772,38 +767,22 @@ public final class MapViewModel {
         }
 
         let region = cameraState.region
-        let visibleStops = cachedStopsByID.values.filter { Self.contains($0, in: region) }
-
-        var renderedStops: [Stop]
-        if visibleStops.count > Self.maxRenderedStops {
-            renderedStops = Self.thinnedStops(visibleStops, region: region)
-        } else {
-            renderedStops = visibleStops.sorted { $0.id < $1.id }
-        }
-
-        // Always keep the currently selected stop visible if it falls within the viewport,
-        // even if grid thinning would have dropped its cell.
-        if let selectedStopID = selectedStopID,
-           let selectedStop = cachedStopsByID[selectedStopID],
-           Self.contains(selectedStop, in: region),
-           !renderedStops.contains(where: { $0.id == selectedStopID }) {
-            renderedStops.append(selectedStop)
-            renderedStops.sort { $0.id < $1.id }
-        }
+        let renderedStops = cachedStopsByID.values
+            .filter { Self.contains($0, in: region) }
+            .sorted { $0.id < $1.id }
 
         // Compare full values, not just IDs: a later viewport fetch can change
         // a stop's bearing, routes, or name while keeping the same identifier.
         // Camera-only changes still produce an equal array and are ignored.
         if renderedStops != stops {
             #if DEBUG
-            Logger.mapCache.debug("Rendered stops updated: \(visibleStops.count, privacy: .public) visible in cache -> \(renderedStops.count, privacy: .public) rendered on map (ceiling: \(Self.maxRenderedStops, privacy: .public))")
+            Logger.mapCache.debug("Rendered stops updated: \(renderedStops.count, privacy: .public) rendered on map")
             #endif
             stops = renderedStops
         }
     }
 
-    /// Whether a stop lies inside the visible viewport. The cache is
-    /// city-wide, so this filter is required even when no thinning runs.
+    /// Whether a stop lies inside the visible viewport.
     private static func contains(_ stop: Stop, in region: MKCoordinateRegion) -> Bool {
         let latitudeSpan = region.span.latitudeDelta
         let longitudeSpan = region.span.longitudeDelta
@@ -813,64 +792,6 @@ public final class MapViewModel {
         let dx = (stop.longitude - region.center.longitude) / longitudeSpan
         let dy = (stop.latitude - region.center.latitude) / latitudeSpan
         return abs(dx) <= 0.5 && abs(dy) <= 0.5
-    }
-
-    /// Grid-based thinning: keep one deterministic representative per cell of
-    /// a grid laid over the visible region.
-    static func thinnedStops(_ rawStops: [Stop], region: MKCoordinateRegion?) -> [Stop] {
-        guard let region = region else { return [] }
-        let grid = thinningGrid()
-        var buckets: [Int: Stop] = [:]
-        for stop in rawStops {
-            guard let cell = cellIndex(
-                for: stop,
-                in: region,
-                grid: grid
-            ) else { continue }
-            if let current = buckets[cell] {
-                // Deterministic pick so repainting does not flicker markers.
-                if stop.id < current.id {
-                    buckets[cell] = stop
-                }
-            } else {
-                buckets[cell] = stop
-            }
-        }
-        return buckets.values.sorted { $0.id < $1.id }
-    }
-
-    private struct ThinningGrid {
-        let columns: Int
-        let rows: Int
-    }
-
-    /// Fixed grid sized to `maxRenderedStops`. It must not be derived from the
-    /// stop count: `sqrt(count / cap)` produces very few cells for dense
-    /// viewports (e.g. a 2×2 grid for 1,000 stops), discarding nearly every
-    /// marker. 15×16 = 240 slots stays under the cap.
-    private static func thinningGrid() -> ThinningGrid {
-        let columns = max(2, Int(Double(maxRenderedStops).squareRoot()))
-        let rows = max(2, maxRenderedStops / columns)
-        return ThinningGrid(columns: columns, rows: rows)
-    }
-
-    private static func cellIndex(
-        for stop: Stop,
-        in region: MKCoordinateRegion,
-        grid: ThinningGrid
-    ) -> Int? {
-        let latitudeSpan = max(region.span.latitudeDelta, 1e-6)
-        let longitudeSpan = max(region.span.longitudeDelta, 1e-6)
-        let dx = (stop.longitude - region.center.longitude) / longitudeSpan
-        let dy = (stop.latitude - region.center.latitude) / latitudeSpan
-        guard abs(dx) <= 0.5, abs(dy) <= 0.5 else { return nil }  // outside viewport
-        let column = clampCell(Int((dx + 0.5) * Double(grid.columns)), limit: grid.columns)
-        let row = clampCell(Int((dy + 0.5) * Double(grid.rows)), limit: grid.rows)
-        return row * grid.columns + column
-    }
-
-    private static func clampCell(_ value: Int, limit: Int) -> Int {
-        min(max(value, 0), limit - 1)
     }
 }
 
