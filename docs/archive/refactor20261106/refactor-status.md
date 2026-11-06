@@ -1,8 +1,17 @@
 # Refactor Status — Plan 2
 
 > Companion to [`refactor-plan.md`](refactor-plan.md). Authored 2026-11-06.
-> **Status: plan authored, not started.** Update this file as phases land; do
-> not mark a task complete until its acceptance criteria pass.
+> **Status: completed (Phases 0–7 finished).**
+
+## Final verification snapshot
+
+Recorded on 2026-11-06 upon completion of Phase 7:
+
+- **Toolchain:** Xcode 27.2 (27B52), iOS 26.0 deployment target, Swift 6
+  language mode, `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`.
+- **Build:** `xcodebuild … build` succeeds with zero compiler warnings.
+- **Tests:** 72 tests in 7 focused suites, all passing in `./scripts/verify.sh` on iPhone 17 (iOS 27.2 simulator).
+- **Architecture & ADRs:** Reconciled; ADR-0008 (spatial cap) active; flat Zoom 12 cache; 6 km / 12 km thresholds; stubs hermetic with `MockURLProtocol.withHandler` and `InMemoryCameraPersistenceStore`.
 
 ## Verification snapshot (baseline)
 
@@ -112,9 +121,9 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
 
 ### Phase 7 — Documentation, repo, release
 
-- [ ] R7-1 Reconcile all architecture documents
-- [ ] R7-2 Final verification
-- [ ] R7-3 Close the plan and move it to `docs/archive/refactor20261106/`
+- [x] R7-1 Reconcile all architecture documents
+- [x] R7-2 Final verification
+- [x] R7-3 Close the plan and move it to `docs/archive/refactor20261106/`
 
 ## Open decisions
 
@@ -141,6 +150,7 @@ D1 and D2 resolved in Phase 0/1.
 - 2026-11-06 — Phase 4 completed: clean MapTile (fixed zoom 12), RouteType.unknown handling, TupleReader positional decoding, entrances in StopDetailSheet, RouteType+UI.swift per ADR-0004, City.city(id:) optional, internal-by-default access control.
 - 2026-11-06 — Phase 5 completed: bounded retry loop with exponential backoff and jitter, non-retryable notConnectedToInternet, reusable JSONDecoder, CancellationError rethrowing.
 - 2026-11-06 — Phase 6 completed: replaced spin-wait synchronization with waitUntil/waitUntilLoaded, isolated persistence state via InMemoryCameraPersistenceStore, split test suite into 7 focused files (all ≤ 370 lines), de-brittled catalog and route tests, simplified StubStopsProvider, added regression tests (72 tests passing).
+- 2026-11-06 — Phase 7 completed: reconciled all architecture documents and ADRs, removed stale banners, verified clean gate (0 warnings, 72/72 tests passing), archived Refactor Plan 2.
 
 ## Notes for the next agent
 

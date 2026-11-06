@@ -2,16 +2,13 @@
 
 **Status:** Superseded by [ADR-0008](0008-marker-density.md) (2026-11-06)
 
-> [!NOTE]
-> Implementation changed on 2026-11-06; see `docs/refactor20261106/refactor-plan.md` (D1/D2) and [ADR-0008](0008-marker-density.md). Do not follow the details below until Phase 7 reconciles this file.
-
 ## Context
 SwiftUI `Annotation` is created per stop; large cities can return thousands of
 stops for one viewport and drop frames when the map renders them all.
 
-## Decision
+## Historical Decision
 Option **A — grid-based thinning inside `MapViewModel`** (MVP), as recorded in the
-refactor plan §11:
+initial refactor plan:
 
 - `MapViewModel.maxRenderedStops = 250` bounds the rendered marker set.
 - Above the bound, the fetched set is thinned deterministically: a square grid
@@ -24,6 +21,11 @@ Rejected for now: Option B (`MKMapView` via `UIViewRepresentable` with native
 `MKClusterAnnotation`) — better long-term clustering, but higher regression risk
 for Liquid Glass styling and native map controls. The plan's risk register allows
 spiking it in a branch later.
+
+## Superseded Note
+Superseded by [ADR-0008](0008-marker-density.md) on 2026-11-06, which formally
+standardized representative spatial grid thinning with a deterministic 250-stop cap,
+selected stop preservation invariant, and integration with `MapConstants`.
 
 ## Consequences
 - `repainting` binds only to the thinned `stops` array; the camera state is one

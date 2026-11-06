@@ -1,9 +1,6 @@
 # ADR-0007 — Session tile cache for stops
 
-**Status:** Accepted (2026-11-05)
-
-> [!NOTE]
-> Implementation changed on 2026-11-06; see `docs/refactor20261106/refactor-plan.md` (D1/D2). Do not follow the details below until Phase 7 reconciles this file.
+**Status:** Accepted (2026-11-05, updated 2026-11-06)
 
 ## Context
 The stops endpoint returns every stop inside a bbox, independent of zoom. The
@@ -22,26 +19,24 @@ Use a **session-only, per-city tile cache with a flat Zoom 12 grid**:
 - Cache stops in one `cachedStopsByID` dictionary per selected city. New
   responses overwrite entries by stop ID (newest wins).
 - Record successful coverage in a `fetchedTiles` set of Web Mercator
-  Zoom 12 tiles (`MapTile.fixedZoom = 12`, ~6 km × 6 km per tile).
+  Zoom 12 tiles (`MapTile.zoom = 12`, ~6 km × 6 km per tile).
 - All coverage tiles share the same coarseness without hierarchy or ancestor
   traversal. A required tile is covered if it is directly contained in `fetchedTiles`.
-- Zoom threshold for stops:
-  - `stopVisibilityDistanceThreshold = 25_000` metres (sits above the 10,000 m
-    compacting threshold).
-  - When camera distance exceeds 25,000 m, stop markers are hidden (`stops = []`)
-    and network fetches are suppressed. Zooming back in restores fetching and rendering.
+- Distance thresholds for stops:
+  - `stopCompactDistanceThreshold = 6_000` metres: stops display as compact dot markers with hidden annotation titles.
+  - `stopVisibilityDistanceThreshold = 12_000` metres: when camera distance exceeds 12,000 m, stop markers are hidden (`stops = []`) and network fetches are suppressed. Zooming back in restores fetching and rendering.
 - On camera settle within visible range, compute the visible Zoom 12 tiles.
   If all are covered, make no request. Otherwise request the **union bbox of the missing tiles**
   as one request and mark them fetched on success.
 - Render from the city-wide stop dictionary, filtering to the current viewport
-  before applying the 250-marker thinning pass.
+  before applying representative spatial grid thinning (capping at 250 stops per ADR-0008).
 - Keep existing markers on screen while new tiles load; a failed request leaves
   the cache untouched.
 - Treat a successful empty response as valid coverage so it is not retried on
   every settle.
 - Clear both the stop dictionary and the tile set on every city switch.
 - On background transition (`scenePhase == .background`), the camera center
-  coordinates and zoom distance are persisted to `UserDefaults` and restored
+  coordinates and zoom distance are persisted via `CameraPersistenceStore` and restored
   on next launch if valid for the selected city (or unconditionally for PKP).
 - The stop cache itself is never persisted to non-volatile storage.
 - Entries do not expire while the app process lives.

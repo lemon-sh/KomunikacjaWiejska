@@ -565,7 +565,7 @@ previews work with networking disabled; no `#Preview` triggers a real request.
 
 ## 7. Phase 3 — Views and presentation
 
-### [x] R3-1 Simplify `StopMarkerView`'s dual API
+### [ ] R3-1 Simplify `StopMarkerView`'s dual API
 
 **Files:** `Views/StopMarkerView.swift`.
 
@@ -581,7 +581,7 @@ view-model initializer. Derive everything else from `Stop` and `RouteType`.
 **Acceptance:** One initializer; previews/tests construct the value directly; no
 optional-mirroring properties.
 
-### [x] R3-2 Hide annotation titles natively in compact mode
+### [ ] R3-2 Hide annotation titles natively in compact mode
 
 **Files:** `Views/TransitMapView.swift:104-106`.
 
@@ -595,7 +595,7 @@ accessibility label on the marker). Verify VoiceOver still announces the stop.
 **Acceptance:** No empty-string titles; VoiceOver reads the stop name in both
 modes; compact mode has no visible labels.
 
-### [x] R3-3 Finish the design-token pass
+### [ ] R3-3 Finish the design-token pass
 
 **Files:** `Views/DesignTokens.swift`, `Views/StopMarkerView.swift`,
 `Views/StopDetailSheet.swift`, `Views/MapControlsComboView.swift`.
@@ -611,7 +611,7 @@ Document the selected-marker scale and compact-size rules.
 **Acceptance:** `rg` shows no unused `DesignTokens` member; layout is unchanged
 at default and XXL Dynamic Type (screenshot diff).
 
-### [x] R3-4 Modernise map controls and attribution
+### [ ] R3-4 Modernise map controls and attribution
 
 **Files:** `Views/MapControlsComboView.swift`.
 
@@ -631,7 +631,7 @@ without importing UIKit, fires an unbounded `Task` per location tap, and shows
 **Acceptance:** No deprecation/availability warnings; one alert per failed
 request; attribution is accurate and localized.
 
-### [x] R3-5 Clean up the city picker
+### [ ] R3-5 Clean up the city picker
 
 **Files:** `Views/CityPickerSheet.swift`, `Resources/cities.json`,
 `Models/City.swift`.
@@ -648,7 +648,7 @@ names and aliases.
 **Acceptance:** No raw API ids in the UI; pl/en screenshots reviewed; search
 still finds every documented alias.
 
-### [x] R3-6 Make route-badge text contrast-safe
+### [ ] R3-6 Make route-badge text contrast-safe
 
 **Files:** `Views/StopDetailSheet.swift:26-42`.
 
@@ -662,7 +662,7 @@ is invalid.
 **Acceptance:** A unit test covers light and dark badge colours; Increase
 Contrast still passes.
 
-### [x] R3-7 Finish sheet sizing and accessibility
+### [ ] R3-7 Finish sheet sizing and accessibility
 
 **Files:** `Views/StopDetailSheet.swift`, `Views/TransitMapView.swift:92-94`.
 
@@ -682,7 +682,7 @@ content; marker taps behind the sheet behave predictably.
 
 ## 8. Phase 4 — Models and decoding
 
-### [x] R4-1 Clean up `MapTile`
+### [ ] R4-1 Clean up `MapTile`
 
 **Files:** `Models/MapTile.swift`, tests.
 
@@ -697,7 +697,7 @@ private overload). Document antimeridian/pole behaviour as best-effort.
 **Acceptance:** `rg "init\(zoom"` returns nothing; tile tests still pass; no
 behaviour change.
 
-### [x] R4-2 Stop mislabelling stops as buses
+### [ ] R4-2 Stop mislabelling stops as buses
 
 **Files:** `Models/Stop.swift:193-195`, `Views/StopMarkerView.swift`,
 `Views/StopDetailSheet.swift`.
@@ -711,7 +711,7 @@ Add a decoding/property test.
 **Acceptance:** Empty `vehicleTypes` renders the unknown symbol; no screen
 claims "bus" without evidence.
 
-### [x] R4-3 De-duplicate positional decoding
+### [ ] R4-3 De-duplicate positional decoding
 
 **Files:** `Models/Stop.swift` (`TupleDecoding`, `StopRoute`, `Stop`,
 `decodeEntrances`).
@@ -730,7 +730,7 @@ count validation, or fail).
 **Acceptance:** Same diagnostics for every field including `bearing`; line count
 drops materially; all malformed-payload tests pass; no force unwraps.
 
-### [x] R4-4 Decide the fate of decoded-but-unused data
+### [ ] R4-4 Decide the fate of decoded-but-unused data
 
 **Files:** `Models/Stop.swift` (`StopEntrance`, `StopRoute.longName/agency/city`),
 `Views/StopDetailSheet.swift`.
@@ -747,7 +747,7 @@ a "future" field without an ADR note.
 **Acceptance:** No unused public model properties remain (or the plan/status
 records why they stay); decoding tests match the model surface.
 
-### [x] R4-5 Reconcile `RouteType` UI placement with ADR-0004
+### [ ] R4-5 Reconcile `RouteType` UI placement with ADR-0004
 
 **Files:** `Models/RouteType.swift`, `Extensions/RouteType+UI.swift`, ADR-0004.
 
@@ -762,7 +762,7 @@ records why they stay); decoding tests match the model surface.
 **Acceptance:** `Models/RouteType.swift` imports only `Foundation` and contains
 no SF Symbol/hex presentation; ADR-0004 matches the code.
 
-### [x] R4-6 Make `City` semantics explicit
+### [ ] R4-6 Make `City` semantics explicit
 
 **Files:** `Models/City.swift`, `Models/MapTile.swift`, tests.
 
@@ -780,7 +780,7 @@ with a comment). Log catalog load failures via `Logger`.
 **Acceptance:** A missing/typo'd city id is observable; city suggestion tests
 still pass; a corrupt `cities.json` logs a clear error and falls back once.
 
-### [x] R4-7 Remove dead bounding-box plumbing
+### [ ] R4-7 Remove dead bounding-box plumbing
 
 **Files:** `Models/BoundingBox.swift`, tests.
 
@@ -795,7 +795,7 @@ region→bbox helper, keep it in the test target.
 **Acceptance:** `rg "BoundingBox\\(region:"` returns nothing in production;
 `queryValue` is unchanged and tested.
 
-### [x] R4-8 Normalise access control
+### [ ] R4-8 Normalise access control
 
 **Files:** all model/view/service files.
 
@@ -810,7 +810,7 @@ requires it. Do not change behaviour.
 **Acceptance:** The build has no access-control errors; the public surface is
 small and intentional; `@testable import` covers tests.
 
-### [x] R4-9 Clean concurrency comments and plan references
+### [ ] R4-9 Clean concurrency comments and plan references
 
 **Files:** `Models/Stop.swift`, `Models/BoundingBox.swift`,
 `Services/StopsProviding.swift`, `ViewModels/MapViewModel.swift`.
@@ -832,7 +832,7 @@ verifiable reason.
 
 ## 9. Phase 5 — Networking
 
-### [x] R5-1 Bound and sanity-check the retry policy
+### [ ] R5-1 Bound and sanity-check the retry policy
 
 **Files:** `Services/ZbiorkomAPIClient.swift:107-165`.
 
@@ -850,7 +850,7 @@ cap (ask the developer; not required for MVP).
 **Acceptance:** A test proves at most one retry for every error path and that
 4xx/offline are never retried.
 
-### [x] R5-2 Remove duplication in URL building and decoding
+### [ ] R5-2 Remove duplication in URL building and decoding
 
 **Files:** `Services/ZbiorkomAPIClient.swift:47-105`.
 
@@ -867,7 +867,7 @@ document the choice. Keep DEBUG diagnostics in the associated value only.
 **Acceptance:** One throw per error path; no duplicated `#if DEBUG` blocks in
 the catch; tests unchanged.
 
-### [x] R5-3 Preserve cancellation semantics
+### [ ] R5-3 Preserve cancellation semantics
 
 **Files:** `Services/ZbiorkomAPIClient.swift`, `ViewModels/MapViewModel.swift`.
 
@@ -886,7 +886,7 @@ provider that cancels mid-flight.
 
 ## 10. Phase 6 — Tests
 
-### [x] R6-1 Replace spin-wait synchronization
+### [ ] R6-1 Replace spin-wait synchronization
 
 **Files:** `KomunikacjaWiejskaTests/KomunikacjaWiejskaTests.swift` (~15 sites,
 e.g. `while viewModel.isLoading { await Task.yield() }`).
@@ -902,7 +902,7 @@ Fail with a clear message on timeout.
 **Acceptance:** No `while … Task.yield()` in tests; a deliberately broken
 transition fails fast with a diagnostic; the suite runtime stays comparable.
 
-### [x] R6-2 Isolate defaults and shared state
+### [ ] R6-2 Isolate defaults and shared state
 
 **Files:** `KomunikacjaWiejskaTests/KomunikacjaWiejskaTests.swift`
 (`testCameraPersistenceAndRestoration`), `MockURLProtocol.swift`,
@@ -920,7 +920,7 @@ shared global genuinely remains.
 **Acceptance:** Tests pass in random order and repeated runs; no test reads or
 writes the standard suite; no handler leaks between tests.
 
-### [x] R6-3 Split and rename the test target
+### [ ] R6-3 Split and rename the test target
 
 **Files:** `KomunikacjaWiejskaTests/*.swift`.
 
@@ -934,7 +934,7 @@ contains view-model, localization, and UIKit sizing tests.
 **Acceptance:** No test file above ~400 lines; suite names describe their unit;
 no coverage loss (assert the test count).
 
-### [x] R6-4 De-brittle assertions
+### [ ] R6-4 De-brittle assertions
 
 **Files:** tests.
 
@@ -949,7 +949,7 @@ product decision. Derive threshold tests from the constants.
 **Acceptance:** Adding a city or changing a symbol without changing behaviour
 does not fail unrelated tests.
 
-### [x] R6-5 Simplify the stubs
+### [ ] R6-5 Simplify the stubs
 
 **Files:** `StubStopsProvider.swift`, `MockURLProtocol.swift`.
 
@@ -963,7 +963,7 @@ cancellation counter for R1-6/R5-3.
 **Acceptance:** Tests configure one closure; precedence is explicit in the
 helper, not the stub; all existing tests migrate.
 
-### [x] R6-6 Add regression tests for this plan
+### [ ] R6-6 Add regression tests for this plan
 
 Minimum new coverage:
 - marker bound/determinism (R1-1) and launch marker mode for all cities (R1-2);
@@ -986,7 +986,7 @@ Minimum new coverage:
 
 ## 11. Phase 7 — Documentation, repo, release
 
-### [ ] R7-1 Reconcile all architecture documents
+### [x] R7-1 Reconcile all architecture documents
 
 **Files:** `docs/architecture.md`, `docs/decisions.md`,
 `docs/decisions/0002-marker-density.md`,
@@ -1012,7 +1012,7 @@ misleading.
 contradicted by the code; `rg "thinning|ancestor|25_000|maxRenderedStops"` in
 current docs points only at historical ADRs or the new ADR-0008.
 
-### [ ] R7-2 Final verification
+### [x] R7-2 Final verification
 
 - Clean derived data; run build + tests.
 - Run with networking disabled.
@@ -1023,7 +1023,7 @@ current docs points only at historical ADRs or the new ADR-0008.
 **Acceptance:** All §2 criteria pass; the status file records commands, counts,
 and remaining manual checks.
 
-### [ ] R7-3 Close the plan
+### [x] R7-3 Close the plan
 
 **Files:** `refactor-status.md`, this plan, `docs/archive/README.md`,
 `AGENTS.md`, `README.md`.
