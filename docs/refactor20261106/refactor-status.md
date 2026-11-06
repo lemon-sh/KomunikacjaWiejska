@@ -97,9 +97,9 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
 
 ### Phase 5 — Networking
 
-- [ ] R5-1 Bound and sanity-check the retry policy (D6)
-- [ ] R5-2 Remove duplication in URL building and decoding
-- [ ] R5-3 Preserve cancellation semantics
+- [x] R5-1 Bound and sanity-check the retry policy (D6)
+- [x] R5-2 Remove duplication in URL building and decoding
+- [x] R5-3 Preserve cancellation semantics
 
 ### Phase 6 — Tests
 

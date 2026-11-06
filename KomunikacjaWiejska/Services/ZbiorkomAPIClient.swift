@@ -42,15 +42,14 @@ enum ZbiorkomAPIError: LocalizedError, Sendable, Equatable {
 actor ZbiorkomAPIClient {
     static let shared = ZbiorkomAPIClient()
 
-    /// Built with a failable initializer; if this ever fails the client throws
-    /// `.invalidURL` instead of trapping.
+    /// Built defensively with a failable initializer; if this fails the client throws `.invalidURL`.
     private static let baseURL = URL(string: "https://api.zbiorkom.live/api6-open")
-    /// Requests are bounded to 15 s; the caller (MapViewModel) additionally
-    /// cancels in-flight work when the viewport changes or the app backgrounds.
+    /// Requests are bounded to 15 s; MapViewModel additionally cancels in-flight work when the viewport changes.
     private static let requestTimeout: TimeInterval = 15
-    /// One retry with jitter for transient transport failures and 5xx
-    /// responses. 4xx responses are never retried.
+    /// One retry with jitter for transient transport failures and 5xx responses. 4xx and offline are never retried.
     private static let maxRetryCount = 1
+    /// Reusable JSON decoder isolated to the actor.
+    private static let decoder = JSONDecoder()
 
     private let session: URLSession
 
@@ -81,57 +80,49 @@ actor ZbiorkomAPIClient {
         request.timeoutInterval = Self.requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        #if DEBUG
         Logger.api.debug("Fetching stops for city: \(city, privacy: .public), bbox: \(bbox?.queryValue ?? "none", privacy: .public)")
-        #endif
 
         let data = try await perform(request)
 
         do {
-            let decoded = try JSONDecoder().decode(StopsResponse.self, from: data)
-            #if DEBUG
+            let decoded = try Self.decoder.decode(StopsResponse.self, from: data)
             Logger.api.debug("Successfully decoded \(decoded.stops.count, privacy: .public) stops for city: \(city, privacy: .public)")
-            #endif
             return decoded.stops
         } catch {
+            let details: String
             #if DEBUG
-            let details = String(reflecting: error)
+            details = String(reflecting: error)
             Logger.api.error("Stops decoding failed: \(details, privacy: .public)")
-            throw ZbiorkomAPIError.decodingError(details)
             #else
-            throw ZbiorkomAPIError.decodingError("")
+            details = ""
+            Logger.api.error("Stops decoding failed")
             #endif
+            throw ZbiorkomAPIError.decodingError(details)
         }
     }
 
-    /// Performs the request, retrying once (with jitter) on transient failures.
+    /// Performs the request with a bounded retry policy (R5-1).
     private func perform(_ request: URLRequest) async throws -> Data {
-        var attempt = 0
-        while true {
-            #if DEBUG
+        for attempt in 0...Self.maxRetryCount {
+            try Task.checkCancellation()
             Logger.api.debug("Starting request [attempt \(attempt + 1, privacy: .public)]: \(request.url?.absoluteString ?? "", privacy: .public)")
-            #endif
+
             do {
                 let (data, response) = try await session.data(for: request)
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw ZbiorkomAPIError.invalidResponse
                 }
 
-                #if DEBUG
                 Logger.api.debug("Received response [HTTP \(httpResponse.statusCode, privacy: .public)] for \(request.url?.absoluteString ?? "", privacy: .public) (\(data.count, privacy: .public) bytes)")
-                #endif
 
                 if (500...599).contains(httpResponse.statusCode), attempt < Self.maxRetryCount {
-                    #if DEBUG
                     Logger.api.debug("Server error \(httpResponse.statusCode, privacy: .public), retrying with backoff...")
-                    #endif
-                    attempt += 1
                     try await Self.backoff()
                     continue
                 }
 
                 guard httpResponse.statusCode == 200 else {
-                    if let errorPayload = try? JSONDecoder().decode([String: String].self, from: data),
+                    if let errorPayload = try? Self.decoder.decode([String: String].self, from: data),
                        let errorCode = errorPayload["error"] {
                         throw ZbiorkomAPIError.serverError(errorCode)
                     }
@@ -139,26 +130,30 @@ actor ZbiorkomAPIClient {
                 }
 
                 return data
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                throw CancellationError()
             } catch let urlError as URLError {
-                #if DEBUG
                 Logger.api.error("Transport error \(urlError.code.rawValue, privacy: .public) for \(request.url?.absoluteString ?? "", privacy: .public)")
-                #endif
-                guard Self.isTransient(urlError.code), attempt < Self.maxRetryCount, !Task.isCancelled else {
+                guard Self.isTransient(urlError.code), attempt < Self.maxRetryCount else {
                     throw ZbiorkomAPIError.transport(urlError.code)
                 }
-                #if DEBUG
                 Logger.api.debug("Transient transport error, retrying with backoff...")
-                #endif
-                attempt += 1
                 try await Self.backoff()
             }
         }
+        throw ZbiorkomAPIError.transport(.timedOut)
     }
 
+    /// Determines whether an error is transient and recoverable.
+    /// Note: `.notConnectedToInternet` is intentionally excluded; failing fast on offline avoids a pointless retry delay.
     private static func isTransient(_ code: URLError.Code) -> Bool {
         switch code {
-        case .timedOut, .networkConnectionLost, .cannotConnectToHost, .notConnectedToInternet:
+        case .timedOut, .networkConnectionLost, .cannotConnectToHost:
             return true
+        case .notConnectedToInternet:
+            return false
         default:
             return false
         }

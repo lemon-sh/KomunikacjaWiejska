@@ -143,4 +143,31 @@ struct ZbiorkomAPIClientTests {
         #expect(!message.contains("secret internal detail"))
         #expect(!message.isEmpty)
     }
+
+    @Test("Does not retry when offline")
+    func doesNotRetryOffline() async throws {
+        let callCount = LockedValue<Int>(0)
+        MockURLProtocol.handler = { _ in
+            callCount.mutate { $0 += 1 }
+            throw URLError(.notConnectedToInternet)
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        await #expect(throws: ZbiorkomAPIError.transport(.notConnectedToInternet)) {
+            try await makeClient().fetchStops(city: "warsaw", bbox: nil)
+        }
+        #expect(callCount.value == 1)
+    }
+
+    @Test("Cancellation rethrows CancellationError directly")
+    func preservesCancellation() async throws {
+        MockURLProtocol.handler = { _ in
+            throw URLError(.cancelled)
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        await #expect(throws: CancellationError.self) {
+            try await makeClient().fetchStops(city: "warsaw", bbox: nil)
+        }
+    }
 }

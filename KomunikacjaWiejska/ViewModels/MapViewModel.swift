@@ -720,21 +720,15 @@ final class MapViewModel {
                 self.fetchState = .loaded(requestKey)
                 self.loadingPhase = nil
                 self.errorsByCity.removeValue(forKey: city.id)
-                #if DEBUG
                 Logger.mapCache.debug("Fetch completed for \(city.id, privacy: .public): +\(fetchedStops.count, privacy: .public) stops (total cached: \(self.cachedStopsByID.count, privacy: .public)), +\(tiles.count, privacy: .public) tiles (total tiles: \(self.fetchedTiles.count, privacy: .public))")
-                #endif
                 self.updateStops()
             } catch {
-                guard !Task.isCancelled, generation == self.requestGeneration else {
-                    #if DEBUG
+                guard !Task.isCancelled, !(error is CancellationError), generation == self.requestGeneration else {
                     Logger.mapCache.debug("Fetch error discarded for \(city.id, privacy: .public): cancelled or generation mismatch")
-                    #endif
                     return
                 }
                 if self.selectedCity.id == city.id {
-                    #if DEBUG
                     Logger.mapCache.error("Fetch failed for \(city.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                    #endif
                     self.inFlightTiles.removeAll()
                     self.errorsByCity[city.id] = Self.userFacingMessage(for: error)
                     self.fetchState = .failed(requestKey)
@@ -746,9 +740,7 @@ final class MapViewModel {
 
     private func cancelActiveFetch() {
         if activeFetchTask != nil {
-            #if DEBUG
             Logger.mapCache.debug("Cancelling active fetch for city \(self.selectedCity.id, privacy: .public)")
-            #endif
         }
         activeFetchTask?.cancel()
         activeFetchTask = nil

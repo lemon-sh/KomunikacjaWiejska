@@ -832,7 +832,7 @@ verifiable reason.
 
 ## 9. Phase 5 — Networking
 
-### [ ] R5-1 Bound and sanity-check the retry policy
+### [x] R5-1 Bound and sanity-check the retry policy
 
 **Files:** `Services/ZbiorkomAPIClient.swift:107-165`.
 
@@ -850,7 +850,7 @@ cap (ask the developer; not required for MVP).
 **Acceptance:** A test proves at most one retry for every error path and that
 4xx/offline are never retried.
 
-### [ ] R5-2 Remove duplication in URL building and decoding
+### [x] R5-2 Remove duplication in URL building and decoding
 
 **Files:** `Services/ZbiorkomAPIClient.swift:47-105`.
 
@@ -867,7 +867,7 @@ document the choice. Keep DEBUG diagnostics in the associated value only.
 **Acceptance:** One throw per error path; no duplicated `#if DEBUG` blocks in
 the catch; tests unchanged.
 
-### [ ] R5-3 Preserve cancellation semantics
+### [x] R5-3 Preserve cancellation semantics
 
 **Files:** `Services/ZbiorkomAPIClient.swift`, `ViewModels/MapViewModel.swift`.
 
