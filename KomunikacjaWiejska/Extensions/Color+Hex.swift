@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-public extension Color {
+extension Color {
     /// Parses `RGB` (3 or 6 digit) or `ARGB` (8 digit) hex strings,
     /// with or without a leading `#`. Returns `nil` for anything invalid so
     /// callers must choose an explicit fallback instead of silently getting a

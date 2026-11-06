@@ -1,5 +1,6 @@
 import CoreLocation
 import Foundation
+import os
 
 /// A supported transit network.
 ///
@@ -7,16 +8,16 @@ import Foundation
 /// a city is a data change, not a code change. Identity is the API `id`; the
 /// custom `==`/`hash` guarantee that two records with the same ID compare
 /// equal even if other fields (names, aliases) change between releases.
-public struct City: Identifiable, Hashable, Sendable, Decodable {
-    public let id: String
-    public let name: String
-    public let coordinate: CLLocationCoordinate2D
-    public let defaultLatitudeDelta: Double
-    public let defaultLongitudeDelta: Double
+struct City: Identifiable, Hashable, Sendable, Decodable {
+    let id: String
+    let name: String
+    let coordinate: CLLocationCoordinate2D
+    let defaultLatitudeDelta: Double
+    let defaultLongitudeDelta: Double
     /// Extra search terms (e.g. `gdansk` for `tricity`, diacritic-free forms).
-    public let aliases: [String]
+    let aliases: [String]
 
-    public init(
+    init(
         id: String,
         name: String,
         coordinate: CLLocationCoordinate2D,
@@ -42,7 +43,7 @@ public struct City: Identifiable, Hashable, Sendable, Decodable {
         case aliases
     }
 
-    public init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(String.self, forKey: .id)
         self.name = try container.decode(String.self, forKey: .name)
@@ -61,7 +62,7 @@ public struct City: Identifiable, Hashable, Sendable, Decodable {
     }
 
     /// Case- and diacritic-insensitive search across name, ID, and aliases.
-    public func matches(searchText: String) -> Bool {
+    func matches(searchText: String) -> Bool {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return true }
         if name.localizedStandardContains(query) { return true }
@@ -69,38 +70,43 @@ public struct City: Identifiable, Hashable, Sendable, Decodable {
         return aliases.contains { $0.localizedStandardContains(query) }
     }
 
-    public static func == (lhs: City, rhs: City) -> Bool {
+    static func == (lhs: City, rhs: City) -> Bool {
         lhs.id == rhs.id
     }
 
-    public func hash(into hasher: inout Hasher) {
+    func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
 
     /// Estimated coverage radius in metres for this transit network.
+    ///
+    /// For local metropolitan networks, the coverage radius approximates the transit agency's
+    /// geographic service area (spanning beyond the downtown core, roughly 1.5× the default viewing span,
+    /// bounded at a minimum of 20 km).
     /// Returns 0 for nationwide networks like PKP to prevent false-positive region switches.
-    public var coverageRadiusMeters: Double {
+    var coverageRadiusMeters: Double {
         if id == "pkp" { return 0 }
         return max(20_000, defaultLatitudeDelta * MapConstants.metresPerDegreeLatitude * 1.5)
     }
 
     // MARK: - Catalog
 
-    public static let allCities: [City] = CityCatalog.loadedCities
+    static let allCities: [City] = CityCatalog.loadedCities
 
     /// Convenience references for call sites and tests.
-    public static var warsaw: City { city(id: "warsaw") }
-    public static var krakow: City { city(id: "krakow") }
-    public static var pkp: City { city(id: "pkp") }
+    static var warsaw: City { city(id: "warsaw") ?? CityCatalog.fallbackCity }
+    static var krakow: City { city(id: "krakow") ?? CityCatalog.fallbackCity }
+    static var pkp: City { city(id: "pkp") ?? CityCatalog.fallbackCity }
 
-    public static func city(id: String) -> City {
-        allCities.first { $0.id == id } ?? CityCatalog.fallbackCity
+    /// Looks up a city in the catalog by exact id, returning `nil` if not found.
+    static func city(id: String) -> City? {
+        allCities.first { $0.id == id }
     }
 }
 
 /// Loads the bundled city catalog. A malformed or missing resource degrades to
-/// a single Warsaw entry (and logs) rather than crashing at launch.
-private enum CityCatalog {
+/// a single Warsaw entry and logs the failure rather than crashing at launch.
+enum CityCatalog {
     struct CityFile: Decodable {
         let cities: [City]
     }
@@ -113,14 +119,22 @@ private enum CityCatalog {
 
     static let loadedCities: [City] = load()
 
-    private static func load() -> [City] {
-        guard let url = Bundle.main.url(forResource: "cities", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let file = try? JSONDecoder().decode(CityFile.self, from: data),
-              !file.cities.isEmpty
-        else {
+    static func load() -> [City] {
+        guard let url = Bundle.main.url(forResource: "cities", withExtension: "json") else {
+            Logger.catalog.error("Failed to locate cities.json in main bundle; falling back to Warsaw.")
             return [fallbackCity]
         }
-        return file.cities
+        do {
+            let data = try Data(contentsOf: url)
+            let file = try JSONDecoder().decode(CityFile.self, from: data)
+            guard !file.cities.isEmpty else {
+                Logger.catalog.error("cities.json contains empty city list; falling back to Warsaw.")
+                return [fallbackCity]
+            }
+            return file.cities
+        } catch {
+            Logger.catalog.error("Failed to load/decode cities.json: \(error.localizedDescription); falling back to Warsaw.")
+            return [fallbackCity]
+        }
     }
 }

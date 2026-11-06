@@ -37,16 +37,30 @@ enum EntranceTupleIndex {
     static let minimumCount = 2
 }
 
-enum TupleDecoding {
-    /// Decodes one positional element and rethrows failures with the tuple
-    /// type, field name, and index so malformed payloads are diagnosable.
-    static func decode<T: Decodable>(
-        _ type: T.Type,
-        from container: inout UnkeyedDecodingContainer,
-        field: String,
-        index: Int,
-        in typeName: String
-    ) throws -> T {
+/// Sequentially reads positional tuple fields, maintaining the field index
+/// and providing contextual error diagnostics on decoding failures.
+struct TupleReader {
+    var container: UnkeyedDecodingContainer
+    let typeName: String
+    private(set) var currentIndex: Int = 0
+
+    init(container: UnkeyedDecodingContainer, typeName: String, minimumCount: Int) throws {
+        self.container = container
+        self.typeName = typeName
+        // Count may be nil for streaming decoders; validate when available.
+        if let count = container.count {
+            guard count >= minimumCount else {
+                throw DecodingError.dataCorrupted(.init(
+                    codingPath: container.codingPath,
+                    debugDescription: "\(typeName): expected at least \(minimumCount) elements, got \(count)"
+                ))
+            }
+        }
+    }
+
+    mutating func decode<T: Decodable>(_ type: T.Type = T.self, field: String) throws -> T {
+        let index = currentIndex
+        currentIndex += 1
         do {
             return try container.decode(type)
         } catch {
@@ -58,22 +72,27 @@ enum TupleDecoding {
         }
     }
 
-    /// Validates that a tuple has at least the number of elements the schema
-    /// requires. Extra trailing elements are ignored for forward compatibility.
-    static func requireMinimumCount(
-        _ container: UnkeyedDecodingContainer,
-        _ minimum: Int,
-        in typeName: String
-    ) throws {
-        guard let count = container.count else { return }
-        guard count >= minimum else {
+    mutating func decodeIfPresent<T: Decodable>(_ type: T.Type = T.self, field: String) throws -> T? {
+        let index = currentIndex
+        currentIndex += 1
+        do {
+            return try container.decodeIfPresent(type)
+        } catch {
             throw DecodingError.dataCorrupted(.init(
                 codingPath: container.codingPath,
-                debugDescription: "\(typeName): expected at least \(minimum) elements, got \(count)"
+                debugDescription: "\(typeName): cannot decode field '\(field)' at index \(index) as \(T.self)",
+                underlyingError: error
             ))
         }
     }
 
+    mutating func nestedReader(field: String, minimumCount: Int) throws -> TupleReader {
+        let nested = try container.nestedUnkeyedContainer()
+        return try TupleReader(container: nested, typeName: "\(typeName).\(field)", minimumCount: minimumCount)
+    }
+}
+
+enum TupleDecoding {
     static func validateCoordinates(
         longitude: Double,
         latitude: Double,
@@ -90,16 +109,16 @@ enum TupleDecoding {
 
 // MARK: - Models
 
-public struct StopRoute: Identifiable, Hashable, Sendable, Decodable {
-    public let id: String
-    public let city: String
-    public let name: String
-    public let longName: String
-    public let agency: String
-    public let type: RouteType
-    public let color: String
+struct StopRoute: Identifiable, Hashable, Sendable, Decodable {
+    let id: String
+    let city: String
+    let name: String
+    let longName: String
+    let agency: String
+    let type: RouteType
+    let color: String
 
-    public init(
+    init(
         id: String,
         city: String,
         name: String,
@@ -117,55 +136,37 @@ public struct StopRoute: Identifiable, Hashable, Sendable, Decodable {
         self.color = color
     }
 
-    public init(from decoder: Decoder) throws {
-        var container = try decoder.unkeyedContainer()
-        try TupleDecoding.requireMinimumCount(container, RouteTupleIndex.minimumCount, in: "StopRoute")
-        self.id = try TupleDecoding.decode(
-            String.self, from: &container, field: "id",
-            index: RouteTupleIndex.id, in: "StopRoute"
+    init(from decoder: Decoder) throws {
+        var reader = try TupleReader(
+            container: try decoder.unkeyedContainer(),
+            typeName: "StopRoute",
+            minimumCount: RouteTupleIndex.minimumCount
         )
-        self.city = try TupleDecoding.decode(
-            String.self, from: &container, field: "city",
-            index: RouteTupleIndex.city, in: "StopRoute"
-        )
-        self.name = try TupleDecoding.decode(
-            String.self, from: &container, field: "name",
-            index: RouteTupleIndex.name, in: "StopRoute"
-        )
-        self.longName = try TupleDecoding.decode(
-            String.self, from: &container, field: "longName",
-            index: RouteTupleIndex.longName, in: "StopRoute"
-        )
-        self.agency = try TupleDecoding.decode(
-            String.self, from: &container, field: "agency",
-            index: RouteTupleIndex.agency, in: "StopRoute"
-        )
-        self.type = try TupleDecoding.decode(
-            RouteType.self, from: &container, field: "type",
-            index: RouteTupleIndex.type, in: "StopRoute"
-        )
-        self.color = try TupleDecoding.decode(
-            String.self, from: &container, field: "color",
-            index: RouteTupleIndex.color, in: "StopRoute"
-        )
+        self.id = try reader.decode(field: "id")
+        self.city = try reader.decode(field: "city")
+        self.name = try reader.decode(field: "name")
+        self.longName = try reader.decode(field: "longName")
+        self.agency = try reader.decode(field: "agency")
+        self.type = try reader.decode(field: "type")
+        self.color = try reader.decode(field: "color")
     }
 }
 
-public struct StopEntrance: Identifiable, Hashable, Sendable {
+struct StopEntrance: Identifiable, Hashable, Sendable {
     /// Deterministic identity: the API has no entrance ID, so it is derived
     /// from the parent stop ID and the entrance's position in the tuple.
     /// Entrance ordering is therefore part of identity: identical responses
     /// produce identical IDs, and duplicate names/coordinates stay distinct.
-    public let id: String
-    public let name: String
-    public let longitude: Double
-    public let latitude: Double
+    let id: String
+    let name: String
+    let longitude: Double
+    let latitude: Double
 
-    public var coordinate: CLLocationCoordinate2D {
+    var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    public init(id: String, name: String, longitude: Double, latitude: Double) {
+    init(id: String, name: String, longitude: Double, latitude: Double) {
         self.id = id
         self.name = name
         self.longitude = longitude
@@ -173,35 +174,35 @@ public struct StopEntrance: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct Stop: Identifiable, Hashable, Sendable, Decodable {
-    public let id: String
-    public let city: String
-    public let name: String
-    public let code: String
-    public let longitude: Double
-    public let latitude: Double
-    public let vehicleTypes: [RouteType]
-    public let bearing: Int?
-    public let direction: String
-    public let routes: [StopRoute]
-    public let entrances: [StopEntrance]
+struct Stop: Identifiable, Hashable, Sendable, Decodable {
+    let id: String
+    let city: String
+    let name: String
+    let code: String
+    let longitude: Double
+    let latitude: Double
+    let vehicleTypes: [RouteType]
+    let bearing: Int?
+    let direction: String
+    let routes: [StopRoute]
+    let entrances: [StopEntrance]
 
-    public var coordinate: CLLocationCoordinate2D {
+    var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    public var primaryVehicleType: RouteType {
-        vehicleTypes.first ?? .bus
+    var primaryVehicleType: RouteType {
+        vehicleTypes.first ?? .unknown
     }
 
-    public var displayName: String {
+    var displayName: String {
         if code.isEmpty {
             return name
         }
         return "\(name) (\(code))"
     }
 
-    public init(
+    init(
         id: String,
         city: String,
         name: String,
@@ -227,38 +228,22 @@ public struct Stop: Identifiable, Hashable, Sendable, Decodable {
         self.entrances = entrances
     }
 
-    public init(from decoder: Decoder) throws {
-        var container = try decoder.unkeyedContainer()
-        try TupleDecoding.requireMinimumCount(container, StopTupleIndex.minimumCount, in: "Stop")
-
-        let id = try TupleDecoding.decode(
-            String.self, from: &container, field: "id",
-            index: StopTupleIndex.id, in: "Stop"
+    init(from decoder: Decoder) throws {
+        var reader = try TupleReader(
+            container: try decoder.unkeyedContainer(),
+            typeName: "Stop",
+            minimumCount: StopTupleIndex.minimumCount
         )
+
+        let id = try reader.decode(String.self, field: "id")
         self.id = id
-        self.city = try TupleDecoding.decode(
-            String.self, from: &container, field: "city",
-            index: StopTupleIndex.city, in: "Stop"
-        )
-        self.name = try TupleDecoding.decode(
-            String.self, from: &container, field: "name",
-            index: StopTupleIndex.name, in: "Stop"
-        )
-        self.code = try TupleDecoding.decode(
-            String.self, from: &container, field: "code",
-            index: StopTupleIndex.code, in: "Stop"
-        )
+        self.city = try reader.decode(field: "city")
+        self.name = try reader.decode(field: "name")
+        self.code = try reader.decode(field: "code")
 
-        var locationContainer = try container.nestedUnkeyedContainer()
-        try TupleDecoding.requireMinimumCount(locationContainer, 2, in: "Stop.location")
-        let longitude = try TupleDecoding.decode(
-            Double.self, from: &locationContainer, field: "longitude",
-            index: 0, in: "Stop.location"
-        )
-        let latitude = try TupleDecoding.decode(
-            Double.self, from: &locationContainer, field: "latitude",
-            index: 1, in: "Stop.location"
-        )
+        var locationReader = try reader.nestedReader(field: "location", minimumCount: 2)
+        let longitude = try locationReader.decode(Double.self, field: "longitude")
+        let latitude = try locationReader.decode(Double.self, field: "latitude")
         try TupleDecoding.validateCoordinates(
             longitude: longitude,
             latitude: latitude,
@@ -267,33 +252,23 @@ public struct Stop: Identifiable, Hashable, Sendable, Decodable {
         self.longitude = longitude
         self.latitude = latitude
 
-        self.vehicleTypes = try TupleDecoding.decode(
-            [RouteType].self, from: &container, field: "vehicleTypes",
-            index: StopTupleIndex.vehicleTypes, in: "Stop"
-        )
+        self.vehicleTypes = try reader.decode(field: "vehicleTypes")
 
         // Bearing is optional; normalize it into 0..<360 when present.
-        let rawBearing: Int? = try container.decodeIfPresent(Int.self)
-        if let rawBearing = rawBearing {
+        let rawBearing: Int? = try reader.decodeIfPresent(Int.self, field: "bearing")
+        if let rawBearing {
             self.bearing = ((rawBearing % 360) + 360) % 360
         } else {
             self.bearing = nil
         }
 
-        self.direction = try TupleDecoding.decode(
-            String.self, from: &container, field: "direction",
-            index: StopTupleIndex.direction, in: "Stop"
-        )
-        self.routes = try TupleDecoding.decode(
-            [StopRoute].self, from: &container, field: "routes",
-            index: StopTupleIndex.routes, in: "Stop"
-        )
-        self.entrances = try Self.decodeEntrances(from: &container, stopID: id)
+        self.direction = try reader.decode(field: "direction")
+        self.routes = try reader.decode(field: "routes")
+        self.entrances = try Self.decodeEntrances(from: &reader.container, stopID: id)
     }
 
-    /// Entrances are decoded here (instead of via a plain `[StopEntrance]`
-    /// decode) so each one can receive a stable ID derived from the stop ID
-    /// and tuple position.
+    /// Entrances are decoded here so each one receives a stable ID derived
+    /// from the stop ID and tuple position.
     private static func decodeEntrances(
         from container: inout UnkeyedDecodingContainer,
         stopID: String
@@ -302,22 +277,15 @@ public struct Stop: Identifiable, Hashable, Sendable, Decodable {
         var entrances: [StopEntrance] = []
         var index = 0
         while !listContainer.isAtEnd {
-            var tuple = try listContainer.nestedUnkeyedContainer()
-            try TupleDecoding.requireMinimumCount(tuple, EntranceTupleIndex.minimumCount, in: "StopEntrance")
-            let name = try TupleDecoding.decode(
-                String.self, from: &tuple, field: "name",
-                index: EntranceTupleIndex.name, in: "StopEntrance"
+            var reader = try TupleReader(
+                container: try listContainer.nestedUnkeyedContainer(),
+                typeName: "StopEntrance",
+                minimumCount: EntranceTupleIndex.minimumCount
             )
-            var locationContainer = try tuple.nestedUnkeyedContainer()
-            try TupleDecoding.requireMinimumCount(locationContainer, 2, in: "StopEntrance.location")
-            let longitude = try TupleDecoding.decode(
-                Double.self, from: &locationContainer, field: "longitude",
-                index: 0, in: "StopEntrance.location"
-            )
-            let latitude = try TupleDecoding.decode(
-                Double.self, from: &locationContainer, field: "latitude",
-                index: 1, in: "StopEntrance.location"
-            )
+            let name = try reader.decode(String.self, field: "name")
+            var locationReader = try reader.nestedReader(field: "location", minimumCount: 2)
+            let longitude = try locationReader.decode(Double.self, field: "longitude")
+            let latitude = try locationReader.decode(Double.self, field: "latitude")
             try TupleDecoding.validateCoordinates(
                 longitude: longitude,
                 latitude: latitude,
@@ -337,18 +305,11 @@ public struct Stop: Identifiable, Hashable, Sendable, Decodable {
     }
 }
 
-/// `nonisolated` is required, not cosmetic: this project builds with
-/// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, which makes the synthesized
-/// `Decodable` conformance MainActor-isolated. `ZbiorkomAPIClient` is an
-/// independent actor and decodes off MainActor, so using such a conformance
-/// there is rejected (warning now, error in Swift 6 mode, diagnostic
-/// `IsolatedConformances`). If P5-3 moves the decoding entry point to a
-/// nonisolated context or the project stops defaulting to MainActor isolation,
-/// this attribute can be removed.
-public nonisolated struct StopsResponse: Decodable, Sendable {
-    public let stops: [Stop]
+/// Explicitly nonisolated for cross-actor transfer from background decoding tasks in `ZbiorkomAPIClient`.
+nonisolated struct StopsResponse: Decodable, Sendable {
+    let stops: [Stop]
 
-    public init(stops: [Stop]) {
+    init(stops: [Stop]) {
         self.stops = stops
     }
 }

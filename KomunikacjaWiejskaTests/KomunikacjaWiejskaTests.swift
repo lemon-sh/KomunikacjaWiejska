@@ -127,8 +127,26 @@ struct KomunikacjaWiejskaTests {
     func testFixedZoomTiles() {
         let tile = MapTile(x: 2200, y: 1300)
         #expect(tile.zoom == 12)
-        #expect(MapTile.fixedZoom == 12)
+        #expect(MapTile.zoom == 12)
         #expect(MapTileGrid.zoom == 12)
+    }
+
+    @Test("Stop primaryVehicleType defaults to unknown when vehicleTypes is empty")
+    func testPrimaryVehicleTypeEmpty() {
+        let emptyStop = Stop(
+            id: "test",
+            city: "warsaw",
+            name: "Test",
+            code: "",
+            longitude: 21.0,
+            latitude: 52.0,
+            vehicleTypes: [],
+            bearing: nil,
+            direction: "",
+            routes: [],
+            entrances: []
+        )
+        #expect(emptyStop.primaryVehicleType == .unknown)
     }
 
     @Test("RouteType properties and fallback")
@@ -340,19 +358,22 @@ struct KomunikacjaWiejskaTests {
     }
 
     @Test("City search matches names, IDs, aliases, and diacritic-free queries")
-    func testCityAliases() {
-        let tricity = City.city(id: "tricity")
+    func testCityAliases() throws {
+        let tricity = try #require(City.city(id: "tricity"))
         #expect(tricity.matches(searchText: "trojmiasto"))
         #expect(tricity.matches(searchText: "gdansk"))
         #expect(tricity.matches(searchText: "GDAŃSK"))
         #expect(tricity.matches(searchText: "Trójmiasto"))
 
-        let lodz = City.city(id: "lodz")
+        let lodz = try #require(City.city(id: "lodz"))
         #expect(lodz.matches(searchText: "lodz"))
         #expect(lodz.matches(searchText: "Łódź"))
 
         #expect(City.warsaw.matches(searchText: "warszawa"))
         #expect(City.warsaw.matches(searchText: "") == true)
+
+        // R4-6: Missing or typo'd city id returns nil rather than silently returning Warsaw
+        #expect(City.city(id: "nonexistent_city") == nil)
     }
 
     @Test("MapMode identifiers stay stable while display names are localized")
@@ -1001,7 +1022,7 @@ struct KomunikacjaWiejskaTests {
         warsawViewModel.currentDistance = 4_000
         #expect(warsawViewModel.isCompactDisplayMode == false)
 
-        let pkp = City.city(id: "pkp")
+        let pkp = City.pkp
         let pkpViewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: pkp)
         #expect(pkpViewModel.isCompactDisplayMode == true)
 
@@ -1063,7 +1084,7 @@ struct KomunikacjaWiejskaTests {
     }
 
     @Test("Dismissing suggestion suppresses repeated suggestion until moving away")
-    func testDismissSuggestion() {
+    func testDismissSuggestion() throws {
         let warsaw = City.warsaw
         let krakow = City.krakow
         let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: warsaw)
@@ -1089,7 +1110,7 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.suggestedCity == nil)
 
         // Moving far away to Poznań coordinate resets dismissed state and suggests Poznań
-        let poznan = City.city(id: "poznan")
+        let poznan = try #require(City.city(id: "poznan"))
         viewModel.cameraState = MapViewModel.CameraState(
             region: MKCoordinateRegion(
                 center: poznan.coordinate,
@@ -1104,7 +1125,6 @@ struct KomunikacjaWiejskaTests {
 
     @Test("Switching to suggested city preserves camera position and loads stops")
     func testSwitchToSuggestedCityPreservesCameraAndLoadsStops() async {
-        let krakow = City.krakow
         let customKrakowCenter = CLLocationCoordinate2D(latitude: 50.065, longitude: 19.950)
         let customRegion = MKCoordinateRegion(
             center: customKrakowCenter,
@@ -1142,7 +1162,7 @@ struct KomunikacjaWiejskaTests {
 
     @Test("Excludes nationwide PKP from region suggestions")
     func testExcludesPKPFromRegionSuggestions() {
-        let pkp = City.city(id: "pkp")
+        let pkp = City.pkp
         let suggestion = MapViewModel.detectSuggestedCity(
             center: pkp.coordinate,
             regionSpan: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08),
@@ -1154,7 +1174,7 @@ struct KomunikacjaWiejskaTests {
 
     @Test("PKP mode suggests local city when zooming into one")
     func testPKPSuggestsLocalCity() {
-        let pkp = City.city(id: "pkp")
+        let pkp = City.pkp
         let krakow = City.krakow
         let suggestion = MapViewModel.detectSuggestedCity(
             center: krakow.coordinate,

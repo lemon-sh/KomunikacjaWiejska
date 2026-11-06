@@ -6,30 +6,28 @@ import MapKit
 /// Stop responses are scale-independent: a bbox returns every stop inside it.
 /// All tiles share a single fixed zoom level (Zoom 12) without hierarchy.
 struct MapTile: Hashable, Sendable {
-    static let fixedZoom: Int = 12
+    static let zoom: Int = 12
 
     let x: Int
     let y: Int
 
     var zoom: Int {
-        Self.fixedZoom
+        Self.zoom
     }
 
     init(x: Int, y: Int) {
         self.x = x
         self.y = y
     }
-
-    init(zoom: Int, x: Int, y: Int) {
-        self.x = x
-        self.y = y
-    }
 }
 
 /// Pure tile math shared by the view model and its tests.
+///
+/// Note on edge cases: Antimeridian crossing is supported by wrapping X indices.
+/// Extreme poles beyond ±85.0511° are clamped to valid Web Mercator bounds.
 enum MapTileGrid {
     /// Fixed zoom level for all coverage tiles (Zoom 12 ~6 km × 6 km).
-    static let zoom: Int = MapTile.fixedZoom
+    static let zoom: Int = MapTile.zoom
     private static let maxMercatorLatitude = 85.05112878
 
     static func visibleTiles(in region: MKCoordinateRegion) -> Set<MapTile> {
@@ -107,11 +105,11 @@ enum MapTileGrid {
     }
 
     static func bounds(of tile: MapTile) -> BoundingBox {
-        let tileCount = Double(1 << tile.zoom)
+        let tileCount = Double(1 << MapTile.zoom)
         let minLon = Double(tile.x) / tileCount * 360.0 - 180.0
         let maxLon = Double(tile.x + 1) / tileCount * 360.0 - 180.0
-        let maxLat = latitude(tileY: Double(tile.y), zoom: tile.zoom)
-        let minLat = latitude(tileY: Double(tile.y + 1), zoom: tile.zoom)
+        let maxLat = latitude(tileY: Double(tile.y), zoom: MapTile.zoom)
+        let minLat = latitude(tileY: Double(tile.y + 1), zoom: MapTile.zoom)
         return BoundingBox(minLon: minLon, minLat: minLat, maxLon: maxLon, maxLat: maxLat)
     }
 
@@ -119,11 +117,11 @@ enum MapTileGrid {
         ((x % tileCount) + tileCount) % tileCount
     }
 
-    static func tileX(longitude: Double, zoom: Int = zoom) -> Double {
+    static func tileX(longitude: Double, zoom: Int = MapTile.zoom) -> Double {
         (longitude + 180.0) / 360.0 * Double(1 << zoom)
     }
 
-    static func tileY(latitude: Double, zoom: Int = zoom) -> Double {
+    static func tileY(latitude: Double, zoom: Int = MapTile.zoom) -> Double {
         let clamped = min(max(latitude, -maxMercatorLatitude), maxMercatorLatitude)
         let radians = clamped * .pi / 180.0
         return (1.0 - log(tan(radians) + 1.0 / cos(radians)) / .pi)
@@ -131,7 +129,7 @@ enum MapTileGrid {
             * Double(1 << zoom)
     }
 
-    static func latitude(tileY: Double, zoom: Int = zoom) -> Double {
+    static func latitude(tileY: Double, zoom: Int = MapTile.zoom) -> Double {
         let tileCount = Double(1 << zoom)
         let mercator = Double.pi * (1.0 - 2.0 * tileY / tileCount)
         return atan(sinh(mercator)) * 180.0 / Double.pi

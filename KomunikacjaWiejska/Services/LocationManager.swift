@@ -3,7 +3,7 @@ import Foundation
 import os
 
 /// How the app may currently access (or not access) the user's position.
-public enum LocationAuthorizationState: Equatable, Sendable {
+enum LocationAuthorizationState: Equatable, Sendable {
     case notDetermined
     case denied
     case authorized
@@ -14,7 +14,7 @@ public enum LocationAuthorizationState: Equatable, Sendable {
     /// Disabling Location Services system-wide makes Core Location report
     /// `.denied` to the delegate, so a separate `locationServicesEnabled()`
     /// check is redundant — and that call must not run on the main thread.
-    public static func resolve(status: CLAuthorizationStatus) -> LocationAuthorizationState {
+    static func resolve(status: CLAuthorizationStatus) -> LocationAuthorizationState {
         switch status {
         case .notDetermined:
             return .notDetermined
@@ -29,11 +29,11 @@ public enum LocationAuthorizationState: Equatable, Sendable {
 }
 
 /// Failures the location button can surface to the user.
-public enum LocationError: LocalizedError, Equatable, Sendable {
+enum LocationError: LocalizedError, Equatable, Sendable {
     case denied
     case unavailable
 
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .denied:
             return String(localized: "location.alert.message")
@@ -45,20 +45,20 @@ public enum LocationError: LocalizedError, Equatable, Sendable {
 
 @Observable
 @MainActor
-public final class LocationManager: NSObject, CLLocationManagerDelegate, LocationProviding {
-    public static let shared = LocationManager()
+final class LocationManager: NSObject, CLLocationManagerDelegate, LocationProviding {
+    static let shared = LocationManager()
 
     private static let logger = Logger(subsystem: "KomunikacjaWiejska", category: "Location")
     /// A cached fix younger than this is reused instead of starting GPS again.
     private static let freshFixMaxAge: TimeInterval = 30
 
     private let manager = CLLocationManager()
-    public var authorizationStatus: CLAuthorizationStatus
-    public var userLocation: CLLocation?
-    public private(set) var isRequestingLocation: Bool = false
+    var authorizationStatus: CLAuthorizationStatus
+    var userLocation: CLLocation?
+    private(set) var isRequestingLocation: Bool = false
 
     /// Maximum duration to wait for an authorization decision or a one-shot fix before failing with `.unavailable`.
-    public static let requestTimeout: Duration = .seconds(15)
+    static let requestTimeout: Duration = .seconds(15)
 
     /// Single pending prompt/fix continuation. A button tap can never leave a
     /// continuation stranded: a newer request resumes the previous one first.
@@ -73,11 +73,11 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate, Locatio
     }
 
     /// Derived, UI-friendly view of what the location button should do.
-    public var authorizationState: LocationAuthorizationState {
+    var authorizationState: LocationAuthorizationState {
         LocationAuthorizationState.resolve(status: authorizationStatus)
     }
 
-    public func requestWhenInUseAuthorization() {
+    func requestWhenInUseAuthorization() {
         if authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
@@ -92,7 +92,7 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate, Locatio
     ///
     /// Guarded against concurrent taps: if a request is already active,
     /// duplicate concurrent calls throw `.unavailable`. Times out after 15 s.
-    public func requestCurrentLocation() async throws -> CLLocation {
+    func requestCurrentLocation() async throws -> CLLocation {
         guard !isRequestingLocation else {
             throw LocationError.unavailable
         }
@@ -144,7 +144,7 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate, Locatio
 
     /// Kept for scene-phase handling; the app requests one-shot fixes rather
     /// than continuous updates, so this is normally a no-op.
-    public func stopUpdatingLocation() {
+    func stopUpdatingLocation() {
         manager.stopUpdatingLocation()
     }
 
@@ -190,7 +190,7 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate, Locatio
 
     // MARK: - CLLocationManagerDelegate
 
-    public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
         guard manager.authorizationStatus != .notDetermined,
               let continuation = authorizationContinuation
@@ -199,7 +199,7 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate, Locatio
         continuation.resume(returning: manager.authorizationStatus)
     }
 
-    public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         userLocation = location
         guard let continuation = locationContinuation else { return }
@@ -207,7 +207,7 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate, Locatio
         continuation.resume(returning: location)
     }
 
-    public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Self.logger.error("Location update failed: \(String(describing: error), privacy: .public)")
         guard let continuation = locationContinuation else { return }
         locationContinuation = nil

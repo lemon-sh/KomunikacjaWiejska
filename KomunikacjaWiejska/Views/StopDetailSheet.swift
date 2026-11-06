@@ -1,10 +1,10 @@
 import Foundation
 import SwiftUI
 
-public struct RouteBadgeView: View {
-    public let route: StopRoute
+struct RouteBadgeView: View {
+    let route: StopRoute
 
-    public init(route: StopRoute) {
+    init(route: StopRoute) {
         self.route = route
     }
 
@@ -30,7 +30,7 @@ public struct RouteBadgeView: View {
         )
     }
 
-    public var body: some View {
+    var body: some View {
         HStack(spacing: 4) {
             Image(systemName: route.type.systemImageName)
                 .font(.caption2.weight(.bold))
@@ -49,11 +49,11 @@ public struct RouteBadgeView: View {
     }
 }
 
-public struct StopDetailSheet: View {
-    public let stop: Stop
-    public let onDismiss: () -> Void
+struct StopDetailSheet: View {
+    let stop: Stop
+    let onDismiss: () -> Void
 
-    public init(stop: Stop, onDismiss: @escaping () -> Void) {
+    init(stop: Stop, onDismiss: @escaping () -> Void) {
         self.stop = stop
         self.onDismiss = onDismiss
     }
@@ -69,12 +69,16 @@ public struct StopDetailSheet: View {
         )
     }
 
-    public var body: some View {
+    var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
                 Divider()
                 routesSection
+                if !stop.entrances.isEmpty {
+                    Divider()
+                    entrancesSection
+                }
             }
             .padding(.horizontal, 18)
             .padding(.top, 18)
@@ -157,6 +161,26 @@ public struct StopDetailSheet: View {
                         }
                     }
                     .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var entrancesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("stopDetail.entrancesHeading")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ForEach(stop.entrances) { entrance in
+                HStack(spacing: 8) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                    Text(entrance.name)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
                 }
             }
         }

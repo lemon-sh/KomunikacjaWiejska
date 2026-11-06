@@ -682,7 +682,7 @@ content; marker taps behind the sheet behave predictably.
 
 ## 8. Phase 4 — Models and decoding
 
-### [ ] R4-1 Clean up `MapTile`
+### [x] R4-1 Clean up `MapTile`
 
 **Files:** `Models/MapTile.swift`, tests.
 
@@ -697,7 +697,7 @@ private overload). Document antimeridian/pole behaviour as best-effort.
 **Acceptance:** `rg "init\(zoom"` returns nothing; tile tests still pass; no
 behaviour change.
 
-### [ ] R4-2 Stop mislabelling stops as buses
+### [x] R4-2 Stop mislabelling stops as buses
 
 **Files:** `Models/Stop.swift:193-195`, `Views/StopMarkerView.swift`,
 `Views/StopDetailSheet.swift`.
@@ -711,7 +711,7 @@ Add a decoding/property test.
 **Acceptance:** Empty `vehicleTypes` renders the unknown symbol; no screen
 claims "bus" without evidence.
 
-### [ ] R4-3 De-duplicate positional decoding
+### [x] R4-3 De-duplicate positional decoding
 
 **Files:** `Models/Stop.swift` (`TupleDecoding`, `StopRoute`, `Stop`,
 `decodeEntrances`).
@@ -730,7 +730,7 @@ count validation, or fail).
 **Acceptance:** Same diagnostics for every field including `bearing`; line count
 drops materially; all malformed-payload tests pass; no force unwraps.
 
-### [ ] R4-4 Decide the fate of decoded-but-unused data
+### [x] R4-4 Decide the fate of decoded-but-unused data
 
 **Files:** `Models/Stop.swift` (`StopEntrance`, `StopRoute.longName/agency/city`),
 `Views/StopDetailSheet.swift`.
@@ -747,7 +747,7 @@ a "future" field without an ADR note.
 **Acceptance:** No unused public model properties remain (or the plan/status
 records why they stay); decoding tests match the model surface.
 
-### [ ] R4-5 Reconcile `RouteType` UI placement with ADR-0004
+### [x] R4-5 Reconcile `RouteType` UI placement with ADR-0004
 
 **Files:** `Models/RouteType.swift`, `Extensions/RouteType+UI.swift`, ADR-0004.
 
@@ -762,7 +762,7 @@ records why they stay); decoding tests match the model surface.
 **Acceptance:** `Models/RouteType.swift` imports only `Foundation` and contains
 no SF Symbol/hex presentation; ADR-0004 matches the code.
 
-### [ ] R4-6 Make `City` semantics explicit
+### [x] R4-6 Make `City` semantics explicit
 
 **Files:** `Models/City.swift`, `Models/MapTile.swift`, tests.
 
@@ -780,7 +780,7 @@ with a comment). Log catalog load failures via `Logger`.
 **Acceptance:** A missing/typo'd city id is observable; city suggestion tests
 still pass; a corrupt `cities.json` logs a clear error and falls back once.
 
-### [ ] R4-7 Remove dead bounding-box plumbing
+### [x] R4-7 Remove dead bounding-box plumbing
 
 **Files:** `Models/BoundingBox.swift`, tests.
 
@@ -795,7 +795,7 @@ region→bbox helper, keep it in the test target.
 **Acceptance:** `rg "BoundingBox\\(region:"` returns nothing in production;
 `queryValue` is unchanged and tested.
 
-### [ ] R4-8 Normalise access control
+### [x] R4-8 Normalise access control
 
 **Files:** all model/view/service files.
 
@@ -810,7 +810,7 @@ requires it. Do not change behaviour.
 **Acceptance:** The build has no access-control errors; the public surface is
 small and intentional; `@testable import` covers tests.
 
-### [ ] R4-9 Clean concurrency comments and plan references
+### [x] R4-9 Clean concurrency comments and plan references
 
 **Files:** `Models/Stop.swift`, `Models/BoundingBox.swift`,
 `Services/StopsProviding.swift`, `ViewModels/MapViewModel.swift`.

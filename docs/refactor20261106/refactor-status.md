@@ -85,15 +85,15 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
 
 ### Phase 4 — Models and decoding
 
-- [ ] R4-1 Clean up `MapTile`
-- [ ] R4-2 Stop mislabelling stops as buses
-- [ ] R4-3 De-duplicate positional decoding
-- [ ] R4-4 Decide the fate of decoded-but-unused data (D3)
-- [ ] R4-5 Reconcile `RouteType` UI placement with ADR-0004
-- [ ] R4-6 Make `City` semantics explicit
-- [ ] R4-7 Remove dead bounding-box plumbing
-- [ ] R4-8 Normalise access control (D5)
-- [ ] R4-9 Clean concurrency comments and plan references
+- [x] R4-1 Clean up `MapTile`
+- [x] R4-2 Stop mislabelling stops as buses
+- [x] R4-3 De-duplicate positional decoding
+- [x] R4-4 Decide the fate of decoded-but-unused data (D3)
+- [x] R4-5 Reconcile `RouteType` UI placement with ADR-0004
+- [x] R4-6 Make `City` semantics explicit
+- [x] R4-7 Remove dead bounding-box plumbing
+- [x] R4-8 Normalise access control (D5)
+- [x] R4-9 Clean concurrency comments and plan references
 
 ### Phase 5 — Networking
 

@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-public struct MapControlsComboView: View {
+struct MapControlsComboView: View {
     @Bindable var viewModel: MapViewModel
     @Namespace private var namespace
     var locationManager: any LocationProviding
@@ -15,12 +15,12 @@ public struct MapControlsComboView: View {
         var id: Self { self }
     }
 
-    public init(viewModel: MapViewModel, locationManager: any LocationProviding) {
+    init(viewModel: MapViewModel, locationManager: any LocationProviding) {
         self.viewModel = viewModel
         self.locationManager = locationManager
     }
 
-    public var body: some View {
+    var body: some View {
         // `glassEffectUnion` groups the two buttons into one native capsule.
         // Grouping is not expressible with `.buttonStyle(.glass)` alone, so the
         // glass modifiers are used deliberately here and documented rather
@@ -115,16 +115,16 @@ public struct MapControlsComboView: View {
     }
 }
 
-public struct MapModesPopoverView: View {
+struct MapModesPopoverView: View {
     @Binding var selectedMode: MapMode
     @Binding var isPresented: Bool
 
-    public init(selectedMode: Binding<MapMode>, isPresented: Binding<Bool>) {
+    init(selectedMode: Binding<MapMode>, isPresented: Binding<Bool>) {
         self._selectedMode = selectedMode
         self._isPresented = isPresented
     }
 
-    public var body: some View {
+    var body: some View {
         VStack(spacing: 16) {
             Text("map.modes.title")
                 .font(.headline.weight(.bold))

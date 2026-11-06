@@ -1,17 +1,17 @@
 import Foundation
 import SwiftUI
 
-public struct StopMarkerView: View {
-    public let stop: Stop
-    public let isSelected: Bool
-    public let isCompact: Bool
-    public let heading: Double
+struct StopMarkerView: View {
+    let stop: Stop
+    let isSelected: Bool
+    let isCompact: Bool
+    let heading: Double
 
     /// `@ScaledMetric` keeps markers legible at larger text sizes, capped so
     /// they never cover the map or neighbouring stops.
     @ScaledMetric(relativeTo: .body) private var scaledMarkerSize: CGFloat = DesignTokens.markerSize
 
-    public init(
+    init(
         stop: Stop,
         isSelected: Bool = false,
         isCompact: Bool = false,
@@ -25,7 +25,7 @@ public struct StopMarkerView: View {
 
     /// Computes the screen rotation angle for a stop's geographic bearing given the map camera's heading.
     /// Annotations in MapKit stay screen-aligned, so a bearing relative to North must be offset by the map heading.
-    public static func effectiveRotation(bearing: Int, heading: Double) -> Double {
+    static func effectiveRotation(bearing: Int, heading: Double) -> Double {
         Double(bearing) - heading
     }
 
@@ -65,7 +65,7 @@ public struct StopMarkerView: View {
         )
     }
 
-    public var body: some View {
+    var body: some View {
         Group {
             if isCompact && !isSelected {
                 Circle()

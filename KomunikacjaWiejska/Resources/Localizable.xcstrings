@@ -834,6 +834,23 @@
         }
       }
     },
+    "stopDetail.entrancesHeading" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entrances"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wejścia"
+          }
+        }
+      }
+    },
     "stopDetail.noRoutes" : {
       "extractionState" : "manual",
       "localizations" : {

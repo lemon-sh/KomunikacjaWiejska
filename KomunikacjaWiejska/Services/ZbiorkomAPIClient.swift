@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-public enum ZbiorkomAPIError: LocalizedError, Sendable, Equatable {
+enum ZbiorkomAPIError: LocalizedError, Sendable, Equatable {
     case invalidURL
     /// The server answered with something that is not an `HTTPURLResponse`.
     case invalidResponse
@@ -12,7 +12,7 @@ public enum ZbiorkomAPIError: LocalizedError, Sendable, Equatable {
     /// user-facing message stays short and localized.
     case decodingError(String)
 
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .invalidURL:
             return String(localized: "error.invalidURL")
@@ -39,8 +39,8 @@ public enum ZbiorkomAPIError: LocalizedError, Sendable, Equatable {
     }
 }
 
-public actor ZbiorkomAPIClient {
-    public static let shared = ZbiorkomAPIClient()
+actor ZbiorkomAPIClient {
+    static let shared = ZbiorkomAPIClient()
 
     /// Built with a failable initializer; if this ever fails the client throws
     /// `.invalidURL` instead of trapping.
@@ -54,11 +54,11 @@ public actor ZbiorkomAPIClient {
 
     private let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    init(session: URLSession = .shared) {
         self.session = session
     }
 
-    public func fetchStops(city: String, bbox: BoundingBox? = nil) async throws -> [Stop] {
+    func fetchStops(city: String, bbox: BoundingBox? = nil) async throws -> [Stop] {
         guard let baseURL = Self.baseURL else {
             throw ZbiorkomAPIError.invalidURL
         }

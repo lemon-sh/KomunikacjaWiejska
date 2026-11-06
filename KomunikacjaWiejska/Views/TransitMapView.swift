@@ -1,13 +1,13 @@
 import MapKit
 import SwiftUI
 
-public struct TransitMapView: View {
+struct TransitMapView: View {
     @State private var viewModel: MapViewModel
     private var locationManager: any LocationProviding
     @Environment(\.scenePhase) private var scenePhase
     @Namespace private var mapScope
 
-    public init(
+    init(
         viewModel: MapViewModel? = nil,
         locationManager: (any LocationProviding)? = nil
     ) {
@@ -26,7 +26,7 @@ public struct TransitMapView: View {
         )
     }
 
-    public var body: some View {
+    var body: some View {
         ZStack(alignment: .top) {
             Map(
                 position: $viewModel.cameraPosition,
