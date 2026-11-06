@@ -1,4 +1,4 @@
-# ADR-0008 — Marker Density Strategy: Deterministic Spatial Cap (Decision D1)
+# ADR-0008 — Marker Density Strategy: Deterministic Spatial Cap (Decision 2D1)
 
 **Status:** Accepted (2026-11-06)  
 **Supersedes:** [ADR-0002](0002-marker-density.md)
@@ -7,7 +7,7 @@
 
 Each stop rendered on the map creates a SwiftUI `Annotation` view. In dense metropolitan networks like Warsaw or Upper Silesia (GZM), thousands of stops may fall within the visible camera viewport. An experimental removal of grid thinning showed that rendering thousands of live SwiftUI annotations causes significant main-thread overhead and frame drops during panning and zooming.
 
-Decision D1 in Refactor Plan 2 evaluated:
+Decision 2D1 in Refactor Plan 2 evaluated:
 1. **Option A (Deterministic Spatial Cap):** Cap rendered viewport markers at a fixed ceiling (250) using deterministic spatial grid thinning.
 2. **Option B (Native Clustering):** Migrate SwiftUI `Map` to `MKMapView` via `UIViewRepresentable` and use native `MKClusterAnnotation`.
 3. **Option C (Unbounded):** Render all stops in the viewport without a ceiling, relying solely on distance thresholds.

@@ -1,4 +1,4 @@
-# ADR-0002 — Marker density strategy: grid thinning (Decision D2)
+# ADR-0002 — Marker density strategy: grid thinning (Decision 1D2)
 
 **Status:** Superseded by [ADR-0008](0008-marker-density.md) (2026-11-06)
 

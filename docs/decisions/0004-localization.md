@@ -1,6 +1,6 @@
-# ADR-0004 — Localization scope (Decision D3)
+# ADR-0004 — Localization scope (Decision 1D3)
 
-**Status:** Accepted (2026-11-05) — implemented in P4-1
+**Status:** Accepted (2026-11-05) — implemented in 1P4-1
 
 ## Context
 The UI started with Polish literals mixed with English enum labels and a few

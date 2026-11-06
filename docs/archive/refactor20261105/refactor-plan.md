@@ -70,7 +70,7 @@ Additional checks:
 
 - **Hermetic test gate:** run the suite once with Wi-Fi/Ethernet disabled (or with a `URLProtocol` that fails all requests) and confirm it stays green.
 - **Manual QA matrix:** cold launch, city switch (cached and uncached), airplane mode, denied location, 3D pitch + 2D reset, stop selection + sheet drag, dynamic type XXL, small device (iPhone SE-class if supported).
-- **Memory:** visit 5+ large cities and confirm `stopsCache` stops growing (after P2-3).
+- **Memory:** visit 5+ large cities and confirm `stopsCache` stops growing (after 1P2-3).
 
 ---
 
@@ -78,7 +78,7 @@ Additional checks:
 
 Nothing else can be validated reliably until tests stop touching the production API.
 
-### [x] P0-1 Introduce an injectable API abstraction
+### [x] 1P0-1 Introduce an injectable API abstraction
 
 **Files:** `Services/ZbiorkomAPIClient.swift`, `ViewModels/MapViewModel.swift`, tests.
 
@@ -92,7 +92,7 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 **Acceptance:** `MapViewModel` can be constructed with a stub and never starts a real request in tests.
 
-### [x] P0-2 Remove the eager request from `MapViewModel.init`
+### [x] 1P0-2 Remove the eager request from `MapViewModel.init`
 
 **Files:** `ViewModels/MapViewModel.swift:106`, `Views/TransitMapView.swift:128-131`.
 
@@ -106,7 +106,7 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 **Acceptance:** VM construction performs no I/O; cold launch issues exactly one stops request (verify with a breakpoint/log or stub call count).
 
-### [x] P0-3 Rewrite the tests to be hermetic
+### [x] 1P0-3 Rewrite the tests to be hermetic
 
 **Files:** `KomunikacjaWiejskaTests/KomunikacjaWiejskaTests.swift`.
 
@@ -115,7 +115,7 @@ Nothing else can be validated reliably until tests stop touching the production 
 **Change:**
 - Inject `StubStopsProvider` in every VM test.
 - Assert request counts instead of relying on `stops` being pre-populated.
-- Remove `#expect(viewModel.isZoomedOutForStops == false)` once the stub property is deleted (P1-4).
+- Remove `#expect(viewModel.isZoomedOutForStops == false)` once the stub property is deleted (1P1-4).
 - Add tests for: malformed tuple (too few elements), unknown `RouteType`, `null` bearing, empty routes/entrances, bbox query string, compact threshold boundaries, cache hit/miss, city switch while in flight, decoding error mapping.
 
 **Acceptance:** Test suite passes with networking disabled; no `URLSession` is instantiated by tests.
@@ -124,17 +124,17 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 ## 5. Phase 1 — Correctness bugs
 
-### [x] P1-1 Deduplicate stop loading
+### [x] 1P1-1 Deduplicate stop loading
 
 **Files:** `ViewModels/MapViewModel.swift`, `Views/TransitMapView.swift`.
 
 **Problem:** Duplicate requests caused by `init` + `.onAppear` + explicit load paths.
 
-**Change:** Single `.task` entry point using the idempotent state machine from P0-2. Cancel any in-flight task before starting a new city.
+**Change:** Single `.task` entry point using the idempotent state machine from 1P0-2. Cancel any in-flight task before starting a new city.
 
 **Acceptance:** One request on launch; switching A → B → A while B is loading does not leave duplicate tasks running. Add a unit test around the state machine.
 
-### [x] P1-2 Clear stops when switching city and ignore stale responses
+### [x] 1P1-2 Clear stops when switching city and ignore stale responses
 
 **Files:** `ViewModels/MapViewModel.swift:27-35, 176-211`.
 
@@ -148,7 +148,7 @@ Nothing else can be validated reliably until tests stop touching the production 
 
 **Acceptance:** City A annotations disappear immediately on switching to B; a slow A response cannot overwrite B; spinner always resolves. Tests cover the race.
 
-### [x] P1-3 Fix compact-mode threshold
+### [x] 1P1-3 Fix compact-mode threshold
 
 **Files:** `ViewModels/MapViewModel.swift:54-60`, `Models/City.swift:15-16`.
 
@@ -161,7 +161,7 @@ Prefer (b) because it matches how MapKit represents zoom, then delete `compactDi
 
 **Acceptance:** Launching every city in `City.allCities` (except deliberately huge networks) shows full markers. Boundary tests at the threshold.
 
-### [x] P1-4 Delete dead code and the test that protects it
+### [x] 1P1-4 Delete dead code and the test that protects it
 
 **Files:** `ViewModels/MapViewModel.swift:63-67, 213-215`, `Models/BoundingBox.swift`, tests.
 
@@ -169,12 +169,12 @@ Prefer (b) because it matches how MapKit represents zoom, then delete `compactDi
 
 **Change:**
 - Remove `isZoomedOutForStops`, `maxSpanForStops`, and `selectStop`.
-- Remove `BoundingBox` **or** wire it into the fetch path (see P2-1 / decision D1). Do not leave it production-dead.
+- Remove `BoundingBox` **or** wire it into the fetch path (see 1P2-1 / decision 1D1). Do not leave it production-dead.
 - Update tests accordingly; remove the `isZoomedOutForStops` assertion.
 
 **Acceptance:** No unreferenced production symbols; `rg "isZoomedOutForStops|maxSpanForStops|selectStop"` returns only the decision record in this doc.
 
-### [x] P1-5 Make stop selection a single source of truth
+### [x] 1P1-5 Make stop selection a single source of truth
 
 **Files:** `Views/TransitMapView.swift:13-29, 132-139`.
 
@@ -188,7 +188,7 @@ Prefer (b) because it matches how MapKit represents zoom, then delete `compactDi
 
 **Acceptance:** Tap marker → sheet opens; drag sheet down → marker deselects; tap another marker while open → sheet switches content; no “ghost” selection. Selection hash cost drops to a string comparison.
 
-### [x] P1-6 Fix the bearing-notch rotation
+### [x] 1P1-6 Fix the bearing-notch rotation
 
 **Files:** `Views/StopMarkerView.swift:35-43`.
 
@@ -208,7 +208,7 @@ ZStack {
 
 **Acceptance:** Screenshot/visual check for bearings 0, 90, 180, 270: the notch points in the travel direction while the icon stays upright.
 
-### [x] P1-7 Fix location-authorization dead ends
+### [x] 1P1-7 Fix location-authorization dead ends
 
 **Files:** `Services/LocationManager.swift`, `Views/MapControlsComboView.swift:51-59`.
 
@@ -227,11 +227,11 @@ ZStack {
 
 ## 6. Phase 2 — Performance and data lifecycle
 
-### [x] P2-1 Decide and document the fetch strategy
+### [x] 1P2-1 Decide and document the fetch strategy
 
 **Files:** `ViewModels/MapViewModel.swift:194`, `Services/ZbiorkomAPIClient.swift:33-44`, `Models/BoundingBox.swift`, `docs/architecture.md:16-19`.
 
-**Decision required (D1):**
+**Decision required (1D1):**
 - **Option A — viewport bbox (recommended for large networks):** fetch on `.onMapCameraChange(frequency: .onEnd)` with a debounce (250–400 ms), skip fetches while the gesture is active, cache per bbox/tile, and keep previous results on screen during refresh. This matches the API and the architecture doc.
 - **Option B — full-city fetch (current):** keep it, but then delete `BoundingBox`, remove bbox claims from docs, and document the memory/latency trade-off.
 
@@ -239,7 +239,7 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 **Acceptance:** Documented decision; production no longer contains unused bbox plumbing; request pattern matches the doc.
 
-### [x] P2-2 Stop rendering every stop at every zoom level
+### [x] 1P2-2 Stop rendering every stop at every zoom level
 
 **Files:** `Views/TransitMapView.swift:20-29`, `ViewModels/MapViewModel.swift:57-60`.
 
@@ -252,7 +252,7 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 **Acceptance:** Pan/zoom a large city (Warsaw, GZM) at 120 Hz-capable device and confirm no sustained frame drops; marker count on screen is bounded. Document the chosen strategy.
 
-### [x] P2-3 Define cache semantics for viewport coverage
+### [x] 1P2-3 Define cache semantics for viewport coverage
 
 **Files:** `ViewModels/MapViewModel.swift:76, 180-185`.
 
@@ -268,17 +268,17 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 **Acceptance:** Overlapping pans reuse cached stops without blanking; repeated exact viewports issue no request; failure does not poison the cache; city switch clears all stop data.
 
-### [x] P2-4 Reduce observation churn on camera changes
+### [x] 1P2-4 Reduce observation churn on camera changes
 
 **Files:** `ViewModels/MapViewModel.swift:127-143`, `Views/TransitMapView.swift:32-34`.
 
 **Problem:** Every `.onEnd` camera change writes four observable properties, and `isCompactDisplayMode` is computed from one of them, re-evaluating every annotation.
 
-**Change:** Group camera metrics into a single `MapCameraState` struct and only assign when it actually changes; derive compact mode from that struct. If P2-2 lands, the marker array itself should be the only thing that changes on zoom.
+**Change:** Group camera metrics into a single `MapCameraState` struct and only assign when it actually changes; derive compact mode from that struct. If 1P2-2 lands, the marker array itself should be the only thing that changes on zoom.
 
 **Acceptance:** SwiftUI view updates per camera gesture are measurably reduced (Instruments or a temporary `_printChanges`), and annotations don’t re-render when the camera settles at the same zoom.
 
-### [x] P2-5 Cancel work when the scene backgrounds
+### [x] 1P2-5 Cancel work when the scene backgrounds
 
 **Files:** `MapViewModel`, `LocationManager`, `KomunikacjaWiejskaApp`.
 
@@ -292,7 +292,7 @@ Do not implement both accidentally. Whichever option is chosen, update `docs/arc
 
 ## 7. Phase 3 — API and model robustness
 
-### [x] P3-1 Clean up `ZbiorkomAPIClient`
+### [x] 1P3-1 Clean up `ZbiorkomAPIClient`
 
 **Files:** `Services/ZbiorkomAPIClient.swift`.
 
@@ -309,7 +309,7 @@ Specific items:
 
 **Acceptance:** No force unwraps; no non-async `await`; error cases and localized messages covered by tests.
 
-### [x] P3-2 Remove the `nonisolated struct` band-aid properly
+### [x] 1P3-2 Remove the `nonisolated struct` band-aid properly
 
 **Files:** `Models/Stop.swift:141`.
 
@@ -319,7 +319,7 @@ Specific items:
 
 **Acceptance:** Builds cleanly without the attribute, or the attribute is documented. No unexplained concurrency escapes.
 
-### [x] P3-3 Harden the positional tuple decoders
+### [x] 1P3-3 Harden the positional tuple decoders
 
 **Files:** `Models/Stop.swift:31-40, 59-65, 122-138`.
 
@@ -332,7 +332,7 @@ Specific items:
 
 **Acceptance:** Malformed payloads produce descriptive errors; tests cover each failure mode; no crash on any fixture.
 
-### [x] P3-4 Stabilize `StopEntrance.id`
+### [x] 1P3-4 Stabilize `StopEntrance.id`
 
 **Files:** `Models/Stop.swift:43-65`.
 
@@ -342,7 +342,7 @@ Specific items:
 
 **Acceptance:** Duplicate-name fixtures get distinct IDs; IDs are stable across identical responses. Test added.
 
-### [x] P3-5 Make color parsing explicit and test it
+### [x] 1P3-5 Make color parsing explicit and test it
 
 **Files:** `Extensions/Color+Hex.swift`, `Models/RouteType.swift:72-88`, `Views/StopMarkerView.swift:18-20`, `Views/StopDetailSheet.swift:10-15, 46-50`.
 
@@ -355,7 +355,7 @@ Specific items:
 
 **Acceptance:** Invalid API colors are observable (fallback is explicit), not silently Material blue. Tests cover all lengths.
 
-### [x] P3-6 Clean up `RouteType`
+### [x] 1P3-6 Clean up `RouteType`
 
 **Files:** `Models/RouteType.swift`.
 
@@ -366,7 +366,7 @@ Specific items:
 
 **Acceptance:** No unused imports; tests cover unknown raw values; no UI ever shows `.unknown` as a selectable filter unless intended.
 
-### [x] P3-7 De-boilerplate the city catalog and add aliases
+### [x] 1P3-7 De-boilerplate the city catalog and add aliases
 
 **Files:** `Models/City.swift:177-201`, `Views/CityPickerSheet.swift:12-20`, `docs/cities.md`.
 
@@ -382,7 +382,7 @@ Specific items:
 
 ## 8. Phase 4 — UI, UX, and accessibility
 
-### [x] P4-1 Localize strings and separate display names from identifiers
+### [x] 1P4-1 Localize strings and separate display names from identifiers
 
 **Files:** all views, `ViewModels/MapViewModel.swift:8-12`, `Views/MapControlsComboView.swift:74,130`.
 
@@ -393,7 +393,7 @@ Specific items:
 
 **Acceptance:** No user-visible literal strings in views; switching locale changes labels; `MapMode` identity is locale-independent. Add a test that raw values remain stable.
 
-### [x] P4-2 Replace magic layout constants with safe-area-aware layout
+### [x] 1P4-2 Replace magic layout constants with safe-area-aware layout
 
 **Files:** `Views/TransitMapView.swift:42, 114-115, 124-125, 136`, `Views/StopMarkerView.swift`, `Views/StopDetailSheet.swift`.
 
@@ -404,7 +404,7 @@ Specific items:
 
 **Acceptance:** Controls never collide with the Dynamic Island/status bar; XXL Dynamic Type remains usable; no clipped content in the stop sheet.
 
-### [x] P4-3 Accessibility pass
+### [x] 1P4-3 Accessibility pass
 
 **Files:** all interactive views.
 
@@ -415,7 +415,7 @@ Specific items:
 
 **Acceptance:** VoiceOver can identify every control and marker; no unlabeled buttons remain.
 
-### [x] P4-4 Simplify map controls
+### [x] 1P4-4 Simplify map controls
 
 **Files:** `Views/MapControlsComboView.swift`.
 
@@ -427,7 +427,7 @@ Specific items:
 
 **Acceptance:** One initializer, no global singleton fallback, consistent glass styling, no unexplained drawing magic numbers.
 
-### [x] P4-5 Error, loading, and offline UX
+### [x] 1P4-5 Error, loading, and offline UX
 
 **Files:** `Views/TransitMapView.swift:43-67`, `ViewModels/MapViewModel.swift:46-47`.
 
@@ -442,7 +442,7 @@ Specific items:
 
 ## 9. Phase 5 — Project hygiene, concurrency, docs
 
-### [x] P5-1 Repository hygiene
+### [x] 1P5-1 Repository hygiene
 
 - Untrack `KomunikacjaWiejska.xcodeproj/xcuserdata/.../xcschememanagement.plist` (already in `.gitignore`, still tracked).
 - Confirm `.build/`, `.DS_Store`, and `buildServer.json` are ignored and not committed.
@@ -451,13 +451,13 @@ Specific items:
 
 **Acceptance:** `git ls-files` contains no user-specific Xcode files; a fresh clone builds.
 
-### [x] P5-2 Confirm the project file format
+### [x] 1P5-2 Confirm the project file format
 
 `KomunikacjaWiejska.xcodeproj/project.xcproj` is a JSON-based project file rather than the conventional `project.pbxproj`. `xcodebuild -list` works with the installed Xcode, so this appears intentional (new project format). Document the minimum Xcode version in the README/AGENTS, and add a CI check that fails loudly on an incompatible Xcode.
 
 **Acceptance:** A documented minimum Xcode version; CI green on that version.
 
-### [x] P5-3 Adopt Swift 6 language mode
+### [x] 1P5-3 Adopt Swift 6 language mode
 
 **Files:** project settings, `Services/LocationManager.swift`, `Models/Stop.swift`.
 
@@ -468,19 +468,19 @@ Specific items:
 
 **Acceptance:** Swift 6 mode builds and tests cleanly; no new warnings.
 
-### [x] P5-4 Revisit the deployment target
+### [x] 1P5-4 Revisit the deployment target
 
 `IPHONEOS_DEPLOYMENT_TARGET = 27.2` excludes almost all current devices. Confirm this is a deliberate product decision. If not, lower it to the minimum version that supports `.glass`/`.glassEffect` and adjust APIs accordingly.
 
 **Acceptance:** Documented target; CI builds on the lowest supported runtime.
 
-### [x] P5-5 Reconcile documentation with code
+### [x] 1P5-5 Reconcile documentation with code
 
-- `docs/architecture.md`: update the fetch strategy (P2-1), pruning/clustering (P2-2), component list (remove the stale `Color+Hex` path if it moves), and the “glass materials” idiom (`.glass` vs `.ultraThinMaterial`).
-- `docs/api.md`: add transport/error notes and confirm bbox semantics; keep the tuple reference in sync with P3-3.
+- `docs/architecture.md`: update the fetch strategy (1P2-1), pruning/clustering (1P2-2), component list (remove the stale `Color+Hex` path if it moves), and the “glass materials” idiom (`.glass` vs `.ultraThinMaterial`).
+- `docs/api.md`: add transport/error notes and confirm bbox semantics; keep the tuple reference in sync with 1P3-3.
 - `docs/cities.md`: 23 vs 66 cities; alias support.
 - `AGENTS.md`: link this plan, and update the file map if files move.
-- Add a short `docs/decisions/` note (ADR) for D1 (bbox vs full fetch) and D2 (clustering approach). ADRs are plain Markdown; no tooling.
+- Add a short `docs/decisions/` note (ADR) for 1D1 (bbox vs full fetch) and 1D2 (clustering approach). ADRs are plain Markdown; no tooling.
 
 **Acceptance:** A new agent can read `AGENTS.md` → docs and find no claim contradicted by the code.
 
@@ -488,35 +488,35 @@ Specific items:
 
 ## 10. Suggested commit sequence
 
-1. `test: add injectable stops provider; make VM tests hermetic` (P0-1, P0-3)
-2. `fix: stop fetching stops from MapViewModel.init` (P0-2, P1-1)
-3. `fix: clear stops and guard stale responses on city switch` (P1-2)
-4. `fix: use camera distance for compact marker mode` (P1-3)
-5. `refactor: remove dead stop-fetching state` (P1-4)
-6. `fix: single source of truth for stop selection` (P1-5)
-7. `fix: rotate bearing notch around badge center` (P1-6)
-8. `fix: handle denied location access and stop idle updates` (P1-7)
-9. `refactor: harden API client errors and URL building` (P3-1, P3-2)
-10. `refactor: validate positional tuple decoding` (P3-3, P3-4)
-11. `refactor: make color parsing explicit` (P3-5, P3-6)
-12. `perf: bound stops rendering and cache` (P2-1…P2-4, after D1/D2)
-13. `feat: localized strings and accessibility labels` (P4-1, P4-3)
-14. `chore: safe-area layout, docs, project hygiene` (P4-2, P4-4, P4-5, P5)
+1. `test: add injectable stops provider; make VM tests hermetic` (1P0-1, 1P0-3)
+2. `fix: stop fetching stops from MapViewModel.init` (1P0-2, 1P1-1)
+3. `fix: clear stops and guard stale responses on city switch` (1P1-2)
+4. `fix: use camera distance for compact marker mode` (1P1-3)
+5. `refactor: remove dead stop-fetching state` (1P1-4)
+6. `fix: single source of truth for stop selection` (1P1-5)
+7. `fix: rotate bearing notch around badge center` (1P1-6)
+8. `fix: handle denied location access and stop idle updates` (1P1-7)
+9. `refactor: harden API client errors and URL building` (1P3-1, 1P3-2)
+10. `refactor: validate positional tuple decoding` (1P3-3, 1P3-4)
+11. `refactor: make color parsing explicit` (1P3-5, 1P3-6)
+12. `perf: bound stops rendering and cache` (1P2-1…1P2-4, after 1D1/1D2)
+13. `feat: localized strings and accessibility labels` (1P4-1, 1P4-3)
+14. `chore: safe-area layout, docs, project hygiene` (1P4-2, 1P4-4, 1P4-5, 1P5)
 
 Keep phases 2 and 4 independent once Phase 1 is merged. Phase 3 can proceed in parallel with Phase 2 if the same files are not touched.
 
 Actual commit sequence used (2026-11-05):
-1. `test: injectable StopsProviding; hermetic VM tests; idempotent non-init fetch` (P0-1, P0-2, P1-1, P0-3)
-2. `fix: clear stops and guard stale responses on city switch; per-city loading/error` (P1-2)
-3. `fix: compact markers from camera distance` (P1-3)
-4. `refactor: remove dead stop-fetching state` (P1-4)
-5. `fix: selection single source of truth` (P1-5)
-6. `fix: bearing notch orbits badge center` (P1-6)
-7. `fix: denied-location Settings deep link; one-shot fixes` (P1-7, + the redundant second init from P4-4)
-8. `perf: viewport bbox fetch + thinning + cache + background cancellation` (P2-1…P2-5, D1-A/D2-A/D6 ADRs)
-9. `feat: localize UI, safe-area chrome, accessibility, actionable errors` (P4-1…P4-5)
-10. `chore: shared scheme, toolchain guard, Swift 6 mode, iOS 26 target` (P5-1…P5-4)
-11. `docs: reconcile architecture/API/ADRs and close the remediation plan` (P5-5)
+1. `test: injectable StopsProviding; hermetic VM tests; idempotent non-init fetch` (1P0-1, 1P0-2, 1P1-1, 1P0-3)
+2. `fix: clear stops and guard stale responses on city switch; per-city loading/error` (1P1-2)
+3. `fix: compact markers from camera distance` (1P1-3)
+4. `refactor: remove dead stop-fetching state` (1P1-4)
+5. `fix: selection single source of truth` (1P1-5)
+6. `fix: bearing notch orbits badge center` (1P1-6)
+7. `fix: denied-location Settings deep link; one-shot fixes` (1P1-7, + the redundant second init from 1P4-4)
+8. `perf: viewport bbox fetch + thinning + cache + background cancellation` (1P2-1…1P2-5, 1D1-A/1D2-A/1D6 ADRs)
+9. `feat: localize UI, safe-area chrome, accessibility, actionable errors` (1P4-1…1P4-5)
+10. `chore: shared scheme, toolchain guard, Swift 6 mode, iOS 26 target` (1P5-1…1P5-4)
+11. `docs: reconcile architecture/API/ADRs and close the remediation plan` (1P5-5)
 
 ---
 
@@ -524,21 +524,21 @@ Actual commit sequence used (2026-11-05):
 
 | ID | Decision | Options | Recommended | Blocks |
 |---|---|---|---|---|
-| D1 | Stops fetch strategy | A: viewport bbox + debounce; B: full-city fetch | A for large networks; B only if simplicity is preferred and docs are updated | P2-1, P2-3, P3-1 |
-| D2 | Marker density strategy | A: grid thinning; B: `MKMapView` clustering; C: SwiftUI `Marker` clustering | B (native) if the architecture can absorb a representable; A as an interim | P2-2 |
-| D3 | Localization scope | Polish only; Polish + English | Polish primary + English if App Store requires it | P4-1 |
-| D4 | Cache freshness | TTL/LRU; session-only tiles; manual refresh | Session-only tile cache, cleared on city switch, never persisted | P2-3 |
-| D5 | Entrance identity | Tuple index; name + coordinates; server ID if added | Tuple index (deterministic) | P3-4 |
-| D6 | Minimum iOS | 27.2 (current); lower to glass minimum | Ask the developer | P5-4 |
+| 1D1 | Stops fetch strategy | A: viewport bbox + debounce; B: full-city fetch | A for large networks; B only if simplicity is preferred and docs are updated | 1P2-1, 1P2-3, 1P3-1 |
+| 1D2 | Marker density strategy | A: grid thinning; B: `MKMapView` clustering; C: SwiftUI `Marker` clustering | B (native) if the architecture can absorb a representable; A as an interim | 1P2-2 |
+| 1D3 | Localization scope | Polish only; Polish + English | Polish primary + English if App Store requires it | 1P4-1 |
+| 1D4 | Cache freshness | TTL/LRU; session-only tiles; manual refresh | Session-only tile cache, cleared on city switch, never persisted | 1P2-3 |
+| 1D5 | Entrance identity | Tuple index; name + coordinates; server ID if added | Tuple index (deterministic) | 1P3-4 |
+| 1D6 | Minimum iOS | 27.2 (current); lower to glass minimum | Ask the developer | 1P5-4 |
 
 ## 11.1 Decision outcomes (2026-11-05)
 
-- **D1 → A** (viewport bbox + debounce; 350 ms). ADR: [`docs/decisions/0001-fetch-strategy.md`](../../decisions/0001-fetch-strategy.md).
-- **D2 → A** (grid thinning, MVP; `MKMapView` clustering may be spiked later). ADR: [`docs/decisions/0002-marker-density.md`](../../decisions/0002-marker-density.md).
-- **D3 → Polish + English** (full string catalog). ADR: [`docs/decisions/0004-localization.md`](../../decisions/0004-localization.md).
-- **D4 → session-only tile cache** (no TTL or LRU; cleared on city switch; never persisted). See [`docs/decisions/0007-tile-cache.md`](../../decisions/0007-tile-cache.md).
-- **D5 → tuple index** (entrance IDs are `"{stopID}-entrance-{index}"`).
-- **D6 → lower to glass minimum (iOS 26.0)**, applied in P5-4. ADR: [`docs/decisions/0003-deployment-target.md`](../../decisions/0003-deployment-target.md).
+- **1D1 → A** (viewport bbox + debounce; 350 ms). ADR: [`docs/decisions/0001-fetch-strategy.md`](../../decisions/0001-fetch-strategy.md).
+- **1D2 → A** (grid thinning, MVP; `MKMapView` clustering may be spiked later). ADR: [`docs/decisions/0002-marker-density.md`](../../decisions/0002-marker-density.md).
+- **1D3 → Polish + English** (full string catalog). ADR: [`docs/decisions/0004-localization.md`](../../decisions/0004-localization.md).
+- **1D4 → session-only tile cache** (no TTL or LRU; cleared on city switch; never persisted). See [`docs/decisions/0007-tile-cache.md`](../../decisions/0007-tile-cache.md).
+- **1D5 → tuple index** (entrance IDs are `"{stopID}-entrance-{index}"`).
+- **1D6 → lower to glass minimum (iOS 26.0)**, applied in 1P5-4. ADR: [`docs/decisions/0003-deployment-target.md`](../../decisions/0003-deployment-target.md).
 - **Swift 6 → enabled** with documented `nonisolated` value types. ADR: [`docs/decisions/0005-swift6-concurrency.md`](../../decisions/0005-swift6-concurrency.md).
 - **Toolchain → Xcode 27.2+** with a shared scheme and CI check. ADR: [`docs/decisions/0006-toolchain.md`](../../decisions/0006-toolchain.md).
 
@@ -560,10 +560,10 @@ Progress log:
 |---|---|---|
 | Cluster/representable migration regresses native map controls or glass styling | Medium | Keep SwiftUI `Map` for the MVP; spike the representable in a branch; do not reimplement compass/scale |
 | Swift 6 mode surfaces many concurrency errors | High | Do it after functional fixes, one module/type at a time; no blanket `@preconcurrency` |
-| Lowering the deployment target removes `.glass` APIs | Medium | Confirm D6 first; keep a fallback branch for `ultraThinMaterial` only if the developer approves, not silently |
-| Backend tuple order changes | Low | P3-3 count checks yield descriptive errors; add a contract test with a recorded payload |
+| Lowering the deployment target removes `.glass` APIs | Medium | Confirm 1D6 first; keep a fallback branch for `ultraThinMaterial` only if the developer approves, not silently |
+| Backend tuple order changes | Low | 1P3-3 count checks yield descriptive errors; add a contract test with a recorded payload |
 | Session cache shows server-side changes until relaunch or city switch | Low | Accepted trade-off: stop data changes rarely while the app is open; switching city clears the cache |
-| Full-city fetch causes memory spikes on GZM/Warsaw | High (current) | P2-1/P2-2/P2-3 are the mitigation; measure with Instruments |
+| Full-city fetch causes memory spikes on GZM/Warsaw | High (current) | 1P2-1/1P2-2/1P2-3 are the mitigation; measure with Instruments |
 
 ---
 
@@ -571,32 +571,32 @@ Progress log:
 
 | # | Finding | Task |
 |---|---|---|
-| 1 | Eager network in `init` + duplicate `.onAppear` fetch | P0-2, P1-1 |
-| 2 | Tests hit the production API | P0-1, P0-3 |
-| 3 | Fetch-all + render-all, no pruning | P2-1, P2-2 |
-| 4 | Every city launches in compact mode | P1-3 |
-| 5 | Previous city’s stops remain after switching; unbounded cache | P1-2, P2-3 |
-| 6 | Two sources of truth for selection; full-value `.tag` | P1-5 |
-| 7 | Bearing triangle rotates around its own centre | P1-6 |
-| 8 | Location denied dead end; endless updates; empty error handler | P1-7 |
-| 9 | `await [` on a non-async expression | P3-1 |
-| 10 | `nonisolated struct StopsResponse` band-aid | P3-2, P5-3 |
-| 11 | Force unwrap of the base URL | P3-1 |
-| 12 | Dead `isZoomedOutForStops`/`maxSpanForStops`/`selectStop`/`BoundingBox` | P1-4 (BoundingBox also P2-1) |
-| 13 | Wrong `.invalidURL`; lossy decoding errors; raw `URLError` | P3-1 |
-| 14 | Brittle duplicated positional decoders; no validation | P3-3 |
-| 15 | Synthesized `StopEntrance.id` collisions | P3-4 |
-| 16 | `Color(hex:)` silently falls back to blue; no tests | P3-5 |
-| 17 | Stringly-typed colors; hardcoded Polish/English mix | P3-5, P4-1 |
-| 18 | `.unknown` sentinel in `CaseIterable`; unused import | P3-6 |
-| 19 | Magic layout constants; fixed 52pt spacer | P4-2 |
-| 20 | Duplicate control initializer; global singleton fallback; mixed glass APIs | P4-4 |
-| 21 | Hand-drawn map thumbnails | P4-4 (cosmetic, lowest priority) |
-| 22 | Missing accessibility labels | P4-3 |
-| 23 | City picker ignores documented aliases; trivial `ContentView` | P3-7, P4-1 |
-| 24 | Docs claim 66 cities, bbox fetching, pruning; code has 23 and neither | P5-5, P2-1, P2-2 |
-| 25 | 170-line city boilerplate | P3-7 |
-| 26 | `project.xcproj`, tracked xcuserdata, Swift 5 mode, iOS 27.2 | P5-1, P5-2, P5-3, P5-4 |
+| 1 | Eager network in `init` + duplicate `.onAppear` fetch | 1P0-2, 1P1-1 |
+| 2 | Tests hit the production API | 1P0-1, 1P0-3 |
+| 3 | Fetch-all + render-all, no pruning | 1P2-1, 1P2-2 |
+| 4 | Every city launches in compact mode | 1P1-3 |
+| 5 | Previous city’s stops remain after switching; unbounded cache | 1P1-2, 1P2-3 |
+| 6 | Two sources of truth for selection; full-value `.tag` | 1P1-5 |
+| 7 | Bearing triangle rotates around its own centre | 1P1-6 |
+| 8 | Location denied dead end; endless updates; empty error handler | 1P1-7 |
+| 9 | `await [` on a non-async expression | 1P3-1 |
+| 10 | `nonisolated struct StopsResponse` band-aid | 1P3-2, 1P5-3 |
+| 11 | Force unwrap of the base URL | 1P3-1 |
+| 12 | Dead `isZoomedOutForStops`/`maxSpanForStops`/`selectStop`/`BoundingBox` | 1P1-4 (BoundingBox also 1P2-1) |
+| 13 | Wrong `.invalidURL`; lossy decoding errors; raw `URLError` | 1P3-1 |
+| 14 | Brittle duplicated positional decoders; no validation | 1P3-3 |
+| 15 | Synthesized `StopEntrance.id` collisions | 1P3-4 |
+| 16 | `Color(hex:)` silently falls back to blue; no tests | 1P3-5 |
+| 17 | Stringly-typed colors; hardcoded Polish/English mix | 1P3-5, 1P4-1 |
+| 18 | `.unknown` sentinel in `CaseIterable`; unused import | 1P3-6 |
+| 19 | Magic layout constants; fixed 52pt spacer | 1P4-2 |
+| 20 | Duplicate control initializer; global singleton fallback; mixed glass APIs | 1P4-4 |
+| 21 | Hand-drawn map thumbnails | 1P4-4 (cosmetic, lowest priority) |
+| 22 | Missing accessibility labels | 1P4-3 |
+| 23 | City picker ignores documented aliases; trivial `ContentView` | 1P3-7, 1P4-1 |
+| 24 | Docs claim 66 cities, bbox fetching, pruning; code has 23 and neither | 1P5-5, 1P2-1, 1P2-2 |
+| 25 | 170-line city boilerplate | 1P3-7 |
+| 26 | `project.xcproj`, tracked xcuserdata, Swift 5 mode, iOS 27.2 | 1P5-1, 1P5-2, 1P5-3, 1P5-4 |
 
 ---
 
@@ -604,12 +604,12 @@ Progress log:
 
 If there is only time for a short session, do these in order:
 
-- [x] P0-2 + P1-1: remove `loadStopsForSelectedCity()` from `init`, call once from `.task`.
-- [x] P1-3: stop launching in compact mode.
-- [x] P1-2: clear `stops` on city switch.
-- [x] P1-4: delete the three dead symbols and the stub assertion.
-- [x] P1-6: fix the notch rotation.
-- [x] P3-1: remove `await [` and the force unwrap.
-- [x] P3-5: make invalid hex colors explicit.
+- [x] 1P0-2 + 1P1-1: remove `loadStopsForSelectedCity()` from `init`, call once from `.task`.
+- [x] 1P1-3: stop launching in compact mode.
+- [x] 1P1-2: clear `stops` on city switch.
+- [x] 1P1-4: delete the three dead symbols and the stub assertion.
+- [x] 1P1-6: fix the notch rotation.
+- [x] 1P3-1: remove `await [` and the force unwrap.
+- [x] 1P3-5: make invalid hex colors explicit.
 
 These are low-risk, independently mergeable, and remove the most visible symptoms.

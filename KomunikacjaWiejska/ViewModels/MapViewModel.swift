@@ -605,7 +605,7 @@ final class MapViewModel {
     }
 
     /// Debounces fetches triggered by `.onEnd` camera changes.
-    /// Skips debounce and fetch entirely if all visible tiles are covered or already in flight (R1-6).
+    /// Skips debounce and fetch entirely if all visible tiles are covered or already in flight (2P1-6).
     private func scheduleViewportFetch() {
         guard areStopsVisible else {
             cancelActiveFetch()

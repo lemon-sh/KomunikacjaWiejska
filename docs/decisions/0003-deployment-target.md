@@ -1,6 +1,6 @@
-# ADR-0003 — Deployment target lowered to iOS 26 (Decision D6)
+# ADR-0003 — Deployment target lowered to iOS 26 (Decision 1D6)
 
-**Status:** Accepted and implemented (2026-11-05, P5-4)
+**Status:** Accepted and implemented (2026-11-05, 1P5-4)
 
 ## Context
 The project shipped with `IPHONEOS_DEPLOYMENT_TARGET = 27.2`, which excludes

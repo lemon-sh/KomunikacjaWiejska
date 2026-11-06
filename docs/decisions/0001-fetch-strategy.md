@@ -1,4 +1,4 @@
-# ADR-0001 — Stops fetch strategy: viewport bbox (Decision D1)
+# ADR-0001 — Stops fetch strategy: viewport bbox (Decision 1D1)
 
 **Status:** Accepted (2026-11-05)
 

@@ -101,7 +101,7 @@ actor ZbiorkomAPIClient {
         }
     }
 
-    /// Performs the request with a bounded retry policy (R5-1).
+    /// Performs the request with a bounded retry policy (2P5-1).
     private func perform(_ request: URLRequest) async throws -> Data {
         for attempt in 0...Self.maxRetryCount {
             try Task.checkCancellation()

@@ -1,6 +1,6 @@
 # ADR-0005 — Swift 6 language mode and isolation model
 
-**Status:** Accepted (2026-11-05) — implemented in P5-3
+**Status:** Accepted (2026-11-05) — implemented in 1P5-3
 
 ## Context
 The project already used `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` but stayed

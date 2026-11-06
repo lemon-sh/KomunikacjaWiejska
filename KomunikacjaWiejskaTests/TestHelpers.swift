@@ -4,7 +4,7 @@ import MapKit
 @testable import KomunikacjaWiejska
 import Testing
 
-/// Bounded polling helper replacing unconstrained spin-wait loops (R6-1).
+/// Bounded polling helper replacing unconstrained spin-wait loops (2P6-1).
 func waitUntil(
     timeout: Duration = .seconds(3),
     pollInterval: Duration = .milliseconds(10),

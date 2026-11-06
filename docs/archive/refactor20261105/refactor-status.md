@@ -20,106 +20,106 @@
 ## Completed
 
 ### Phase 0 — Test harness safety
-- **P0-1** Injectable `StopsProviding` protocol; `ZbiorkomAPIClient` conforms;
+- **1P0-1** Injectable `StopsProviding` protocol; `ZbiorkomAPIClient` conforms;
   `MapViewModel` accepts `any StopsProviding`.
-- **P0-2** No I/O in `MapViewModel.init`; stops load from a single `.task`;
+- **1P0-2** No I/O in `MapViewModel.init`; stops load from a single `.task`;
   `deinit` cancels in-flight work; idempotent state machine.
-- **P0-3** Hermetic tests plus coverage for malformed tuples, unknown route
+- **1P0-3** Hermetic tests plus coverage for malformed tuples, unknown route
   types, null bearing, empty collections, bbox queries, compact thresholds,
   cache hits, in-flight city switches, and API error mapping.
 
 ### Phase 1 — Correctness
-- **P1-1** Duplicate fetch removed; single load entry point.
-- **P1-2** Switching city clears the old markers immediately; generation token
+- **1P1-1** Duplicate fetch removed; single load entry point.
+- **1P1-2** Switching city clears the old markers immediately; generation token
   discards stale responses; loading/errors are tracked per city.
-- **P1-3** Compact marker mode is derived from camera **distance** (50 km), not
+- **1P1-3** Compact marker mode is derived from camera **distance** (50 km), not
   latitude span; the initial and city-switch distance is derived from the new
   region's span, so PKP starts compact while all normal cities launch with full
   markers.
-- **P1-4** Removed `isZoomedOutForStops`, `maxSpanForStops`, `selectStop`;
+- **1P1-4** Removed `isZoomedOutForStops`, `maxSpanForStops`, `selectStop`;
   `BoundingBox` is now production-wired instead of dead.
-- **P1-5** Selection is a single `selectedStopID` source of truth using
+- **1P1-5** Selection is a single `selectedStopID` source of truth using
   `.tag(stop.id)`; the sheet is derived from it.
-- **P1-6** Bearing notch rotates around the badge centre.
-- **P1-7** Denied/disabled location shows an explanatory alert with an "Open
+- **1P1-6** Bearing notch rotates around the badge centre.
+- **1P1-7** Denied/disabled location shows an explanatory alert with an "Open
   Settings" deep link; one-shot `requestLocation()` instead of a perpetual
   update loop; `didFailWithError` logs.
 
-### Phase 2 — Performance & data lifecycle (D1-A, D2-A)
-- **P2-1** Viewport `bbox` fetch on camera end with 350 ms debounce;
+### Phase 2 — Performance & data lifecycle (1D1-A, 1D2-A)
+- **1P2-1** Viewport `bbox` fetch on camera end with 350 ms debounce;
   `BoundingBox` wired end-to-end; docs updated.
-- **P2-2** Grid-based thinning bounds rendering to 250 markers, deterministic.
+- **1P2-2** Grid-based thinning bounds rendering to 250 markers, deterministic.
   The grid is cap-driven (15×16 = 240 slots), not derived from the stop count;
   a stop-count-derived grid collapsed dense viewports to a few markers.
-- **P2-3** Session-only per-city tile cache: Web Mercator coverage cells at
+- **1P2-3** Session-only per-city tile cache: Web Mercator coverage cells at
   roughly three per viewport, one union-bbox request for missing tiles, merge
   by stop ID, ancestor coverage for zoom-ins, and viewport filtering on render.
   Failed requests are not cached; the cache is cleared on city switch and never
   persisted. There is no TTL or LRU (ADR-0007).
-- **P2-4** Camera metrics grouped into one `CameraState` with epsilon equality;
+- **1P2-4** Camera metrics grouped into one `CameraState` with epsilon equality;
   markers re-render only when the thinned set changes.
-- **P2-5** Backgrounding cancels fetches and stops location updates; returning
+- **1P2-5** Backgrounding cancels fetches and stops location updates; returning
   to `.active` checks the current viewport and reuses tile coverage when it is
   already cached.
 - ADRs: `docs/decisions/0001-fetch-strategy.md`, `0002-marker-density.md`,
   `0007-tile-cache.md`.
 
 ### Phase 3 — API & model robustness
-- **P3-1** No force unwrap in the client; `URLComponents` built once; dedicated
+- **1P3-1** No force unwrap in the client; `URLComponents` built once; dedicated
   `invalidResponse`/`transport`/`serverError` cases; localized Polish/English
   messages; DEBUG decoding details logged via `os.Logger`; `Accept` header;
   documented 15 s timeout; one jittered retry for transient errors/5xx, never
   4xx. Covered by `MockURLProtocol` tests.
-- **P3-2** `StopsResponse` isolation attribute documented with the exact
+- **1P3-2** `StopsResponse` isolation attribute documented with the exact
   diagnostic and removal condition; it remains the deliberate `nonisolated`
   decoding entry point under Swift 6.
-- **P3-3** Positional tuple decoders validate element counts and coordinate
+- **1P3-3** Positional tuple decoders validate element counts and coordinate
   ranges, decode with type/field/index diagnostics, normalize bearings, and
   tolerate extra trailing elements.
-- **P3-4** Entrance IDs are `"{stopID}-entrance-{index}"` — deterministic,
+- **1P3-4** Entrance IDs are `"{stopID}-entrance-{index}"` — deterministic,
   duplicate-safe; ordering documented as part of identity.
-- **P3-5** `Color(hex:)` is failable, validates lengths/chars, documents ARGB,
+- **1P3-5** `Color(hex:)` is failable, validates lengths/chars, documents ARGB,
   and all call sites pass explicit fallbacks; covered by tests.
-- **P3-6** `RouteType` no longer imports CoreLocation, exposes
+- **1P3-6** `RouteType` no longer imports CoreLocation, exposes
   `displayableCases`, and gives `.unknown` a distinct neutral symbol/color.
-- **P3-7** City catalog moved to `KomunikacjaWiejska/Resources/cities.json`
+- **1P3-7** City catalog moved to `KomunikacjaWiejska/Resources/cities.json`
   (all 66 documented networks), `aliases` supported in picker search,
   `docs/cities.md` reconciled with the bundle.
 
 ### Phase 4 — UI, UX, accessibility
-- **P4-1** `Localizable.xcstrings` with Polish and English; `MapMode` has a
+- **1P4-1** `Localizable.xcstrings` with Polish and English; `MapMode` has a
   localized `displayName` while `rawValue` stays a stable identifier; no literal
   UI copy remains in views; `RouteType` display names moved to
   `RouteType+UI.swift`.
-- **P4-2** The fixed 52 pt spacer is gone; top chrome is a safe-area-aware
+- **1P4-2** The fixed 52 pt spacer is gone; top chrome is a safe-area-aware
   stack; shared metrics live in `DesignTokens`; markers scale with Dynamic Type
   up to a documented cap; the detail sheet is scrollable and offers `.large`
   for accessibility sizes.
-- **P4-3** Icon-only controls have labels/values/hints; markers and route badges
+- **1P4-3** Icon-only controls have labels/values/hints; markers and route badges
   are single accessibility elements; selected state is exposed with traits.
-- **P4-4** Single `MapControlsComboView` initializer, injected
+- **1P4-4** Single `MapControlsComboView` initializer, injected
   `LocationManager`, no singleton fallback; grouped glass controls use
   `glassEffect`/`glassEffectUnion` with an explanatory comment (native
   `GlassEffectContainer`); hand-drawn thumbnails replaced by simple native icon
   cards.
-- **P4-5** The status capsule distinguishes initial load / same-city viewport
+- **1P4-5** The status capsule distinguishes initial load / same-city viewport
   load / city switch and shows a two-line localized error with an inline retry
   button. Cached stops stay visible while additional tiles load.
 
 ### Phase 5 — Project hygiene, concurrency, docs
-- **P5-1** `xcuserdata` untracked; `.gitignore` covers user data and local build
+- **1P5-1** `xcuserdata` untracked; `.gitignore` covers user data and local build
   artifacts; shared scheme committed under `xcshareddata`.
-- **P5-2** `README.md` documents Xcode 27.2+ and the JSON project format;
+- **1P5-2** `README.md` documents Xcode 27.2+ and the JSON project format;
   `scripts/check-toolchain.sh` fails loudly on older toolchains.
-- **P5-3** `SWIFT_VERSION = 6.0`; strict concurrency; value types that cross
+- **1P5-3** `SWIFT_VERSION = 6.0`; strict concurrency; value types that cross
   actors are `nonisolated` with comments; test doubles use documented
   lock-guarded `@unchecked Sendable` only where access is protected.
-- **P5-4** `IPHONEOS_DEPLOYMENT_TARGET = 26.0` for app and tests (D6 applied).
-- **P5-5** Architecture/API/cities/AGENTS docs reconciled with the code; ADRs
+- **1P5-4** `IPHONEOS_DEPLOYMENT_TARGET = 26.0` for app and tests (1D6 applied).
+- **1P5-5** Architecture/API/cities/AGENTS docs reconciled with the code; ADRs
   0003–0006 added.
 
 ### Post-completion follow-up — location one-shot flow
-- **P1-7 follow-up** The location button now awaits the permission decision and
+- **1P1-7 follow-up** The location button now awaits the permission decision and
   the one-shot fix as a single async operation, so the camera centers when the
   fix arrives (including after a first-time permission grant). Fix failures
   show a localized "Location unavailable" alert; denial still deep-links to
@@ -127,14 +127,14 @@
   `LocationAuthorizationState.resolve` is covered by a hermetic test.
 - Additional copy: `location.error.title`, `location.error.message`,
   `location.error.ok` (Polish and English).
-- **P4-1 follow-up** The location permission prompt now lives in
+- **1P4-1 follow-up** The location permission prompt now lives in
   `Resources/InfoPlist.xcstrings` (Polish + English) instead of a single
   hardcoded Polish build setting; a test checks both localized strings.
-- **P2-3 follow-up** The rendered marker array is compared by full `Stop`
+- **1P2-3 follow-up** The rendered marker array is compared by full `Stop`
   value instead of ID only, so a later viewport fetch that returns new
   bearings, routes, or names for the same stops is applied (regression test
   added).
-- **P2-3 follow-up** The exact-bbox snapshot cache was replaced by the tile
+- **1P2-3 follow-up** The exact-bbox snapshot cache was replaced by the tile
   cache in ADR-0007. Cache entries no longer expire, are not LRU-bounded, are
   cleared on city switch, and are never written to disk. Overlapping viewports
   reuse merged stops instead of being treated as cache misses. ADR-0001 updated.

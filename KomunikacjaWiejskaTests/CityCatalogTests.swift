@@ -14,7 +14,7 @@ struct CityCatalogTests {
         #expect(City.allCities.contains(where: { $0.id == "poznan" }))
         #expect(City.allCities.contains(where: { $0.id == "tricity" }))
         #expect(City.allCities.contains(where: { $0.id == "gzm" }))
-        // R6-4: Assert catalog integrity invariant rather than hard-coding a fragile literal count
+        // 2P6-4: Assert catalog integrity invariant rather than hard-coding a fragile literal count
         #expect(City.allCities.count >= 50)
         #expect(Set(City.allCities.map(\.id)).count == City.allCities.count)
     }
@@ -34,7 +34,7 @@ struct CityCatalogTests {
         #expect(City.warsaw.matches(searchText: "warszawa"))
         #expect(City.warsaw.matches(searchText: "") == true)
 
-        // R4-6: Missing or typo'd city id returns nil rather than silently returning Warsaw
+        // 2P4-6: Missing or typo'd city id returns nil rather than silently returning Warsaw
         #expect(City.city(id: "nonexistent_city") == nil)
     }
 }
