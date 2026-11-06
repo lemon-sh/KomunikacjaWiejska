@@ -886,7 +886,7 @@ provider that cancels mid-flight.
 
 ## 10. Phase 6 — Tests
 
-### [ ] R6-1 Replace spin-wait synchronization
+### [x] R6-1 Replace spin-wait synchronization
 
 **Files:** `KomunikacjaWiejskaTests/KomunikacjaWiejskaTests.swift` (~15 sites,
 e.g. `while viewModel.isLoading { await Task.yield() }`).
@@ -902,7 +902,7 @@ Fail with a clear message on timeout.
 **Acceptance:** No `while … Task.yield()` in tests; a deliberately broken
 transition fails fast with a diagnostic; the suite runtime stays comparable.
 
-### [ ] R6-2 Isolate defaults and shared state
+### [x] R6-2 Isolate defaults and shared state
 
 **Files:** `KomunikacjaWiejskaTests/KomunikacjaWiejskaTests.swift`
 (`testCameraPersistenceAndRestoration`), `MockURLProtocol.swift`,
@@ -920,7 +920,7 @@ shared global genuinely remains.
 **Acceptance:** Tests pass in random order and repeated runs; no test reads or
 writes the standard suite; no handler leaks between tests.
 
-### [ ] R6-3 Split and rename the test target
+### [x] R6-3 Split and rename the test target
 
 **Files:** `KomunikacjaWiejskaTests/*.swift`.
 
@@ -934,7 +934,7 @@ contains view-model, localization, and UIKit sizing tests.
 **Acceptance:** No test file above ~400 lines; suite names describe their unit;
 no coverage loss (assert the test count).
 
-### [ ] R6-4 De-brittle assertions
+### [x] R6-4 De-brittle assertions
 
 **Files:** tests.
 
@@ -949,7 +949,7 @@ product decision. Derive threshold tests from the constants.
 **Acceptance:** Adding a city or changing a symbol without changing behaviour
 does not fail unrelated tests.
 
-### [ ] R6-5 Simplify the stubs
+### [x] R6-5 Simplify the stubs
 
 **Files:** `StubStopsProvider.swift`, `MockURLProtocol.swift`.
 
@@ -963,7 +963,7 @@ cancellation counter for R1-6/R5-3.
 **Acceptance:** Tests configure one closure; precedence is explicit in the
 helper, not the stub; all existing tests migrate.
 
-### [ ] R6-6 Add regression tests for this plan
+### [x] R6-6 Add regression tests for this plan
 
 Minimum new coverage:
 - marker bound/determinism (R1-1) and launch marker mode for all cities (R1-2);

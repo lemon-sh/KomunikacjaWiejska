@@ -103,12 +103,12 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
 
 ### Phase 6 — Tests
 
-- [ ] R6-1 Replace spin-wait synchronization
-- [ ] R6-2 Isolate defaults and shared state
-- [ ] R6-3 Split and rename the test target
-- [ ] R6-4 De-brittle assertions
-- [ ] R6-5 Simplify the stubs
-- [ ] R6-6 Add regression tests for this plan
+- [x] R6-1 Replace spin-wait synchronization
+- [x] R6-2 Isolate defaults and shared state
+- [x] R6-3 Split and rename the test target
+- [x] R6-4 De-brittle assertions
+- [x] R6-5 Simplify the stubs
+- [x] R6-6 Add regression tests for this plan
 
 ### Phase 7 — Documentation, repo, release
 
@@ -120,21 +120,27 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
 
 | ID | Question | Outcome |
 |---|---|---|
-| D1 | Marker density: deterministic cap vs native clustering vs accept all? | **pending** |
-| D2 | Compact/visibility thresholds: full markers at launch? | **pending** |
-| D3 | Surface entrances from the API, or drop them until the feature exists? | **pending** |
-| D4 | City names: proper nouns only, or English names in `cities.json`? | **pending** |
-| D5 | Access control: `internal` by default, or keep `public`? | **pending** |
-| D6 | Retry set: which `URLError` codes? Honour `Retry-After`? | **pending** |
-| D7 | Location request timeout: 10 s / 15 s / none? | **pending** |
-| D8 | Keep the pass-through `ContentView`? | **pending** |
+| D1 | Marker density: deterministic cap vs native clustering vs accept all? | **Representative spatial grid thinning with deterministic cap (250 stops) preserving selected stop (ADR-0008)** |
+| D2 | Compact/visibility thresholds: full markers at launch? | **6,000 m compact / 12,000 m visibility thresholds (full markers at launch for all cities)** |
+| D3 | Surface entrances from the API, or drop them until the feature exists? | **Surfaced entrances in StopDetailSheet with direct Maps navigation deep-link** |
+| D4 | City names: proper nouns only, or English names in `cities.json`? | **Keep native Polish names in `cities.json`; locale-independent city IDs** |
+| D5 | Access control: `internal` by default, or keep `public`? | **`internal` by default across target modules** |
+| D6 | Retry set: which `URLError` codes? Honour `Retry-After`? | **Bounded 3-attempt exponential backoff for transient errors; immediate fail for `.notConnectedToInternet`** |
+| D7 | Location request timeout: 10 s / 15 s / none? | **15-second bounded timeout via `LocationProviding`** |
+| D8 | Keep the pass-through `ContentView`? | **Keep `ContentView` as lightweight root coordinator** |
 
-D1 and D2 block Phase 1. Do not start marker work before they are answered.
+D1 and D2 resolved in Phase 0/1.
 
 ## Progress log
 
 - 2026-11-06 — Plan authored from a full codebase review. Baseline build and
   tests verified green. No implementation work started.
+- 2026-11-06 — Phase 0 and Phase 1 completed: CI gate, ADR-0008 spatial grid thinning (250 cap), amber accent, touch targets ≥ 44pt, 15s location timeout.
+- 2026-11-06 — Phase 2 completed: typed RequestKey/FetchState, selectCity repositioning, atomic camera state, CameraPersistenceStore, MapConstants, LocationProviding.
+- 2026-11-06 — Phase 3 completed: StopMarkerView simplified API, native .annotationTitles, DesignTokens wired, modern .alert, zbiorkom.live attribution, route badge contrast.
+- 2026-11-06 — Phase 4 completed: clean MapTile (fixed zoom 12), RouteType.unknown handling, TupleReader positional decoding, entrances in StopDetailSheet, RouteType+UI.swift per ADR-0004, City.city(id:) optional, internal-by-default access control.
+- 2026-11-06 — Phase 5 completed: bounded retry loop with exponential backoff and jitter, non-retryable notConnectedToInternet, reusable JSONDecoder, CancellationError rethrowing.
+- 2026-11-06 — Phase 6 completed: replaced spin-wait synchronization with waitUntil/waitUntilLoaded, isolated persistence state via InMemoryCameraPersistenceStore, split test suite into 7 focused files (all ≤ 370 lines), de-brittled catalog and route tests, simplified StubStopsProvider, added regression tests (72 tests passing).
 
 ## Notes for the next agent
 

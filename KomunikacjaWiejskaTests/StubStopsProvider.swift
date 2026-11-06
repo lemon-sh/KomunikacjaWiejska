@@ -5,16 +5,9 @@ import os
 /// In-memory stand-in for `ZbiorkomAPIClient`. Records every request so tests
 /// can assert call counts, and either returns a fixture set or throws a
 /// configured error. Never touches the network.
-///
-/// Lock-guarded (rather than an actor) because the project compiles with
-/// MainActor default isolation, under which actor conformances to the
-/// `nonisolated` `StopsProviding` protocol trip unhelpful isolation errors.
-/// `@unchecked Sendable` is justified by the `OSAllocatedUnfairLock`.
 final class StubStopsProvider: StopsProviding, @unchecked Sendable {
     /// Gate for simulating in-flight requests. When `holdsRequests` is true,
     /// every `fetchStops` call parks on a continuation until `openGate()`.
-    /// Mutable state is only touched while holding `gate`, so unchecked
-    /// Sendable is safe and required by `OSAllocatedUnfairLock` in Swift 6.
     private final class Gate: @unchecked Sendable {
         var holdsRequests: Bool
         var parked: [CheckedContinuation<Void, Never>] = []
@@ -26,33 +19,52 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
 
     private struct State {
         var callCount = 0
+        var cancellationCount = 0
         var requestedCities: [String] = []
         var requestedBBoxes: [BoundingBox?] = []
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private let gate: OSAllocatedUnfairLock<Gate>
-    private let fixtureStops: [Stop]
-    private let fixtureError: Error?
-    private let fixturesByCity: [String: Result<[Stop], Error>]
+    private let handler: @Sendable (String, BoundingBox?) -> Result<[Stop], Error>
     /// Replaces every fixture after construction, so tests can simulate a
     /// refresh returning updated details for the same stop IDs.
     private let overrideStops = OSAllocatedUnfairLock<[Stop]?>(initialState: nil)
 
     init(
+        handler: @escaping @Sendable (String, BoundingBox?) -> Result<[Stop], Error>,
+        holdsRequests: Bool = false
+    ) {
+        self.handler = handler
+        self.gate = OSAllocatedUnfairLock(initialState: Gate(holdsRequests: holdsRequests))
+    }
+
+    convenience init(
         stops: [Stop] = [],
         error: Error? = nil,
         resultsByCity: [String: Result<[Stop], Error>] = [:],
         holdsRequests: Bool = false
     ) {
-        self.fixtureStops = stops
-        self.fixtureError = error
-        self.fixturesByCity = resultsByCity
-        self.gate = OSAllocatedUnfairLock(initialState: Gate(holdsRequests: holdsRequests))
+        self.init(
+            handler: { city, _ in
+                if let result = resultsByCity[city] {
+                    return result
+                }
+                if let error = error {
+                    return .failure(error)
+                }
+                return .success(stops)
+            },
+            holdsRequests: holdsRequests
+        )
     }
 
     var callCount: Int {
         state.withLock { $0.callCount }
+    }
+
+    var cancellationCount: Int {
+        state.withLock { $0.cancellationCount }
     }
 
     var requestedCities: [String] {
@@ -68,25 +80,19 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
             testState.callCount += 1
             testState.requestedCities.append(city)
             testState.requestedBBoxes.append(bbox)
-            return fixtureResult(for: city)
+            if let override = overrideStops.withLock({ $0 }) {
+                return .success(override)
+            }
+            return handler(city, bbox)
         }
         if gate.withLock({ $0.holdsRequests }) {
             await waitForGate()
         }
+        if Task.isCancelled {
+            state.withLock { $0.cancellationCount += 1 }
+            throw CancellationError()
+        }
         return try result.get()
-    }
-
-    private func fixtureResult(for city: String) -> Result<[Stop], Error> {
-        if let override = overrideStops.withLock({ $0 }) {
-            return .success(override)
-        }
-        if let result = fixturesByCity[city] {
-            return result
-        }
-        if let fixtureError = fixtureError {
-            return .failure(fixtureError)
-        }
-        return .success(fixtureStops)
     }
 
     /// Changes what every subsequent request returns.
@@ -149,7 +155,17 @@ enum StopFixtures {
             vehicleTypes: [.bus],
             bearing: bearing,
             direction: "Centrum",
-            routes: [],
+            routes: [
+                StopRoute(
+                    id: "warsaw-route-100",
+                    city: city,
+                    name: "100",
+                    longName: "Trasa 100",
+                    agency: "ZTM",
+                    type: .bus,
+                    color: "FB8C00"
+                )
+            ],
             entrances: []
         )
     }

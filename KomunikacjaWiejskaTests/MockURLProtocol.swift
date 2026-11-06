@@ -53,6 +53,15 @@ final class MockURLProtocol: URLProtocol {
 
     override func stopLoading() {}
 
+    static func withHandler<T>(
+        _ handler: @escaping (URLRequest) throws -> (URLResponse, Data),
+        operation: () async throws -> T
+    ) async rethrows -> T {
+        self.handler = handler
+        defer { self.handler = nil }
+        return try await operation()
+    }
+
     static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
