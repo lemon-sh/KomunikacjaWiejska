@@ -45,7 +45,7 @@ public enum LocationError: LocalizedError, Equatable, Sendable {
 
 @Observable
 @MainActor
-public final class LocationManager: NSObject, CLLocationManagerDelegate {
+public final class LocationManager: NSObject, CLLocationManagerDelegate, LocationProviding {
     public static let shared = LocationManager()
 
     private static let logger = Logger(subsystem: "KomunikacjaWiejska", category: "Location")

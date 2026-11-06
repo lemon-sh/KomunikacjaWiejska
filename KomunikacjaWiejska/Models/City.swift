@@ -81,7 +81,7 @@ public struct City: Identifiable, Hashable, Sendable, Decodable {
     /// Returns 0 for nationwide networks like PKP to prevent false-positive region switches.
     public var coverageRadiusMeters: Double {
         if id == "pkp" { return 0 }
-        return max(20_000, defaultLatitudeDelta * 111_000 * 1.5)
+        return max(20_000, defaultLatitudeDelta * MapConstants.metresPerDegreeLatitude * 1.5)
     }
 
     // MARK: - Catalog
@@ -91,6 +91,7 @@ public struct City: Identifiable, Hashable, Sendable, Decodable {
     /// Convenience references for call sites and tests.
     public static var warsaw: City { city(id: "warsaw") }
     public static var krakow: City { city(id: "krakow") }
+    public static var pkp: City { city(id: "pkp") }
 
     public static func city(id: String) -> City {
         allCities.first { $0.id == id } ?? CityCatalog.fallbackCity

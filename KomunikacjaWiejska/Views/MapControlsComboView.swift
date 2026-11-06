@@ -3,7 +3,7 @@ import SwiftUI
 public struct MapControlsComboView: View {
     @Bindable var viewModel: MapViewModel
     @Namespace private var namespace
-    var locationManager: LocationManager
+    var locationManager: any LocationProviding
     @State private var locationAlert: LocationAlert?
     @Environment(\.openURL) private var openURL
 
@@ -14,7 +14,7 @@ public struct MapControlsComboView: View {
         var id: Self { self }
     }
 
-    public init(viewModel: MapViewModel, locationManager: LocationManager) {
+    public init(viewModel: MapViewModel, locationManager: any LocationProviding) {
         self.viewModel = viewModel
         self.locationManager = locationManager
     }

@@ -54,28 +54,34 @@ public enum StopLoadingPhase: Equatable, Sendable {
 @MainActor
 public final class MapViewModel {
     /// Camera-derived metrics grouped into one tracked value so a camera
-    /// gesture updates a single observation instead of four (and so
-    /// derived values like compact mode and the rendered marker set
-    /// re-evaluate only when the camera actually changed).
-    public struct CameraState: Equatable {
+    /// gesture updates a single observation instead of four.
+    /// `center` is derived from `region.center` so they can never diverge.
+    public struct CameraState: Equatable, Sendable {
         public var region: MKCoordinateRegion
         public var heading: Double
         public var pitch: Double
         public var distance: Double
-        public var center: CLLocationCoordinate2D
+
+        public var center: CLLocationCoordinate2D {
+            get { region.center }
+            set { region.center = newValue }
+        }
 
         public init(
             region: MKCoordinateRegion,
             heading: Double = 0,
             pitch: Double = 0,
             distance: Double = 0,
-            center: CLLocationCoordinate2D
+            center: CLLocationCoordinate2D? = nil
         ) {
-            self.region = region
+            var reg = region
+            if let center = center {
+                reg.center = center
+            }
+            self.region = reg
             self.heading = heading
             self.pitch = pitch
             self.distance = distance
-            self.center = center
         }
 
         public static func == (lhs: CameraState, rhs: CameraState) -> Bool {
@@ -83,28 +89,12 @@ public final class MapViewModel {
                 && lhs.pitch == rhs.pitch
                 && lhs.distance == rhs.distance
                 && lhs.center.isApproximatelyEqual(to: rhs.center)
-                && lhs.region.center.isApproximatelyEqual(to: rhs.region.center)
                 && abs(lhs.region.span.latitudeDelta - rhs.region.span.latitudeDelta) < 1e-7
                 && abs(lhs.region.span.longitudeDelta - rhs.region.span.longitudeDelta) < 1e-7
         }
     }
 
-    @ObservationIgnored private var shouldRepositionOnCityChange = true
-
-    public var selectedCity: City {
-        didSet {
-            guard selectedCity != oldValue else { return }
-            UserDefaults.standard.set(selectedCity.id, forKey: "lastSelectedCityId")
-            selectedStopID = nil
-            errorsByCity.removeAll()
-            clearStopCache()
-            if shouldRepositionOnCityChange {
-                repositionCameraForCurrentCity()
-            }
-            suggestedCity = nil
-            loadStopsForSelectedCity()
-        }
-    }
+    public private(set) var selectedCity: City
 
     /// City suggested to the user when viewing an area outside the current city's territory.
     public private(set) var suggestedCity: City?
@@ -112,13 +102,12 @@ public final class MapViewModel {
     public private(set) var dismissedCityID: String?
 
     public var cameraPosition: MapCameraPosition
-    public var cameraState: CameraState
+    public internal(set) var cameraState: CameraState
     /// Markers currently rendered on the map. This is the visible, thinned
     /// view of the session stop cache.
     public private(set) var stops: [Stop] = []
     /// Marker selection source of truth: the map writes the tagged stop ID,
-    /// the detail sheet is derived from it. Identify by ID instead of the full
-    /// `Stop` value so selection compares a string, not routes/entrances.
+    /// the detail sheet is derived from it.
     public var selectedStopID: String?
     public var isShowingCityPicker: Bool = false
     public var selectedMapMode: MapMode = .explore
@@ -154,10 +143,29 @@ public final class MapViewModel {
         }
     }
 
+    public struct RequestKey: Hashable, Sendable {
+        public let cityID: String
+        public let bbox: BoundingBox
+
+        public init(cityID: String, bbox: BoundingBox) {
+            self.cityID = cityID
+            self.bbox = bbox
+        }
+    }
+
+    private enum FetchState: Equatable {
+        case idle
+        case loading(RequestKey)
+        case loaded(RequestKey)
+        case failed(RequestKey)
+    }
+
+    private var fetchState: FetchState = .idle
+
     /// Whether the currently selected city's viewport has a request in flight.
     public var isLoading: Bool {
-        if case .loading(let key) = fetchState, key.hasPrefix("\(selectedCity.id):") {
-            return true
+        if case .loading(let key) = fetchState {
+            return key.cityID == selectedCity.id
         }
         return false
     }
@@ -183,17 +191,6 @@ public final class MapViewModel {
     public func cachedStop(for id: String) -> Stop? {
         cachedStopsByID[id]
     }
-
-    /// Cycle a city's stop fetch can be in. Guarantees one in-flight request
-    /// per viewport and makes loading idempotent.
-    private enum FetchState: Equatable {
-        case idle
-        case loading(cityKey: String)
-        case loaded(cityKey: String)
-        case failed(cityKey: String)
-    }
-
-    private var fetchState: FetchState = .idle
 
     /// Camera distance (in metres) above which stops are displayed as smaller
     /// compact points.
@@ -226,10 +223,9 @@ public final class MapViewModel {
     /// one representative per grid cell (see `thinnedStops`).
     public static let maxRenderedStops = 250
 
-    /// Debounce applied to fetches triggered by camera movement.
-    private static let cameraFetchDebounce: Duration = .milliseconds(350)
-
     private let apiClient: any StopsProviding
+    private let persistence: any CameraPersistenceStore
+
     // `nonisolated(unsafe)`: only mutated from `@MainActor` methods, read from
     // `deinit` (nonisolated by definition). `Task` is `Sendable`, so cancelling
     // from any context is safe; the reference itself is never read concurrently.
@@ -240,8 +236,7 @@ public final class MapViewModel {
     /// cleared on every city switch. Stop data is treated as stable for the
     /// lifetime of the app process, so entries never expire.
     private var cachedStopsByID: [String: Stop] = [:]
-    /// Tiles whose bbox has been fetched successfully in this session. A tile
-    /// also covers all of its descendants, so zooming in needs no new data.
+    /// Tiles whose bbox has been fetched successfully in this session.
     private var fetchedTiles: Set<MapTile> = []
     private var errorsByCity: [String: String] = [:]
     /// Generation token guarding against stale responses: each fetch gets a
@@ -253,14 +248,16 @@ public final class MapViewModel {
 
     public init(
         apiClient: any StopsProviding = ZbiorkomAPIClient.shared,
-        initialCity: City? = nil
+        initialCity: City? = nil,
+        persistence: any CameraPersistenceStore = UserDefaultsCameraPersistenceStore()
     ) {
         self.apiClient = apiClient
+        self.persistence = persistence
 
         let chosenCity: City
         if let initialCity = initialCity {
             chosenCity = initialCity
-        } else if let savedId = UserDefaults.standard.string(forKey: "lastSelectedCityId"),
+        } else if let savedId = persistence.loadLastSelectedCityID(),
                   let found = City.allCities.first(where: { $0.id == savedId }) {
             chosenCity = found
         } else {
@@ -271,14 +268,12 @@ public final class MapViewModel {
 
         var restoredCamera: (center: CLLocationCoordinate2D, distance: Double)?
         if initialCity == nil,
-           let savedLat = UserDefaults.standard.object(forKey: Self.savedCameraLatitudeKey) as? Double,
-           let savedLon = UserDefaults.standard.object(forKey: Self.savedCameraLongitudeKey) as? Double,
-           let savedDist = UserDefaults.standard.object(forKey: Self.savedCameraDistanceKey) as? Double,
-           savedLat.isFinite, savedLon.isFinite, savedDist.isFinite, savedDist > 0,
-           (-90.0...90.0).contains(savedLat), (-180.0...180.0).contains(savedLon) {
-            let savedCoord = CLLocationCoordinate2D(latitude: savedLat, longitude: savedLon)
+           let saved = persistence.loadSavedCamera(),
+           saved.latitude.isFinite, saved.longitude.isFinite, saved.distance.isFinite, saved.distance > 0,
+           (-90.0...90.0).contains(saved.latitude), (-180.0...180.0).contains(saved.longitude) {
+            let savedCoord = CLLocationCoordinate2D(latitude: saved.latitude, longitude: saved.longitude)
             let isWithinCityBounds: Bool
-            if chosenCity.id == "pkp" {
+            if chosenCity.id == City.pkp.id {
                 isWithinCityBounds = true
             } else {
                 let cityLocation = CLLocation(latitude: chosenCity.coordinate.latitude, longitude: chosenCity.coordinate.longitude)
@@ -286,12 +281,12 @@ public final class MapViewModel {
                 isWithinCityBounds = savedLocation.distance(from: cityLocation) <= chosenCity.coverageRadiusMeters
             }
             if isWithinCityBounds {
-                restoredCamera = (center: savedCoord, distance: savedDist)
+                restoredCamera = (center: savedCoord, distance: saved.distance)
             }
         }
 
         if let restored = restoredCamera {
-            let delta = max(0.001, min(180.0, restored.distance / 111_000))
+            let delta = max(0.001, min(180.0, restored.distance / MapConstants.metresPerDegreeLatitude))
             let region = MKCoordinateRegion(
                 center: restored.center,
                 span: MKCoordinateSpan(latitudeDelta: delta, longitudeDelta: delta)
@@ -326,9 +321,11 @@ public final class MapViewModel {
 
     /// Persists current camera center and zoom distance to non-volatile storage.
     public func saveCameraPosition() {
-        UserDefaults.standard.set(currentCenter.latitude, forKey: Self.savedCameraLatitudeKey)
-        UserDefaults.standard.set(currentCenter.longitude, forKey: Self.savedCameraLongitudeKey)
-        UserDefaults.standard.set(currentDistance, forKey: Self.savedCameraDistanceKey)
+        persistence.saveCamera(
+            latitude: currentCenter.latitude,
+            longitude: currentCenter.longitude,
+            distance: currentDistance
+        )
     }
 
     deinit {
@@ -359,7 +356,7 @@ public final class MapViewModel {
     /// is known. The visible height in metres is a close enough proxy for the
     /// compact-mode threshold: 0.08° ≈ 9 km for a city, 5° ≈ 555 km for PKP.
     static func approximateDistance(for region: MKCoordinateRegion) -> Double {
-        region.span.latitudeDelta * 111_000
+        region.span.latitudeDelta * MapConstants.metresPerDegreeLatitude
     }
 
     public func handleCameraChange(to context: MapCameraUpdateContext) {
@@ -499,7 +496,7 @@ public final class MapViewModel {
 
         // If current city is not PKP, verify the viewport is not still in the current city's territory.
         // Hysteresis: best candidate must be closer than current city by at least 3 km.
-        if currentCity.id != "pkp" {
+        if currentCity.id != City.pkp.id {
             let currentCityLocation = CLLocation(
                 latitude: currentCity.coordinate.latitude,
                 longitude: currentCity.coordinate.longitude
@@ -516,9 +513,16 @@ public final class MapViewModel {
     /// Selects a new city, optionally repositioning the camera to the city's center.
     public func selectCity(_ city: City, repositionCamera: Bool = true) {
         guard city != selectedCity else { return }
-        shouldRepositionOnCityChange = repositionCamera
         selectedCity = city
-        shouldRepositionOnCityChange = true
+        persistence.saveLastSelectedCityID(city.id)
+        selectedStopID = nil
+        errorsByCity.removeAll()
+        clearStopCache()
+        if repositionCamera {
+            repositionCameraForCurrentCity()
+        }
+        suggestedCity = nil
+        loadStopsForSelectedCity()
     }
 
     /// Switches the active city to the currently suggested city without moving the camera,
@@ -589,7 +593,7 @@ public final class MapViewModel {
         switch loadDecision(for: cameraState.region) {
         case .cached:
             cancelActiveFetch()
-            fetchState = .loaded(cityKey: "\(city.id):tiles")
+            fetchState = .idle
             errorsByCity[city.id] = nil
             loadingPhase = nil
             updateStops()
@@ -617,7 +621,7 @@ public final class MapViewModel {
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard let self = self else { return }
-            try? await Task.sleep(for: Self.cameraFetchDebounce)
+            try? await Task.sleep(for: MapConstants.cameraFetchDebounce)
             guard !Task.isCancelled else { return }
             self.debounceTask = nil
             self.fetchCurrentViewport()
@@ -662,10 +666,10 @@ public final class MapViewModel {
     }
 
     private func startFetch(city: City, bbox: BoundingBox, tiles: Set<MapTile>) {
-        let key = "\(city.id):\(bbox.queryValue)"
-        guard fetchState != .loading(cityKey: key) else {
+        let requestKey = RequestKey(cityID: city.id, bbox: bbox)
+        guard fetchState != .loading(requestKey) else {
             #if DEBUG
-            Logger.mapCache.debug("Start fetch skipped: already in flight for \(key, privacy: .public)")
+            Logger.mapCache.debug("Start fetch skipped: already in flight for \(city.id, privacy: .public):\(bbox.queryValue, privacy: .public)")
             #endif
             return
         }
@@ -681,7 +685,7 @@ public final class MapViewModel {
         requestGeneration = UUID()
         let generation = requestGeneration
         errorsByCity[city.id] = nil
-        fetchState = .loading(cityKey: key)
+        fetchState = .loading(requestKey)
 
         if lastRequestedCityID == nil {
             loadingPhase = .initial
@@ -721,7 +725,7 @@ public final class MapViewModel {
                 // trigger a request on every settle.
                 self.fetchedTiles.formUnion(tiles)
                 self.inFlightTiles.removeAll()
-                self.fetchState = .loaded(cityKey: key)
+                self.fetchState = .loaded(requestKey)
                 self.loadingPhase = nil
                 self.errorsByCity.removeValue(forKey: city.id)
                 #if DEBUG
@@ -741,7 +745,7 @@ public final class MapViewModel {
                     #endif
                     self.inFlightTiles.removeAll()
                     self.errorsByCity[city.id] = Self.userFacingMessage(for: error)
-                    self.fetchState = .failed(cityKey: key)
+                    self.fetchState = .failed(requestKey)
                     self.loadingPhase = nil
                 }
             }

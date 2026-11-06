@@ -462,6 +462,26 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.loadingPhase == nil)
     }
 
+    @Test("Typed load state and city switching without string parsing")
+    func testTypedLoadStateAcrossCitySwitch() async throws {
+        let provider = StubStopsProvider(holdsRequests: true)
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        #expect(viewModel.isLoading)
+        #expect(viewModel.loadingPhase == .initial)
+
+        // Switch to Krakow while Warsaw is loading
+        viewModel.selectCity(.krakow, repositionCamera: false)
+        #expect(viewModel.isLoading)
+        #expect(viewModel.loadingPhase == .citySwitch)
+
+        provider.openGate()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(!viewModel.isLoading)
+        #expect(viewModel.loadingPhase == nil)
+    }
+
     @Test("Visible stops are rendered in deterministic ID order without thinning")
     func testVisibleStopsRenderedWithoutThinning() async throws {
         let region = MKCoordinateRegion(
@@ -677,13 +697,13 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.errorMessage == "Failed to load")
 
         // Switch to Krakow (successful)
-        viewModel.selectedCity = .krakow
+        viewModel.selectCity(.krakow)
         while viewModel.isLoading { await Task.yield() }
         #expect(viewModel.errorMessage == nil)
 
         // Switch back to Warsaw with success now
         provider.setStops([StopFixtures.sample(city: "warsaw")])
-        viewModel.selectedCity = .warsaw
+        viewModel.selectCity(.warsaw)
         while viewModel.isLoading { await Task.yield() }
         #expect(viewModel.errorMessage == nil)
     }
@@ -894,7 +914,7 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.isLoading == true)
 
         // Switch to an uncached city: previous stops must vanish immediately.
-        viewModel.selectedCity = .krakow
+        viewModel.selectCity(.krakow)
         while provider.requestedCities.count < 2 { await Task.yield() }
         #expect(viewModel.stops.isEmpty)
         #expect(provider.requestedCities == ["warsaw", "krakow"])
@@ -932,12 +952,12 @@ struct KomunikacjaWiejskaTests {
 
         // The previous city's stops must disappear immediately; switching back
         // later refetches because the cache is session-scoped per city.
-        viewModel.selectedCity = .krakow
+        viewModel.selectCity(.krakow)
         #expect(viewModel.stops.isEmpty)
         while viewModel.isLoading { await Task.yield() }
         #expect(viewModel.stops == krakowStops)
 
-        viewModel.selectedCity = .warsaw
+        viewModel.selectCity(.warsaw)
         #expect(viewModel.stops.isEmpty)
         while viewModel.isLoading { await Task.yield() }
         #expect(viewModel.stops == warsawStops)
@@ -960,7 +980,7 @@ struct KomunikacjaWiejskaTests {
 
         // Switching to a countrywide network must not keep the zoomed-in
         // distance until MapKit sends its first camera callback.
-        warsawViewModel.selectedCity = pkp
+        warsawViewModel.selectCity(pkp)
         #expect(warsawViewModel.isCompactDisplayMode == true)
     }
 
@@ -1194,63 +1214,46 @@ struct KomunikacjaWiejskaTests {
         #expect(viewModel.stops.isEmpty)
     }
 
-    @Test("Camera position persistence in UserDefaults and restoration on launch")
+    @Test("Camera position persistence in InMemoryCameraPersistenceStore and restoration on launch")
     func testCameraPersistenceAndRestoration() {
-        let defaults = UserDefaults.standard
-        let latKey = MapViewModel.savedCameraLatitudeKey
-        let lonKey = MapViewModel.savedCameraLongitudeKey
-        let distKey = MapViewModel.savedCameraDistanceKey
-        let cityKey = "lastSelectedCityId"
-
-        let previousLat = defaults.object(forKey: latKey)
-        let previousLon = defaults.object(forKey: lonKey)
-        let previousDist = defaults.object(forKey: distKey)
-        let previousCity = defaults.string(forKey: cityKey)
-
-        defer {
-            defaults.setValue(previousLat, forKey: latKey)
-            defaults.setValue(previousLon, forKey: lonKey)
-            defaults.setValue(previousDist, forKey: distKey)
-            defaults.setValue(previousCity, forKey: cityKey)
-        }
+        let store = InMemoryCameraPersistenceStore()
+        let provider = StubStopsProvider()
 
         // 1. Save camera state from a MapViewModel instance
-        let provider = StubStopsProvider()
-        let vm = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        let vm = MapViewModel(apiClient: provider, initialCity: .warsaw, persistence: store)
         vm.currentCenter = CLLocationCoordinate2D(latitude: 52.235, longitude: 21.015)
         vm.currentDistance = 14_200
         vm.saveCameraPosition()
 
-        #expect(defaults.double(forKey: latKey) == 52.235)
-        #expect(defaults.double(forKey: lonKey) == 21.015)
-        #expect(defaults.double(forKey: distKey) == 14_200)
+        let saved = store.loadSavedCamera()
+        #expect(saved?.latitude == 52.235)
+        #expect(saved?.longitude == 21.015)
+        #expect(saved?.distance == 14_200)
 
         // 2. Restore on launch when position is within city bounds
-        defaults.setValue("warsaw", forKey: cityKey)
-        let restoredVM = MapViewModel(apiClient: provider)
+        store.saveLastSelectedCityID("warsaw")
+        let restoredVM = MapViewModel(apiClient: provider, persistence: store)
         #expect(restoredVM.selectedCity.id == "warsaw")
         #expect(abs(restoredVM.currentCenter.latitude - 52.235) < 1e-6)
         #expect(abs(restoredVM.currentCenter.longitude - 21.015) < 1e-6)
         #expect(restoredVM.currentDistance == 14_200)
 
         // 3. Fall back to city defaults when saved coordinate is outside city coverage
-        defaults.setValue(50.0647, forKey: latKey) // Krakow coordinate
-        defaults.setValue(19.9450, forKey: lonKey)
-        defaults.setValue(10_000, forKey: distKey)
-        defaults.setValue("warsaw", forKey: cityKey)
-
-        let fallbackVM = MapViewModel(apiClient: provider)
+        let fallbackStore = InMemoryCameraPersistenceStore(
+            initialCityID: "warsaw",
+            savedCamera: (latitude: 50.0647, longitude: 19.9450, distance: 10_000)
+        )
+        let fallbackVM = MapViewModel(apiClient: provider, persistence: fallbackStore)
         #expect(fallbackVM.selectedCity.id == "warsaw")
         #expect(abs(fallbackVM.currentCenter.latitude - City.warsaw.coordinate.latitude) < 1e-6)
         #expect(abs(fallbackVM.currentCenter.longitude - City.warsaw.coordinate.longitude) < 1e-6)
 
         // 4. PKP restores saved coordinates without boundary checks
-        defaults.setValue("pkp", forKey: cityKey)
-        defaults.setValue(50.0647, forKey: latKey)
-        defaults.setValue(19.9450, forKey: lonKey)
-        defaults.setValue(15_000, forKey: distKey)
-
-        let pkpVM = MapViewModel(apiClient: provider)
+        let pkpStore = InMemoryCameraPersistenceStore(
+            initialCityID: "pkp",
+            savedCamera: (latitude: 50.0647, longitude: 19.9450, distance: 15_000)
+        )
+        let pkpVM = MapViewModel(apiClient: provider, persistence: pkpStore)
         #expect(pkpVM.selectedCity.id == "pkp")
         #expect(abs(pkpVM.currentCenter.latitude - 50.0647) < 1e-6)
         #expect(abs(pkpVM.currentCenter.longitude - 19.9450) < 1e-6)
@@ -1295,5 +1298,23 @@ struct KomunikacjaWiejskaTests {
             let size = UIHostingController(rootView: sheet).sizeThatFits(in: CGSize(width: 375, height: 600))
             #expect(size.width > 0 && size.height > 0)
         }
+    }
+}
+
+extension BoundingBox {
+    init?(region: MKCoordinateRegion) {
+        let latDelta = region.span.latitudeDelta
+        let lonDelta = region.span.longitudeDelta
+        guard latDelta.isFinite, lonDelta.isFinite, latDelta > 0, lonDelta > 0 else {
+            return nil
+        }
+        let center = region.center
+        let halfLat = latDelta / 2.0
+        let halfLon = lonDelta / 2.0
+        let minLat = max(-90.0, center.latitude - halfLat)
+        let maxLat = min(90.0, center.latitude + halfLat)
+        let minLon = max(-180.0, center.longitude - halfLon)
+        let maxLon = min(180.0, center.longitude + halfLon)
+        self.init(minLon: minLon, minLat: minLat, maxLon: maxLon, maxLat: maxLat)
     }
 }

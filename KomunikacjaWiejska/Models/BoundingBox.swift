@@ -1,10 +1,8 @@
-import CoreLocation
 import Foundation
-import MapKit
 
-/// `nonisolated` because the API client (`actor`) calls it from off MainActor;
-/// the project's default actor isolation would otherwise isolate it to MainActor.
-public nonisolated struct BoundingBox: Equatable, Sendable {
+/// Geographic bounding box defining min/max longitude and latitude.
+/// Explicitly nonisolated and Sendable for cross-actor transfer.
+public nonisolated struct BoundingBox: Hashable, Sendable {
     public let minLon: Double
     public let minLat: Double
     public let maxLon: Double
@@ -17,28 +15,7 @@ public nonisolated struct BoundingBox: Equatable, Sendable {
         self.maxLat = maxLat
     }
 
-    public init?(region: MKCoordinateRegion) {
-        let latDelta = region.span.latitudeDelta
-        let lonDelta = region.span.longitudeDelta
-
-        guard latDelta.isFinite, lonDelta.isFinite, latDelta > 0, lonDelta > 0 else {
-            return nil
-        }
-
-        let center = region.center
-        let halfLat = latDelta / 2.0
-        let halfLon = lonDelta / 2.0
-
-        let minLat = max(-90.0, center.latitude - halfLat)
-        let maxLat = min(90.0, center.latitude + halfLat)
-        let minLon = max(-180.0, center.longitude - halfLon)
-        let maxLon = min(180.0, center.longitude + halfLon)
-
-        self.init(minLon: minLon, minLat: minLat, maxLon: maxLon, maxLat: maxLat)
-    }
-
     public var queryValue: String {
-        let format = "%.6f"
-        return String(format: "\(format),\(format),\(format),\(format)", minLon, minLat, maxLon, maxLat)
+        String(format: "%.6f,%.6f,%.6f,%.6f", minLon, minLat, maxLon, maxLat)
     }
 }

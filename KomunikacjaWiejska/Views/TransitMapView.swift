@@ -2,12 +2,18 @@ import MapKit
 import SwiftUI
 
 public struct TransitMapView: View {
-    @State private var viewModel = MapViewModel()
-    @State private var locationManager = LocationManager.shared
+    @State private var viewModel: MapViewModel
+    private var locationManager: any LocationProviding
     @Environment(\.scenePhase) private var scenePhase
     @Namespace private var mapScope
 
-    public init() {}
+    public init(
+        viewModel: MapViewModel? = nil,
+        locationManager: (any LocationProviding)? = nil
+    ) {
+        _viewModel = State(initialValue: viewModel ?? MapViewModel())
+        self.locationManager = locationManager ?? LocationManager.shared
+    }
 
     private var selectedStopBinding: Binding<Stop?> {
         Binding(
@@ -138,7 +144,9 @@ public struct TransitMapView: View {
         .accessibilityLabel(Text("map.control.cityPicker"))
         .accessibilityValue(Text(viewModel.selectedCity.name))
         .sheet(isPresented: $viewModel.isShowingCityPicker) {
-            CityPickerSheet(selectedCity: $viewModel.selectedCity)
+            CityPickerSheet(selectedCity: viewModel.selectedCity) { city in
+                viewModel.selectCity(city)
+            }
         }
     }
 

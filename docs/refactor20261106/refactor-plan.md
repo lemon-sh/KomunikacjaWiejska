@@ -381,7 +381,7 @@ A-fails → B → A.
 
 ## 6. Phase 2 — State machine and decomposition
 
-### [ ] R2-1 Replace the stringly-typed load state
+### [x] R2-1 Replace the stringly-typed load state
 
 **Files:** `ViewModels/MapViewModel.swift` (`FetchState`, `isLoading`,
 `fetchState`, `startFetch`, `fetchCurrentViewport`).
@@ -401,7 +401,7 @@ Derive `isLoading` from the enum, not from string parsing. Delete the
 existing loading-phase and cache tests pass; new tests cover "loading city A,
 switch to B" without inspecting strings.
 
-### [ ] R2-2 Remove the `shouldRepositionOnCityChange` suppression flag
+### [x] R2-2 Remove the `shouldRepositionOnCityChange` suppression flag
 
 **Files:** `ViewModels/MapViewModel.swift` (`selectedCity` observer, `selectCity`),
 `Views/CityPickerSheet.swift`, `Views/TransitMapView.swift:98`.
@@ -421,7 +421,7 @@ Decide and document whether the picker always repositions (today it does).
 selection and suggestion switching are covered by tests; the camera policy is
 documented.
 
-### [ ] R2-3 Make the camera state internally consistent
+### [x] R2-3 Make the camera state internally consistent
 
 **Files:** `ViewModels/MapViewModel.swift` (`CameraState`, `currentCenter`,
 `visibleRegion`, `centerOnUserLocation`, `resetPitchTo2D`).
@@ -445,7 +445,7 @@ hook.
 production code never writes `visibleRegion`; tests no longer rely on a
 production-only setter.
 
-### [ ] R2-4 Inject camera persistence
+### [x] R2-4 Inject camera persistence
 
 **Files:** `ViewModels/MapViewModel.swift:97, 262-290, 327-331`; new
 `Services/CameraStore.swift` (or `DefaultsStoring`).
@@ -463,7 +463,7 @@ Keep production behaviour identical.
 restore test uses an ephemeral suite (`UserDefaults(suiteName:)` removed in
 `defer`); production still restores the last city and camera.
 
-### [ ] R2-5 Split `MapViewModel` into focused units
+### [x] R2-5 Split `MapViewModel` into focused units
 
 **Files:** `ViewModels/MapViewModel.swift` (797 lines) and new files under
 `Models/`/`Services/`.
@@ -489,7 +489,7 @@ coordinate epsilon helper live in this file.
 collaborator; no SwiftUI import; no behaviour change; all existing tests pass
 with only access-level adjustments.
 
-### [ ] R2-6 Inject the location source
+### [x] R2-6 Inject the location source
 
 **Files:** `ViewModels/MapViewModel.swift:384-390`,
 `Services/LocationManager.swift`, `Views/TransitMapView.swift`.
@@ -506,7 +506,7 @@ implementation.
 **Acceptance:** `rg "LocationManager.shared"` in `ViewModels/` returns nothing;
 tracking-release behaviour is tested with a stub coordinate.
 
-### [ ] R2-7 Centralise constants and identifiers
+### [x] R2-7 Centralise constants and identifiers
 
 **Files:** `ViewModels/MapViewModel.swift`, `Models/City.swift`,
 `Models/MapTile.swift`, tests.
@@ -524,7 +524,7 @@ thresholds. Either persist `selectedMapMode` (and test it) or fix the comment.
 **Acceptance:** `rg '"pkp"|111_000|lastSelectedCityId'` finds no production
 literal outside the defining constant; tests reference the constants.
 
-### [ ] R2-8 Adopt one logging policy
+### [x] R2-8 Adopt one logging policy
 
 **Files:** `ViewModels/MapViewModel.swift` (15 `#if DEBUG` blocks),
 `Services/ZbiorkomAPIClient.swift` (8), `Services/LocationManager.swift`,
@@ -542,7 +542,7 @@ doc comment, which still mentions thinning and cache invalidation.
 **Acceptance:** No `#if DEBUG` in the fetch/camera control flow; logs remain
 useful in Console; no user data is logged as public.
 
-### [ ] R2-9 Fix view-model ownership and preview hermeticity
+### [x] R2-9 Fix view-model ownership and preview hermeticity
 
 **Files:** `Views/TransitMapView.swift:5`, `ContentView.swift`,
 `KomunikacjaWiejskaApp.swift`.

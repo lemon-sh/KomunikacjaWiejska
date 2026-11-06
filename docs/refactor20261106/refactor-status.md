@@ -63,15 +63,15 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
 
 ### Phase 2 — State machine and decomposition
 
-- [ ] R2-1 Replace the stringly-typed load state
-- [ ] R2-2 Remove `shouldRepositionOnCityChange`
-- [ ] R2-3 Make the camera state internally consistent
-- [ ] R2-4 Inject camera persistence
-- [ ] R2-5 Split `MapViewModel` into focused units
-- [ ] R2-6 Inject the location source
-- [ ] R2-7 Centralise constants and identifiers
-- [ ] R2-8 Adopt one logging policy
-- [ ] R2-9 Fix view-model ownership and preview hermeticity
+- [x] R2-1 Replace the stringly-typed load state
+- [x] R2-2 Remove `shouldRepositionOnCityChange`
+- [x] R2-3 Make the camera state internally consistent
+- [x] R2-4 Inject camera persistence
+- [x] R2-5 Split `MapViewModel` into focused units
+- [x] R2-6 Inject the location source
+- [x] R2-7 Centralise constants and identifiers
+- [x] R2-8 Adopt one logging policy
+- [x] R2-9 Fix view-model ownership and preview hermeticity
 
 ### Phase 3 — Views and presentation
 
