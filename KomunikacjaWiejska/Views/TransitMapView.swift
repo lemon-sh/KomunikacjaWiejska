@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TransitMapView: View {
     @State private var viewModel: MapViewModel
+    @State private var presentedStop: Stop?
     private var locationManager: any LocationProviding
     @Environment(\.scenePhase) private var scenePhase
     @Namespace private var mapScope
@@ -15,12 +16,16 @@ struct TransitMapView: View {
         self.locationManager = locationManager ?? LocationManager.shared
     }
 
-    private var selectedStopBinding: Binding<Stop?> {
+    /// Keeps the detail sheet presented while only its content swaps. Binding
+    /// the sheet to the selected stop instead would dismiss and re-present on
+    /// every new selection, losing the chosen detent.
+    private var isStopSheetPresented: Binding<Bool> {
         Binding(
-            get: { viewModel.selectedStop },
-            set: { stop in
-                if stop == nil {
+            get: { viewModel.selectedStopID != nil },
+            set: { isPresented in
+                if !isPresented {
                     viewModel.selectedStopID = nil
+                    presentedStop = nil
                 }
             }
         )
@@ -37,17 +42,7 @@ struct TransitMapView: View {
 
                 ForEach(viewModel.stops) { stop in
                     Annotation(stop.displayName, coordinate: stop.coordinate, anchor: .center) {
-                        StopMarkerView(
-                            stop: stop,
-                            isSelected: viewModel.selectedStopID == stop.id,
-                            isCompact: viewModel.isCompactDisplayMode,
-                            heading: viewModel.currentHeading
-                        )
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                                viewModel.selectedStopID = stop.id
-                            }
-                        }
+                        StopAnnotationContent(stop: stop, viewModel: viewModel)
                     }
                     .annotationTitles(viewModel.isCompactDisplayMode ? .hidden : .visible)
                     .tag(stop.id)
@@ -89,13 +84,19 @@ struct TransitMapView: View {
                 viewModel.loadStopsForSelectedCity()
             }
         }
-        .sheet(item: selectedStopBinding) { stop in
-            StopDetailSheet(stop: stop) {
-                viewModel.selectedStopID = nil
+        .onChange(of: viewModel.selectedStopID) { _, newID in
+            guard let newID, let stop = viewModel.cachedStop(for: newID) else { return }
+            presentedStop = stop
+        }
+        .sheet(isPresented: isStopSheetPresented) {
+            if let stop = presentedStop ?? viewModel.selectedStop {
+                StopDetailSheet(stop: stop) {
+                    viewModel.selectedStopID = nil
+                }
+                .presentationDetents([.height(DesignTokens.sheetSmallDetentHeight), .medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
             }
-            .presentationDetents([.height(DesignTokens.sheetSmallDetentHeight), .medium, .large])
-            .presentationDragIndicator(.visible)
-            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }
     }
 
@@ -261,6 +262,29 @@ struct TransitMapView: View {
             return String(localized: "map.loading.citySwitch")
         case .initial, .none:
             return String(localized: "map.loading.initial")
+        }
+    }
+}
+
+/// Reads the selection and camera state on the annotation's own view body so
+/// Observation invalidates the marker immediately. Reading the same values in
+/// `Annotation`'s escaping content closure is not tracked by SwiftUI, which
+/// left markers stale until the next camera update.
+private struct StopAnnotationContent: View {
+    let stop: Stop
+    let viewModel: MapViewModel
+
+    var body: some View {
+        StopMarkerView(
+            stop: stop,
+            isSelected: viewModel.selectedStopID == stop.id,
+            isCompact: viewModel.isCompactDisplayMode,
+            heading: viewModel.currentHeading
+        )
+        .onTapGesture {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                viewModel.selectedStopID = stop.id
+            }
         }
     }
 }
