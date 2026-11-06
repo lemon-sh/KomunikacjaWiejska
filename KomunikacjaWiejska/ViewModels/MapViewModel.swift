@@ -96,6 +96,7 @@ public final class MapViewModel {
             guard selectedCity != oldValue else { return }
             UserDefaults.standard.set(selectedCity.id, forKey: "lastSelectedCityId")
             selectedStopID = nil
+            errorsByCity.removeAll()
             clearStopCache()
             if shouldRepositionOnCityChange {
                 repositionCameraForCurrentCity()
@@ -112,18 +113,13 @@ public final class MapViewModel {
 
     public var cameraPosition: MapCameraPosition
     public var cameraState: CameraState
-    /// Markers currently rendered on the map. This is the visible
+    /// Markers currently rendered on the map. This is the visible, thinned
     /// view of the session stop cache.
     public private(set) var stops: [Stop] = []
     /// Marker selection source of truth: the map writes the tagged stop ID,
     /// the detail sheet is derived from it. Identify by ID instead of the full
-    /// `Stop` value so selection compares a string, not routes/entances.
-    public var selectedStopID: String? {
-        didSet {
-            guard selectedStopID != oldValue else { return }
-            updateStops()
-        }
-    }
+    /// `Stop` value so selection compares a string, not routes/entrances.
+    public var selectedStopID: String?
     public var isShowingCityPicker: Bool = false
     public var selectedMapMode: MapMode = .explore
     public var isShowingMapModes: Bool = false
@@ -226,6 +222,10 @@ public final class MapViewModel {
         return currentPitch > 1.0
     }
 
+    /// Hard ceiling on markers rendered at once; extra stops are thinned to
+    /// one representative per grid cell (see `thinnedStops`).
+    public static let maxRenderedStops = 250
+
     /// Debounce applied to fetches triggered by camera movement.
     private static let cameraFetchDebounce: Duration = .milliseconds(350)
 
@@ -235,6 +235,7 @@ public final class MapViewModel {
     // from any context is safe; the reference itself is never read concurrently.
     @ObservationIgnored private nonisolated(unsafe) var activeFetchTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var debounceTask: Task<Void, Never>?
+    @ObservationIgnored private var inFlightTiles: Set<MapTile> = []
     /// Session-only stop cache for the selected city. Never persisted, and
     /// cleared on every city switch. Stop data is treated as stable for the
     /// lifetime of the app process, so entries never expire.
@@ -369,14 +370,18 @@ public final class MapViewModel {
             distance: context.camera.distance,
             center: context.camera.centerCoordinate
         )
+        applyCameraState(newState)
+    }
+
+    func applyCameraState(_ newState: CameraState) {
         guard newState != cameraState else {
             // Still evaluate tracking release; nothing to observe otherwise.
-            releaseTrackingIfRoaming(to: context.camera.centerCoordinate)
+            releaseTrackingIfRoaming(to: newState.center)
             return
         }
         cameraState = newState
         updateStops()
-        releaseTrackingIfRoaming(to: context.camera.centerCoordinate)
+        releaseTrackingIfRoaming(to: newState.center)
         scheduleViewportFetch()
         updateRegionSuggestion()
     }
@@ -596,7 +601,19 @@ public final class MapViewModel {
     }
 
     /// Debounces fetches triggered by `.onEnd` camera changes (P1/P2-1).
+    /// Skips debounce and fetch entirely if all visible tiles are covered or already in flight (R1-6).
     private func scheduleViewportFetch() {
+        guard areStopsVisible else {
+            cancelActiveFetch()
+            updateStops()
+            return
+        }
+        let visibleTiles = MapTileGrid.visibleTiles(in: cameraState.region)
+        let missingTiles = visibleTiles.filter { !isTileCovered($0) }
+        if missingTiles.isEmpty || missingTiles == inFlightTiles {
+            return
+        }
+
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard let self = self else { return }
@@ -660,6 +677,7 @@ public final class MapViewModel {
         activeFetchTask?.cancel()
         debounceTask?.cancel()
         debounceTask = nil
+        inFlightTiles = tiles
         requestGeneration = UUID()
         let generation = requestGeneration
         errorsByCity[city.id] = nil
@@ -693,15 +711,19 @@ public final class MapViewModel {
                     #endif
                     return
                 }
+                var updatedCache = self.cachedStopsByID
                 for stop in fetchedStops {
-                    self.cachedStopsByID[stop.id] = stop
+                    updatedCache[stop.id] = stop
                 }
+                self.cachedStopsByID = updatedCache
                 // Empty results still mark the tiles as fetched: an empty
                 // viewport is authoritative for this session and must not
                 // trigger a request on every settle.
                 self.fetchedTiles.formUnion(tiles)
+                self.inFlightTiles.removeAll()
                 self.fetchState = .loaded(cityKey: key)
                 self.loadingPhase = nil
+                self.errorsByCity.removeValue(forKey: city.id)
                 #if DEBUG
                 Logger.mapCache.debug("Fetch completed for \(city.id, privacy: .public): +\(fetchedStops.count, privacy: .public) stops (total cached: \(self.cachedStopsByID.count, privacy: .public)), +\(tiles.count, privacy: .public) tiles (total tiles: \(self.fetchedTiles.count, privacy: .public))")
                 #endif
@@ -717,6 +739,7 @@ public final class MapViewModel {
                     #if DEBUG
                     Logger.mapCache.error("Fetch failed for \(city.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     #endif
+                    self.inFlightTiles.removeAll()
                     self.errorsByCity[city.id] = Self.userFacingMessage(for: error)
                     self.fetchState = .failed(cityKey: key)
                     self.loadingPhase = nil
@@ -733,6 +756,7 @@ public final class MapViewModel {
         }
         activeFetchTask?.cancel()
         activeFetchTask = nil
+        inFlightTiles.removeAll()
         // Invalidate the generation so a task already past its guard writes
         // nothing after cancellation.
         requestGeneration = UUID()
@@ -751,8 +775,10 @@ public final class MapViewModel {
         debounceTask?.cancel()
         debounceTask = nil
         cancelActiveFetch()
+        inFlightTiles.removeAll()
         cachedStopsByID.removeAll()
         fetchedTiles.removeAll()
+        errorsByCity.removeAll()
         updateStops()
     }
 
@@ -767,16 +793,31 @@ public final class MapViewModel {
         }
 
         let region = cameraState.region
-        let renderedStops = cachedStopsByID.values
-            .filter { Self.contains($0, in: region) }
-            .sorted { $0.id < $1.id }
+        let visibleStops = cachedStopsByID.values.filter { Self.contains($0, in: region) }
+
+        var renderedStops: [Stop]
+        if visibleStops.count > Self.maxRenderedStops {
+            renderedStops = Self.thinnedStops(visibleStops, region: region)
+        } else {
+            renderedStops = visibleStops.sorted { $0.id < $1.id }
+        }
+
+        // Always keep the currently selected stop visible if it falls within the viewport,
+        // even if grid thinning would have dropped its cell.
+        if let selectedStopID = selectedStopID,
+           let selectedStop = cachedStopsByID[selectedStopID],
+           Self.contains(selectedStop, in: region),
+           !renderedStops.contains(where: { $0.id == selectedStopID }) {
+            renderedStops.append(selectedStop)
+            renderedStops.sort { $0.id < $1.id }
+        }
 
         // Compare full values, not just IDs: a later viewport fetch can change
         // a stop's bearing, routes, or name while keeping the same identifier.
         // Camera-only changes still produce an equal array and are ignored.
         if renderedStops != stops {
             #if DEBUG
-            Logger.mapCache.debug("Rendered stops updated: \(renderedStops.count, privacy: .public) rendered on map")
+            Logger.mapCache.debug("Rendered stops updated: \(visibleStops.count, privacy: .public) visible in cache -> \(renderedStops.count, privacy: .public) rendered on map (ceiling: \(Self.maxRenderedStops, privacy: .public))")
             #endif
             stops = renderedStops
         }
@@ -792,6 +833,64 @@ public final class MapViewModel {
         let dx = (stop.longitude - region.center.longitude) / longitudeSpan
         let dy = (stop.latitude - region.center.latitude) / latitudeSpan
         return abs(dx) <= 0.5 && abs(dy) <= 0.5
+    }
+
+    /// Grid-based thinning: keep one deterministic representative per cell of
+    /// a grid laid over the visible region.
+    public static func thinnedStops(_ rawStops: [Stop], region: MKCoordinateRegion?) -> [Stop] {
+        guard let region = region else { return [] }
+        let grid = thinningGrid()
+        var buckets: [Int: Stop] = [:]
+        for stop in rawStops {
+            guard let cell = cellIndex(
+                for: stop,
+                in: region,
+                grid: grid
+            ) else { continue }
+            if let current = buckets[cell] {
+                // Deterministic pick so repainting does not flicker markers.
+                if stop.id < current.id {
+                    buckets[cell] = stop
+                }
+            } else {
+                buckets[cell] = stop
+            }
+        }
+        return buckets.values.sorted { $0.id < $1.id }
+    }
+
+    private struct ThinningGrid {
+        let columns: Int
+        let rows: Int
+    }
+
+    /// Fixed grid sized to `maxRenderedStops`. It must not be derived from the
+    /// stop count: `sqrt(count / cap)` produces very few cells for dense
+    /// viewports (e.g. a 2×2 grid for 1,000 stops), discarding nearly every
+    /// marker. 15×16 = 240 slots stays under the cap.
+    private static func thinningGrid() -> ThinningGrid {
+        let columns = max(2, Int(Double(maxRenderedStops).squareRoot()))
+        let rows = max(2, maxRenderedStops / columns)
+        return ThinningGrid(columns: columns, rows: rows)
+    }
+
+    private static func cellIndex(
+        for stop: Stop,
+        in region: MKCoordinateRegion,
+        grid: ThinningGrid
+    ) -> Int? {
+        let latitudeSpan = max(region.span.latitudeDelta, 1e-6)
+        let longitudeSpan = max(region.span.longitudeDelta, 1e-6)
+        let dx = (stop.longitude - region.center.longitude) / longitudeSpan
+        let dy = (stop.latitude - region.center.latitude) / latitudeSpan
+        guard abs(dx) <= 0.5, abs(dy) <= 0.5 else { return nil }  // outside viewport
+        let column = clampCell(Int((dx + 0.5) * Double(grid.columns)), limit: grid.columns)
+        let row = clampCell(Int((dy + 0.5) * Double(grid.rows)), limit: grid.rows)
+        return row * grid.columns + column
+    }
+
+    private static func clampCell(_ value: Int, limit: Int) -> Int {
+        min(max(value, 0), limit - 1)
     }
 }
 

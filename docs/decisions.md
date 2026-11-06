@@ -1,5 +1,8 @@
 # Architecture Decisions
 
+> [!NOTE]
+> Implementation changed on 2026-11-06; see `docs/refactor20261106/refactor-plan.md` (D1/D2) and [ADR-0008](decisions/0008-marker-density.md). Do not follow the details below until Phase 7 reconciles this file.
+
 This document is the central index and executive summary of Architecture Decision Records (ADRs) for **KomunikacjaWiejska**.
 
 Individual, numbered decision records are stored in [`docs/decisions/`](decisions/). When adding or revising architectural decisions, update this central register alongside the corresponding record.
@@ -11,12 +14,13 @@ Individual, numbered decision records are stored in [`docs/decisions/`](decision
 | ADR | Title | Status | Date | Key Decision Summary | Link |
 |---|---|---|---|---|---|
 | **0001** | Stops Fetch Strategy | Accepted | 2026-11-05 | Debounced (350 ms) viewport `bbox` queries on camera idle; no full-city fetches for large networks. | [ADR-0001](decisions/0001-fetch-strategy.md) |
-| **0002** | Marker Density Strategy | Accepted | 2026-11-05 | Deterministic grid-based thinning in `MapViewModel` capping rendered stops to 250 markers. | [ADR-0002](decisions/0002-marker-density.md) |
+| **0002** | Marker Density Strategy | Superseded | 2026-11-05 | Superseded by ADR-0008. Grid-based thinning in `MapViewModel` capping rendered stops to 250 markers. | [ADR-0002](decisions/0002-marker-density.md) |
 | **0003** | Deployment Target iOS 26 | Accepted | 2026-11-05 | Lowered `IPHONEOS_DEPLOYMENT_TARGET` to 26.0 (the minimum for Liquid Glass styling and native MapKit controls). | [ADR-0003](decisions/0003-deployment-target.md) |
 | **0004** | Localization Scope | Accepted | 2026-11-05 | Dual Polish (primary) and English support via `Localizable.xcstrings`; stable enum keys; UI-free model layer. | [ADR-0004](decisions/0004-localization.md) |
 | **0005** | Swift 6 Concurrency & Isolation | Accepted | 2026-11-05 | Strict Swift 6 mode with `MainActor` default; explicit `nonisolated` for cross-actor value types and DTO decoders. | [ADR-0005](decisions/0005-swift6-concurrency.md) |
 | **0006** | Toolchain & JSON Project Format | Accepted | 2026-11-05 | Xcode 27.2+ JSON `project.xcproj` format enforced via `scripts/check-toolchain.sh`; committed shared scheme. | [ADR-0006](decisions/0006-toolchain.md) |
 | **0007** | Session Tile Cache for Stops | Accepted | 2026-11-05 | Session-only Web Mercator tile cache per city; ancestor tile hit reuse; no artificial TTL/LRU eviction. | [ADR-0007](decisions/0007-tile-cache.md) |
+| **0008** | Marker Density Strategy: Deterministic Spatial Cap | Accepted | 2026-11-06 | Deterministic spatial cap in `MapViewModel` capping rendered stops to 250 markers with selected stop preservation. | [ADR-0008](decisions/0008-marker-density.md) |
 
 ---
 
@@ -63,6 +67,12 @@ Individual, numbered decision records are stored in [`docs/decisions/`](decision
 - **Decision:** Implement a session-only, per-city tile cache using Web Mercator tile keys (`z/x/y`). Viewports request missing tiles via union bboxes, and ancestor tiles satisfy zoom-in requests immediately without network I/O.
 - **Alternatives Rejected:** Bounding-box cache with 10-minute TTL and LRU eviction (prone to cache misses and unnecessary cache invalidation).
 - **Outcome:** Instant zoom-in rendering, zero redundant downloads for previously visited neighborhoods, and automatic reset on city switch.
+
+### [ADR-0008: Marker Density Strategy: Deterministic Spatial Cap](decisions/0008-marker-density.md)
+- **Problem:** Rendering thousands of live SwiftUI annotations in dense metropolitan regions causes frame drops and main-thread hitches.
+- **Decision:** Formally re-adopt a deterministic spatial representative cap (`maxRenderedStops = 250`) in `MapViewModel`. Visible stops exceeding the ceiling are thinned via a 2D spatial grid, retaining one representative per cell and always preserving the currently selected stop when within the viewport.
+- **Alternatives Rejected:** `UIViewRepresentable` wrapping `MKMapView` (violates native Liquid Glass / MapKit control constraints) or unbounded annotations.
+- **Outcome:** 60/120 fps panning and zooming performance across all cities with deterministic annotation updates.
 
 ---
 

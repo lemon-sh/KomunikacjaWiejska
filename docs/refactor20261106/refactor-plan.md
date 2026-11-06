@@ -127,7 +127,7 @@ Additional gates:
 
 ## 4. Phase 0 — Decisions, guardrails, release blockers
 
-### [ ] R0-1 Add a reproducible verification gate
+### [x] R0-1 Add a reproducible verification gate
 
 **Files:** new `.github/workflows/ci.yml` (or `scripts/verify.sh`),
 `scripts/check-toolchain.sh`, `README.md`.
@@ -147,7 +147,7 @@ has no CI configuration. The script also has an unreachable branch: with
 **Acceptance:** A fresh clone reproduces the baseline with one workflow; the
 script fails with a clear message on an old or missing Xcode; no dead branch.
 
-### [ ] R0-2 Resolve D1 and D2 with the developer (blocking)
+### [x] R0-2 Resolve D1 and D2 with the developer (blocking)
 
 **Files:** this plan §9, `docs/decisions.md`.
 
@@ -163,7 +163,7 @@ visibility thresholds). Record the outcomes in §9 and, for D1, create
 **Acceptance:** Both decisions have an owner-approved outcome; Phase 1 tasks
 reference them instead of inventing a policy.
 
-### [ ] R0-3 Assign the app icon and accent colour
+### [x] R0-3 Assign the app icon and accent colour
 
 **Files:** `KomunikacjaWiejska/Assets.xcassets/AppIcon.appiconset/Contents.json`,
 `KomunikacjaWiejska/Assets.xcassets/AccentColor.colorset/Contents.json`.
@@ -180,7 +180,7 @@ placeholder that might ship.
 **Acceptance:** The built `.app` shows the icon in Simulator/Finder; `actool`
 reports no missing-image warnings; the accent colour is intentional.
 
-### [ ] R0-4 Add a "current implementation differs" note to stale docs
+### [x] R0-4 Add a "current implementation differs" note to stale docs
 
 **Files:** `docs/architecture.md` §1, `docs/decisions/0002-marker-density.md`,
 `docs/decisions/0007-tile-cache.md`, `docs/decisions.md`.
@@ -201,7 +201,7 @@ returns hits only inside an explicitly labelled historical/stale section.
 
 ## 5. Phase 1 — Regressions and user-visible risks
 
-### [ ] R1-1 Implement the D1 marker-density strategy
+### [x] R1-1 Implement the D1 marker-density strategy
 
 **Files:** `ViewModels/MapViewModel.swift` (`updateStops`, currently ~761-783),
 `Views/TransitMapView.swift` (~22-35), `Views/StopMarkerView.swift`, tests.
@@ -224,7 +224,7 @@ without a replacement.
 Warsaw/GZM shows no sustained hitches in Instruments. A test asserts the bound
 and determinism, not the implementation detail of the grid.
 
-### [ ] R1-2 Make launch marker mode intentional (D2)
+### [x] R1-2 Make launch marker mode intentional (D2)
 
 **Files:** `ViewModels/MapViewModel.swift` (`compactDisplayDistanceThreshold`,
 `stopVisibilityDistanceThreshold`, `approximateDistance`),
@@ -247,7 +247,7 @@ comment that explained the old intent was deleted with the thinning diff.
 **Acceptance:** Cold launch of every normal city renders full markers; boundary
 values are tested on both sides; PKP behaviour is intentional and tested.
 
-### [ ] R1-3 Remove selection-driven stop recomputation
+### [x] R1-3 Remove selection-driven stop recomputation
 
 **Files:** `ViewModels/MapViewModel.swift:121-126`.
 
@@ -264,7 +264,7 @@ effect.
 recomputation; a regression test covers "selected stop is present in `stops`
 when inside the viewport".
 
-### [ ] R1-4 Batch stop-cache merges into one observation
+### [x] R1-4 Batch stop-cache merges into one observation
 
 **Files:** `ViewModels/MapViewModel.swift:696-698` (`startFetch` success path).
 
@@ -280,7 +280,7 @@ semantics per stop ID.
 **Acceptance:** One fetch causes one cache invalidation (verify with a small
 observation-count test or a targeted log), and the existing merge test passes.
 
-### [ ] R1-5 Make stop presentation a single source of truth
+### [x] R1-5 Make stop presentation a single source of truth
 
 **Files:** `Views/TransitMapView.swift` (~7, 73-99),
 `ViewModels/MapViewModel.swift` (`selectedStopID`, `selectedStop`).
@@ -303,7 +303,7 @@ flash stale content; the two sheets on one view are fragile.
 **Acceptance:** Tap A → sheet A; tap B while open → sheet B; dismiss → no
 selection; tap A again → sheet A (no flashing). VoiceOver still selects markers.
 
-### [ ] R1-6 Fetch only when the visible tile set changes
+### [x] R1-6 Fetch only when the visible tile set changes
 
 **Files:** `ViewModels/MapViewModel.swift` (`handleCameraChange`,
 `scheduleViewportFetch`, `loadDecision`).
@@ -321,7 +321,7 @@ in-flight work when the *coverage requirement* changes or the city changes.
 and **zero** cancellations (assert via `StubStopsProvider.callCount` and a
 cancellation counter); panning still fetches missing tiles.
 
-### [ ] R1-7 Meet minimum touch targets
+### [x] R1-7 Meet minimum touch targets
 
 **Files:** `Views/TransitMapView.swift:165`,
 `Views/StopMarkerView.swift:100`, `Views/StopDetailSheet.swift:122-128`.
@@ -337,7 +337,7 @@ close button a 44×44 frame without changing the glyph size.
 **Acceptance:** Xcode Accessibility Inspector reports ≥44×44 for both controls;
 layout at Dynamic Type XXL unchanged.
 
-### [ ] R1-8 Fix the location double-tap race and add a timeout
+### [x] R1-8 Fix the location double-tap race and add a timeout
 
 **Files:** `Views/MapControlsComboView.swift:80-100`,
 `Services/LocationManager.swift:88-170`.
@@ -362,7 +362,7 @@ if the delegate never answers.
 never leaves a stranded continuation; a delegate that never calls back resolves
 after the timeout.
 
-### [ ] R1-9 Bound per-city error state
+### [x] R1-9 Bound per-city error state
 
 **Files:** `ViewModels/MapViewModel.swift` (`errorsByCity`, `errorMessage`).
 
@@ -1066,15 +1066,15 @@ commit so regressions are attributable.
 
 ## 13. Open decisions
 
-| ID | Decision | Options | Recommended | Blocks |
+| ID | Decision | Options | Recommended / Outcome | Blocks |
 |---|---|---|---|---|
-| D1 | Marker density | A: deterministic cap; B: native `MKMapView` clustering; C: accept all annotations | Measure first; A if a dense viewport exceeds the frame budget, B if native clustering is acceptable | R1-1, R7-1 |
-| D2 | Compact/visibility thresholds | A: full markers at default city zoom (raise compact above ≈9 km); B: keep 6 km/12 km and accept dots at launch | A — the default view should show transit icons | R1-2, R7-1 |
+| D1 | Marker density | A: deterministic cap; B: native `MKMapView` clustering; C: accept all annotations | **Resolved: Option A** (ADR-0008, 250 cap with spatial grid & selection preservation) | R1-1, R7-1 |
+| D2 | Compact/visibility thresholds | A: full markers at default city zoom (raise compact above ≈9 km); B: keep 6 km/12 km and accept dots at launch | **Resolved: Option B** (6,000 m compact / 12,000 m visibility; compact at launch accepted) | R1-2, R7-1 |
 | D3 | Decoded entrances/route metadata | A: surface entrances in the sheet; B: drop until a feature needs them | B for now; add back with the feature | R4-4 |
 | D4 | City-name localization | A: proper nouns only, remove raw ids; B: add English names to `cities.json` | A | R3-5 |
 | D5 | Access control | A: internal by default (app target); B: keep `public` for a future framework | A | R4-8 |
 | D6 | Retry set | A: timeout/connection-lost/cannot-connect; B: add offline; C: add `Retry-After` | A; never retry offline | R5-1 |
-| D7 | Location timeout | 10 s / 15 s / no timeout | 15 s, matching the request timeout | R1-8 |
+| D7 | Location timeout | 10 s / 15 s / no timeout | **Resolved: 15 s** (matching request timeout) | R1-8 |
 | D8 | `ContentView` | A: remove (App → TransitMapView); B: keep as composition root | B if it later hosts environment injection; otherwise A | R2-9 |
 
 ---

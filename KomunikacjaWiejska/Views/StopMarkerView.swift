@@ -97,7 +97,7 @@ public struct StopMarkerView: View {
                             .strokeBorder(.white.opacity(0.85), lineWidth: 1)
                     )
                     .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 0.5)
-                    .frame(width: DesignTokens.compactControlSize, height: DesignTokens.compactControlSize)
+                    .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
                     .contentShape(Rectangle())
                     .transition(.scale.combined(with: .opacity))
             } else {

@@ -124,6 +124,8 @@ public struct StopDetailSheet: View {
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title3)
+                    .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel(Text("stopDetail.close"))
         }

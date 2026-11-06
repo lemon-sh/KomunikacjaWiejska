@@ -582,28 +582,110 @@ struct KomunikacjaWiejskaTests {
 
     @Test("Selected stop is preserved in rendered stops")
     func testSelectedStopPreserved() async throws {
-        let count = 20
+        let count = 300
         var allStops: [Stop] = []
         for index in 0..<count {
             allStops.append(
                 StopFixtures.sample(
-                    id: String(format: "stop-%03d", index),
+                    id: String(format: "thin-stop-%03d", index),
                     longitude: 21.0 + Double(index) * 0.0001,
                     latitude: 52.2 + Double(index) * 0.0001
                 )
             )
         }
 
+        let targetID = "thin-stop-150"
         let provider = StubStopsProvider(stops: allStops)
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.selectedStopID = targetID
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+
+        #expect(viewModel.stops.count <= MapViewModel.maxRenderedStops)
+        #expect(viewModel.stops.contains(where: { $0.id == targetID }))
+    }
+
+    @Test("Selecting a stop does not recompute rendered stops array instance if stop is already present")
+    func testSelectionDoesNotRecomputeStops() async throws {
+        let stopA = StopFixtures.sample(id: "stop-a", name: "A")
+        let stopB = StopFixtures.sample(id: "stop-b", name: "B")
+        let provider = StubStopsProvider(stops: [stopA, stopB])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
 
         viewModel.loadStopsForSelectedCity()
         while viewModel.isLoading { await Task.yield() }
 
-        // Select a stop and verify it stays in rendered stops
-        let targetID = "stop-010"
-        viewModel.selectedStopID = targetID
-        #expect(viewModel.stops.contains(where: { $0.id == targetID }))
+        let originalStops = viewModel.stops
+        #expect(originalStops.count == 2)
+
+        // Select stop A
+        viewModel.selectedStopID = "stop-a"
+        #expect(viewModel.stops == originalStops)
+
+        // Select stop B
+        viewModel.selectedStopID = "stop-b"
+        #expect(viewModel.stops == originalStops)
+
+        // Deselect
+        viewModel.selectedStopID = nil
+        #expect(viewModel.stops == originalStops)
+    }
+
+    @Test("Rotating and pitching at a fixed center issues zero network requests")
+    func testRotationAndPitchIssuesZeroRequests() async throws {
+        let provider = StubStopsProvider(stops: [StopFixtures.sample()])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        let initialCallCount = provider.callCount
+
+        // Change heading and pitch only at the same center
+        let currentCenter = viewModel.currentCenter
+        let currentDistance = viewModel.currentDistance
+        let currentRegion = viewModel.visibleRegion!
+
+        let rotatedState = MapViewModel.CameraState(
+            region: currentRegion,
+            heading: 45.0,
+            pitch: 30.0,
+            distance: currentDistance,
+            center: currentCenter
+        )
+        viewModel.applyCameraState(rotatedState)
+        try await Task.sleep(for: .milliseconds(450))
+
+        #expect(provider.callCount == initialCallCount)
+    }
+
+    @Test("Errors do not survive a city round-trip")
+    func testCityErrorDoesNotSurviveRoundTrip() async throws {
+        struct TestError: LocalizedError {
+            var errorDescription: String? { "Failed to load" }
+        }
+        let provider = StubStopsProvider(
+            resultsByCity: [
+                "warsaw": .failure(TestError()),
+                "krakow": .success([StopFixtures.sample(city: "krakow")])
+            ]
+        )
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.loadStopsForSelectedCity()
+        while viewModel.isLoading { await Task.yield() }
+        #expect(viewModel.errorMessage == "Failed to load")
+
+        // Switch to Krakow (successful)
+        viewModel.selectedCity = .krakow
+        while viewModel.isLoading { await Task.yield() }
+        #expect(viewModel.errorMessage == nil)
+
+        // Switch back to Warsaw with success now
+        provider.setStops([StopFixtures.sample(city: "warsaw")])
+        viewModel.selectedCity = .warsaw
+        while viewModel.isLoading { await Task.yield() }
+        #expect(viewModel.errorMessage == nil)
     }
 
     @Test("A viewport that leaves fetched tile coverage requests new tiles")

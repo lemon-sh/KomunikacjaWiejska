@@ -2,6 +2,9 @@
 
 **Status:** Accepted (2026-11-05)
 
+> [!NOTE]
+> Implementation changed on 2026-11-06; see `docs/refactor20261106/refactor-plan.md` (D1/D2). Do not follow the details below until Phase 7 reconciles this file.
+
 ## Context
 The stops endpoint returns every stop inside a bbox, independent of zoom. The
 previous cache was keyed by the exact six-decimal viewport with a 10-minute TTL

@@ -1,5 +1,8 @@
 # Architecture Guide
 
+> [!NOTE]
+> Implementation changed on 2026-11-06; see `docs/refactor20261106/refactor-plan.md` (D1/D2). Do not follow the details below until Phase 7 reconciles this file.
+
 This document describes the software architecture, state flow, MapKit integration, and future expansion roadmap for the `KomunikacjaWiejska` native iOS app.
 
 ---

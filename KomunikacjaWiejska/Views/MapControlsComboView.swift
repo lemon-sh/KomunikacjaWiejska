@@ -51,6 +51,7 @@ public struct MapControlsComboView: View {
                     Image(systemName: viewModel.isTrackingUser ? "location.fill" : "location")
                         .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
                 }
+                .disabled(locationManager.isRequestingLocation)
                 .glassEffect(.regular.interactive(), in: .capsule)
                 .foregroundStyle(.primary)
                 .glassEffectUnion(id: "mainCapsule", namespace: namespace)
@@ -78,6 +79,7 @@ public struct MapControlsComboView: View {
     }
 
     private func handleLocationTap() {
+        guard !locationManager.isRequestingLocation else { return }
         switch locationManager.authorizationState {
         case .notDetermined, .authorized:
             // A single async request covers both cases: it waits for the

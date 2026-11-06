@@ -44,22 +44,22 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
 
 ### Phase 0 — Decisions, guardrails, release blockers
 
-- [ ] R0-1 Add a reproducible verification gate (CI + script fix)
-- [ ] R0-2 Resolve D1 (marker density) and D2 (thresholds) — **blocking**
-- [ ] R0-3 Assign the app icon and accent colour
-- [ ] R0-4 Add "implementation differs" banners to stale docs
+- [x] R0-1 Add a reproducible verification gate (CI + script fix)
+- [x] R0-2 Resolve D1 (marker density) and D2 (thresholds) — **blocking**
+- [x] R0-3 Assign the app icon and accent colour
+- [x] R0-4 Add "implementation differs" banners to stale docs
 
 ### Phase 1 — Regressions and user-visible risks
 
-- [ ] R1-1 Implement the D1 marker-density strategy
-- [ ] R1-2 Make launch marker mode intentional (D2)
-- [ ] R1-3 Remove selection-driven stop recomputation
-- [ ] R1-4 Batch stop-cache merges
-- [ ] R1-5 Single source of truth for stop presentation
-- [ ] R1-6 Fetch only when the visible tile set changes
-- [ ] R1-7 Meet minimum touch targets
-- [ ] R1-8 Fix the location double-tap race and add a timeout
-- [ ] R1-9 Bound per-city error state
+- [x] R1-1 Implement the D1 marker-density strategy
+- [x] R1-2 Make launch marker mode intentional (D2)
+- [x] R1-3 Remove selection-driven stop recomputation
+- [x] R1-4 Batch stop-cache merges
+- [x] R1-5 Single source of truth for stop presentation
+- [x] R1-6 Fetch only when the visible tile set changes
+- [x] R1-7 Meet minimum touch targets
+- [x] R1-8 Fix the location double-tap race and add a timeout
+- [x] R1-9 Bound per-city error state
 
 ### Phase 2 — State machine and decomposition
 

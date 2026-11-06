@@ -55,6 +55,10 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     public var authorizationStatus: CLAuthorizationStatus
     public var userLocation: CLLocation?
+    public private(set) var isRequestingLocation: Bool = false
+
+    /// Maximum duration to wait for an authorization decision or a one-shot fix before failing with `.unavailable`.
+    public static let requestTimeout: Duration = .seconds(15)
 
     /// Single pending prompt/fix continuation. A button tap can never leave a
     /// continuation stranded: a newer request resumes the previous one first.
@@ -85,7 +89,33 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate {
     /// so a tap that starts from `.notDetermined` still centers the map once
     /// permission is granted. Returns a recent fix when one is already
     /// available; otherwise a single `requestLocation()` is issued.
+    ///
+    /// Guarded against concurrent taps: if a request is already active,
+    /// duplicate concurrent calls throw `.unavailable`. Times out after 15 s.
     public func requestCurrentLocation() async throws -> CLLocation {
+        guard !isRequestingLocation else {
+            throw LocationError.unavailable
+        }
+        isRequestingLocation = true
+        defer { isRequestingLocation = false }
+
+        return try await withThrowingTaskGroup(of: CLLocation.self) { group in
+            group.addTask {
+                try await self.performLocationRequest()
+            }
+            group.addTask {
+                try await Task.sleep(for: Self.requestTimeout)
+                throw LocationError.unavailable
+            }
+            guard let result = try await group.next() else {
+                throw LocationError.unavailable
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private func performLocationRequest() async throws -> CLLocation {
         switch authorizationState {
         case .denied:
             throw LocationError.denied
@@ -124,19 +154,37 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate {
         if authorizationStatus != .notDetermined {
             return authorizationStatus
         }
-        return await withCheckedContinuation { continuation in
-            // Replace a stale waiter rather than leaking it.
-            authorizationContinuation?.resume(returning: authorizationStatus)
-            authorizationContinuation = continuation
-            manager.requestWhenInUseAuthorization()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                // Replace a stale waiter rather than leaking it.
+                authorizationContinuation?.resume(returning: authorizationStatus)
+                authorizationContinuation = continuation
+                manager.requestWhenInUseAuthorization()
+            }
+        } onCancel: {
+            Task { @MainActor in
+                if let continuation = self.authorizationContinuation {
+                    self.authorizationContinuation = nil
+                    continuation.resume(returning: self.authorizationStatus)
+                }
+            }
         }
     }
 
     private func requestOneShotFix() async throws -> CLLocation {
-        try await withCheckedThrowingContinuation { continuation in
-            locationContinuation?.resume(throwing: LocationError.unavailable)
-            locationContinuation = continuation
-            manager.requestLocation()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                locationContinuation?.resume(throwing: LocationError.unavailable)
+                locationContinuation = continuation
+                manager.requestLocation()
+            }
+        } onCancel: {
+            Task { @MainActor in
+                if let continuation = self.locationContinuation {
+                    self.locationContinuation = nil
+                    continuation.resume(throwing: LocationError.unavailable)
+                }
+            }
         }
     }
 

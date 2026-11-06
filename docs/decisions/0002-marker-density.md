@@ -1,6 +1,9 @@
 # ADR-0002 — Marker density strategy: grid thinning (Decision D2)
 
-**Status:** Accepted (2026-11-05)
+**Status:** Superseded by [ADR-0008](0008-marker-density.md) (2026-11-06)
+
+> [!NOTE]
+> Implementation changed on 2026-11-06; see `docs/refactor20261106/refactor-plan.md` (D1/D2) and [ADR-0008](0008-marker-density.md). Do not follow the details below until Phase 7 reconciles this file.
 
 ## Context
 SwiftUI `Annotation` is created per stop; large cities can return thousands of

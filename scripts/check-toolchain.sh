@@ -6,9 +6,14 @@ set -euo pipefail
 required_major=27
 required_minor=2
 
-version="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
+if ! raw_version="$(xcodebuild -version 2>/dev/null)"; then
+    echo "error: xcodebuild is not available or failed to run." >&2
+    exit 1
+fi
+
+version="$(echo "${raw_version}" | awk 'NR == 1 { print $2 }')"
 if [[ -z "${version}" ]]; then
-    echo "error: unable to determine the Xcode version" >&2
+    echo "error: unable to determine the Xcode version." >&2
     exit 1
 fi
 

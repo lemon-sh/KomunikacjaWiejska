@@ -16,12 +16,16 @@ third-party dependencies.
 - **iOS 26.0** deployment target (the minimum for the native Liquid Glass APIs).
 - A simulator or device running iOS 26 or newer.
 
-Run `scripts/check-toolchain.sh` in CI before building; it fails loudly when
-Xcode is older than 27.2.
+Run `scripts/check-toolchain.sh` or `./scripts/verify.sh` in CI before building; it fails loudly when
+Xcode is older than 27.2. A complete GitHub Actions workflow is provided in `.github/workflows/ci.yml`.
 
 ## Build and test
 
 ```bash
+# Run the complete verification gate (toolchain check, build, and tests)
+./scripts/verify.sh
+
+# Or run individual steps:
 # Build
 xcodebuild -project KomunikacjaWiejska.xcodeproj \
   -scheme KomunikacjaWiejska \

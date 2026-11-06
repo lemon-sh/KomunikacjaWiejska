@@ -4,11 +4,21 @@ import SwiftUI
 public struct TransitMapView: View {
     @State private var viewModel = MapViewModel()
     @State private var locationManager = LocationManager.shared
-    @State private var presentedStop: Stop?
     @Environment(\.scenePhase) private var scenePhase
     @Namespace private var mapScope
 
     public init() {}
+
+    private var selectedStopBinding: Binding<Stop?> {
+        Binding(
+            get: { viewModel.selectedStop },
+            set: { stop in
+                if stop == nil {
+                    viewModel.selectedStopID = nil
+                }
+            }
+        )
+    }
 
     public var body: some View {
         ZStack(alignment: .top) {
@@ -70,32 +80,13 @@ public struct TransitMapView: View {
                 viewModel.loadStopsForSelectedCity()
             }
         }
-        .onChange(of: viewModel.selectedStopID) { _, newID in
-            if let newID, let stop = viewModel.cachedStop(for: newID) ?? viewModel.selectedStop {
-                presentedStop = stop
+        .sheet(item: selectedStopBinding) { stop in
+            StopDetailSheet(stop: stop) {
+                viewModel.selectedStopID = nil
             }
-        }
-        .sheet(isPresented: Binding(
-            get: { viewModel.selectedStopID != nil },
-            set: { isPresented in
-                // Scene-dismiss or close button both funnel through here so
-                // the ID is cleared exactly once.
-                if !isPresented {
-                    viewModel.selectedStopID = nil
-                }
-            }
-        )) {
-            if let stop = presentedStop ?? viewModel.selectedStop {
-                StopDetailSheet(stop: stop) {
-                    viewModel.selectedStopID = nil
-                }
-                .presentationDetents([.height(240), .medium, .large])
-                .presentationDragIndicator(.visible)
-                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-            }
-        }
-        .sheet(isPresented: $viewModel.isShowingCityPicker) {
-            CityPickerSheet(selectedCity: $viewModel.selectedCity)
+            .presentationDetents([.height(240), .medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }
     }
 
@@ -146,6 +137,9 @@ public struct TransitMapView: View {
         .buttonBorderShape(.capsule)
         .accessibilityLabel(Text("map.control.cityPicker"))
         .accessibilityValue(Text(viewModel.selectedCity.name))
+        .sheet(isPresented: $viewModel.isShowingCityPicker) {
+            CityPickerSheet(selectedCity: $viewModel.selectedCity)
+        }
     }
 
     private var trailingControls: some View {
@@ -166,6 +160,8 @@ public struct TransitMapView: View {
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
+                .frame(minWidth: DesignTokens.controlSize, minHeight: DesignTokens.controlSize)
+                .contentShape(Circle())
                 .accessibilityLabel(Text("map.control.2d.accessibility"))
                 .transition(.scale.combined(with: .opacity))
             }
