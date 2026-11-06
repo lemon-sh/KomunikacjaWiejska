@@ -15,6 +15,13 @@ public struct RouteBadgeView: View {
         return Color(hex: route.color, fallback: route.type.defaultColor)
     }
 
+    private var textColor: Color {
+        if route.color.isEmpty {
+            return .white
+        }
+        return Color.contrastingTextColor(forHex: route.color, fallback: .white)
+    }
+
     private var accessibilityDescription: String {
         String(
             format: String(localized: "accessibility.route"),
@@ -34,7 +41,7 @@ public struct RouteBadgeView: View {
         .padding(.horizontal, 8)
         .frame(height: 24)
         .background(badgeColor)
-        .foregroundStyle(.white)
+        .foregroundStyle(textColor)
         .clipShape(Capsule())
         .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
         .accessibilityElement(children: .ignore)

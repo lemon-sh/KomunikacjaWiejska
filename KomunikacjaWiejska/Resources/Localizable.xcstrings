@@ -534,13 +534,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "© OpenStreetMap and other data providers"
+            "value" : "Transit data: zbiorkom.live"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "© OpenStreetMap i inni dostawcy danych"
+            "value" : "Dane tranzytowe: zbiorkom.live"
           }
         }
       }

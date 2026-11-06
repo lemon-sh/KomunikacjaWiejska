@@ -283,6 +283,33 @@ struct KomunikacjaWiejskaTests {
         #expect(rgba(Color(hex: "nope", fallback: .blue)).blue == 1)
     }
 
+    @Test("Relative luminance and text contrast safely differentiate light and dark backgrounds")
+    func testRelativeLuminanceAndContrast() throws {
+        // Light backgrounds -> Black text
+        #expect(Color.contrastingTextColor(forHex: "#FFFFFF") == .black)
+        #expect(Color.contrastingTextColor(forHex: "#FFFF00") == .black) // Yellow
+        #expect(Color.contrastingTextColor(forHex: "FFF") == .black)
+        #expect(Color.contrastingTextColor(forHex: "#A8F0C6") == .black) // Pale mint
+
+        // Dark backgrounds -> White text
+        #expect(Color.contrastingTextColor(forHex: "#000000") == .white)
+        #expect(Color.contrastingTextColor(forHex: "#0000FF") == .white) // Pure blue
+        #expect(Color.contrastingTextColor(forHex: "#1E3A8A") == .white) // Navy
+        #expect(Color.contrastingTextColor(forHex: "#D97706") == .white) // Dark amber
+        #expect(Color.contrastingTextColor(forHex: "000") == .white)
+
+        // Invalid hex -> Fallback
+        #expect(Color.contrastingTextColor(forHex: "invalid", fallback: .white) == .white)
+        #expect(Color.contrastingTextColor(forHex: "", fallback: .black) == .black)
+
+        // Numerical luminance bounds
+        let whiteLum = try #require(Color.relativeLuminance(hex: "#ffffff"))
+        let blackLum = try #require(Color.relativeLuminance(hex: "#000000"))
+        #expect(abs(whiteLum - 1.0) < 0.001)
+        #expect(abs(blackLum - 0.0) < 0.001)
+        #expect(Color.relativeLuminance(hex: "xyz") == nil)
+    }
+
     @Test("RouteType decoding is resilient and displayable cases exclude .unknown")
     func testRouteTypeDecoding() throws {
         #expect(RouteType.displayableCases.contains(.unknown) == false)

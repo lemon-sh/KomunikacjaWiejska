@@ -75,13 +75,13 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
 
 ### Phase 3 — Views and presentation
 
-- [ ] R3-1 Simplify `StopMarkerView`'s dual API
-- [ ] R3-2 Hide annotation titles natively in compact mode
-- [ ] R3-3 Finish the design-token pass
-- [ ] R3-4 Modernise map controls and attribution
-- [ ] R3-5 Clean up the city picker
-- [ ] R3-6 Make route-badge text contrast-safe
-- [ ] R3-7 Finish sheet sizing and accessibility
+- [x] R3-1 Simplify `StopMarkerView`'s dual API
+- [x] R3-2 Hide annotation titles natively in compact mode
+- [x] R3-3 Finish the design-token pass
+- [x] R3-4 Modernise map controls and attribution
+- [x] R3-5 Clean up the city picker
+- [x] R3-6 Make route-badge text contrast-safe
+- [x] R3-7 Finish sheet sizing and accessibility
 
 ### Phase 4 — Models and decoding
 

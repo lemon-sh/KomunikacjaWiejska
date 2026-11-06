@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 public struct MapControlsComboView: View {
     @Bindable var viewModel: MapViewModel
@@ -59,21 +60,27 @@ public struct MapControlsComboView: View {
                 .accessibilityAddTraits(viewModel.isTrackingUser ? .isSelected : [])
             }
         }
-        .alert(item: $locationAlert) { alert in
+        .alert(
+            locationAlert == .settings ? Text("location.alert.title") : Text("location.error.title"),
+            isPresented: Binding(
+                get: { locationAlert != nil },
+                set: { if !$0 { locationAlert = nil } }
+            ),
+            presenting: locationAlert
+        ) { alert in
             switch alert {
             case .settings:
-                Alert(
-                    title: Text("location.alert.title"),
-                    message: Text("location.alert.message"),
-                    primaryButton: .default(Text("location.alert.openSettings"), action: openAppSettings),
-                    secondaryButton: .cancel(Text("location.alert.cancel"))
-                )
+                Button("location.alert.openSettings", action: openAppSettings)
+                Button("location.alert.cancel", role: .cancel) { locationAlert = nil }
             case .unavailable:
-                Alert(
-                    title: Text("location.error.title"),
-                    message: Text("location.error.message"),
-                    dismissButton: .default(Text("location.error.ok"))
-                )
+                Button("location.error.ok", role: .cancel) { locationAlert = nil }
+            }
+        } message: { alert in
+            switch alert {
+            case .settings:
+                Text("location.alert.message")
+            case .unavailable:
+                Text("location.error.message")
             }
         }
     }

@@ -565,7 +565,7 @@ previews work with networking disabled; no `#Preview` triggers a real request.
 
 ## 7. Phase 3 — Views and presentation
 
-### [ ] R3-1 Simplify `StopMarkerView`'s dual API
+### [x] R3-1 Simplify `StopMarkerView`'s dual API
 
 **Files:** `Views/StopMarkerView.swift`.
 
@@ -581,7 +581,7 @@ view-model initializer. Derive everything else from `Stop` and `RouteType`.
 **Acceptance:** One initializer; previews/tests construct the value directly; no
 optional-mirroring properties.
 
-### [ ] R3-2 Hide annotation titles natively in compact mode
+### [x] R3-2 Hide annotation titles natively in compact mode
 
 **Files:** `Views/TransitMapView.swift:104-106`.
 
@@ -595,7 +595,7 @@ accessibility label on the marker). Verify VoiceOver still announces the stop.
 **Acceptance:** No empty-string titles; VoiceOver reads the stop name in both
 modes; compact mode has no visible labels.
 
-### [ ] R3-3 Finish the design-token pass
+### [x] R3-3 Finish the design-token pass
 
 **Files:** `Views/DesignTokens.swift`, `Views/StopMarkerView.swift`,
 `Views/StopDetailSheet.swift`, `Views/MapControlsComboView.swift`.
@@ -611,7 +611,7 @@ Document the selected-marker scale and compact-size rules.
 **Acceptance:** `rg` shows no unused `DesignTokens` member; layout is unchanged
 at default and XXL Dynamic Type (screenshot diff).
 
-### [ ] R3-4 Modernise map controls and attribution
+### [x] R3-4 Modernise map controls and attribution
 
 **Files:** `Views/MapControlsComboView.swift`.
 
@@ -631,7 +631,7 @@ without importing UIKit, fires an unbounded `Task` per location tap, and shows
 **Acceptance:** No deprecation/availability warnings; one alert per failed
 request; attribution is accurate and localized.
 
-### [ ] R3-5 Clean up the city picker
+### [x] R3-5 Clean up the city picker
 
 **Files:** `Views/CityPickerSheet.swift`, `Resources/cities.json`,
 `Models/City.swift`.
@@ -648,7 +648,7 @@ names and aliases.
 **Acceptance:** No raw API ids in the UI; pl/en screenshots reviewed; search
 still finds every documented alias.
 
-### [ ] R3-6 Make route-badge text contrast-safe
+### [x] R3-6 Make route-badge text contrast-safe
 
 **Files:** `Views/StopDetailSheet.swift:26-42`.
 
@@ -662,7 +662,7 @@ is invalid.
 **Acceptance:** A unit test covers light and dark badge colours; Increase
 Contrast still passes.
 
-### [ ] R3-7 Finish sheet sizing and accessibility
+### [x] R3-7 Finish sheet sizing and accessibility
 
 **Files:** `Views/StopDetailSheet.swift`, `Views/TransitMapView.swift:92-94`.
 

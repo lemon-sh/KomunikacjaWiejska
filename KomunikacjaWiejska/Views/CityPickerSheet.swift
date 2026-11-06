@@ -31,14 +31,9 @@ public struct CityPickerSheet: View {
                     dismiss()
                 } label: {
                     HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(city.name)
-                                .font(.body.weight(.medium))
-                                .foregroundStyle(.primary)
-                            Text(city.id)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        Text(city.name)
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(.primary)
 
                         Spacer()
 

@@ -36,10 +36,12 @@ public struct TransitMapView: View {
                 UserAnnotation()
 
                 ForEach(viewModel.stops) { stop in
-                    Annotation(markerTitle(for: stop), coordinate: stop.coordinate, anchor: .center) {
+                    Annotation(stop.displayName, coordinate: stop.coordinate, anchor: .center) {
                         StopMarkerView(
                             stop: stop,
-                            viewModel: viewModel
+                            isSelected: viewModel.selectedStopID == stop.id,
+                            isCompact: viewModel.isCompactDisplayMode,
+                            heading: viewModel.currentHeading
                         )
                         .onTapGesture {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
@@ -47,6 +49,7 @@ public struct TransitMapView: View {
                             }
                         }
                     }
+                    .annotationTitles(viewModel.isCompactDisplayMode ? .hidden : .visible)
                     .tag(stop.id)
                 }
             }
@@ -90,16 +93,10 @@ public struct TransitMapView: View {
             StopDetailSheet(stop: stop) {
                 viewModel.selectedStopID = nil
             }
-            .presentationDetents([.height(240), .medium, .large])
+            .presentationDetents([.height(DesignTokens.sheetSmallDetentHeight), .medium, .large])
             .presentationDragIndicator(.visible)
             .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }
-    }
-
-    /// Compact mode draws every stop as a small dot; names would overlap each
-    /// other and bury the map, so those annotations render without a title.
-    private func markerTitle(for stop: Stop) -> String {
-        viewModel.isCompactDisplayMode ? "" : stop.displayName
     }
 
     // MARK: - Top chrome

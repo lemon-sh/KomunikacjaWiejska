@@ -3,25 +3,13 @@ import SwiftUI
 
 public struct StopMarkerView: View {
     public let stop: Stop
-    private let viewModel: MapViewModel?
-    private let explicitIsSelected: Bool?
-    private let explicitIsCompact: Bool?
-    private let explicitHeading: Double?
+    public let isSelected: Bool
+    public let isCompact: Bool
+    public let heading: Double
 
     /// `@ScaledMetric` keeps markers legible at larger text sizes, capped so
     /// they never cover the map or neighbouring stops.
     @ScaledMetric(relativeTo: .body) private var scaledMarkerSize: CGFloat = DesignTokens.markerSize
-
-    public init(
-        stop: Stop,
-        viewModel: MapViewModel
-    ) {
-        self.stop = stop
-        self.viewModel = viewModel
-        self.explicitIsSelected = nil
-        self.explicitIsCompact = nil
-        self.explicitHeading = nil
-    }
 
     public init(
         stop: Stop,
@@ -30,22 +18,9 @@ public struct StopMarkerView: View {
         heading: Double = 0
     ) {
         self.stop = stop
-        self.viewModel = nil
-        self.explicitIsSelected = isSelected
-        self.explicitIsCompact = isCompact
-        self.explicitHeading = heading
-    }
-
-    private var isSelected: Bool {
-        explicitIsSelected ?? (viewModel?.selectedStopID == stop.id)
-    }
-
-    private var isCompact: Bool {
-        explicitIsCompact ?? (viewModel?.isCompactDisplayMode ?? false)
-    }
-
-    private var mapHeading: Double {
-        explicitHeading ?? (viewModel?.currentHeading ?? 0)
+        self.isSelected = isSelected
+        self.isCompact = isCompact
+        self.heading = heading
     }
 
     /// Computes the screen rotation angle for a stop's geographic bearing given the map camera's heading.
@@ -63,7 +38,11 @@ public struct StopMarkerView: View {
     }
 
     private var compactSize: CGFloat {
-        min(badgeSize * 0.3, 9)
+        DesignTokens.markerCompactSize
+    }
+
+    private var selectedScale: CGFloat {
+        DesignTokens.markerSelectedSize / DesignTokens.markerSize
     }
 
     private var iconSize: CGFloat {
@@ -115,7 +94,7 @@ public struct StopMarkerView: View {
                                 .foregroundStyle(markerColor)
                                 .offset(y: notchOffset)
                         }
-                        .rotationEffect(.degrees(Self.effectiveRotation(bearing: bearing, heading: mapHeading)))
+                        .rotationEffect(.degrees(Self.effectiveRotation(bearing: bearing, heading: heading)))
                     }
 
                     // Main circular badge
@@ -144,7 +123,7 @@ public struct StopMarkerView: View {
                     width: badgeSize + notchSize * 2,
                     height: badgeSize + notchSize * 2
                 )
-                .scaleEffect(isSelected ? 1.25 : 1.0)
+                .scaleEffect(isSelected ? selectedScale : 1.0)
                 .transition(.scale.combined(with: .opacity))
             }
         }
