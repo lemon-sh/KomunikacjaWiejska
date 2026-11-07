@@ -102,7 +102,16 @@ final class MapViewModel {
     private(set) var dismissedCityID: String?
 
     var cameraPosition: MapCameraPosition
-    internal(set) var cameraState: CameraState
+    @ObservationIgnored private var _cameraState: CameraState
+
+    var cameraState: CameraState {
+        get { _cameraState }
+        set {
+            _cameraState = newValue
+            syncDerivedCameraProperties(from: newValue)
+        }
+    }
+
     /// Markers currently rendered on the map. This is the visible, thinned
     /// view of the session stop cache.
     private(set) var stops: [Stop] = []
@@ -114,32 +123,71 @@ final class MapViewModel {
     var isShowingMapModes: Bool = false
     var isTrackingUser: Bool = false
 
-    var currentHeading: Double {
-        get { cameraState.heading }
-        set { cameraState.heading = newValue }
+    private(set) var isCompactDisplayMode: Bool = true
+    private(set) var isPitched3D: Bool = false
+    private(set) var areStopsVisible: Bool = true
+    var currentHeading: Double = 0 {
+        didSet {
+            _cameraState.heading = currentHeading
+        }
     }
 
     var currentPitch: Double {
-        get { cameraState.pitch }
-        set { cameraState.pitch = newValue }
+        get { _cameraState.pitch }
+        set {
+            _cameraState.pitch = newValue
+            let newPitched = newValue > 1.0
+            if isPitched3D != newPitched {
+                isPitched3D = newPitched
+            }
+        }
     }
 
     var currentDistance: Double {
-        get { cameraState.distance }
-        set { cameraState.distance = newValue }
+        get { _cameraState.distance }
+        set {
+            _cameraState.distance = newValue
+            let newCompact = newValue > compactDisplayDistanceThreshold
+            if isCompactDisplayMode != newCompact {
+                isCompactDisplayMode = newCompact
+            }
+            let newVisible = newValue <= stopVisibilityDistanceThreshold
+            if areStopsVisible != newVisible {
+                areStopsVisible = newVisible
+            }
+        }
     }
 
     var currentCenter: CLLocationCoordinate2D {
-        get { cameraState.center }
-        set { cameraState.center = newValue }
+        get { _cameraState.center }
+        set { _cameraState.center = newValue }
     }
 
     var visibleRegion: MKCoordinateRegion? {
-        get { cameraState.region }
+        get { _cameraState.region }
         set {
             if let region = newValue {
-                cameraState.region = region
+                _cameraState.region = region
+                updateStops()
             }
+        }
+    }
+
+    private func syncDerivedCameraProperties(from state: CameraState) {
+        let newCompact = state.distance > compactDisplayDistanceThreshold
+        if isCompactDisplayMode != newCompact {
+            isCompactDisplayMode = newCompact
+        }
+        let newPitched = state.pitch > 1.0
+        if isPitched3D != newPitched {
+            isPitched3D = newPitched
+        }
+        let newVisible = state.distance <= stopVisibilityDistanceThreshold
+        if areStopsVisible != newVisible {
+            areStopsVisible = newVisible
+        }
+        if abs(currentHeading - state.heading) >= 0.5 {
+            currentHeading = state.heading
         }
     }
 
@@ -199,25 +247,7 @@ final class MapViewModel {
     /// Camera distance (in metres) above which stops are no longer displayed at all.
     let stopVisibilityDistanceThreshold: Double = 12_000
 
-    /// Whether the camera is far enough that stops should be displayed as smaller points.
-    var isCompactDisplayMode: Bool {
-        return currentDistance > compactDisplayDistanceThreshold
-    }
-
-    /// Whether stops should be displayed on the map.
-    var areStopsVisible: Bool {
-        return currentDistance <= stopVisibilityDistanceThreshold
-    }
-
     /// Keys for camera persistence in non-volatile storage.
-    static let savedCameraLatitudeKey = "savedCameraLatitude"
-    static let savedCameraLongitudeKey = "savedCameraLongitude"
-    static let savedCameraDistanceKey = "savedCameraDistance"
-
-    /// Whether the map is currently pitched in 3D (pitch > 1.0 degree)
-    var isPitched3D: Bool {
-        return currentPitch > 1.0
-    }
 
     /// Hard ceiling on markers rendered at once; extra stops are thinned to
     /// one representative per grid cell (see `thinnedStops`).
@@ -291,7 +321,7 @@ final class MapViewModel {
                 center: restored.center,
                 span: MKCoordinateSpan(latitudeDelta: delta, longitudeDelta: delta)
             )
-            self.cameraState = CameraState(
+            self._cameraState = CameraState(
                 region: region,
                 distance: restored.distance,
                 center: restored.center
@@ -302,6 +332,8 @@ final class MapViewModel {
                 heading: 0,
                 pitch: 0
             ))
+            self.isCompactDisplayMode = restored.distance > compactDisplayDistanceThreshold
+            self.areStopsVisible = restored.distance <= stopVisibilityDistanceThreshold
         } else {
             let initialRegion = MKCoordinateRegion(
                 center: chosenCity.coordinate,
@@ -310,13 +342,18 @@ final class MapViewModel {
                     longitudeDelta: chosenCity.defaultLongitudeDelta
                 )
             )
-            self.cameraState = CameraState(
+            let initialDistance = Self.approximateDistance(for: initialRegion)
+            self._cameraState = CameraState(
                 region: initialRegion,
-                distance: Self.approximateDistance(for: initialRegion),
+                distance: initialDistance,
                 center: chosenCity.coordinate
             )
             self.cameraPosition = .region(initialRegion)
+            self.isCompactDisplayMode = initialDistance > compactDisplayDistanceThreshold
+            self.areStopsVisible = initialDistance <= stopVisibilityDistanceThreshold
         }
+        self.isPitched3D = false
+        self.currentHeading = 0
     }
 
     /// Persists current camera center and zoom distance to non-volatile storage.
@@ -419,6 +456,11 @@ final class MapViewModel {
             cameraPosition = .camera(camera)
             cameraState.pitch = 0
         }
+    }
+
+    /// Toggles between explore (normal) and satellite map rendering modes.
+    func toggleMapMode() {
+        selectedMapMode = (selectedMapMode == .satellite) ? .explore : .satellite
     }
 
     // MARK: - Region Suggestion
@@ -781,7 +823,21 @@ final class MapViewModel {
         }
 
         let region = cameraState.region
-        let visibleStops = cachedStopsByID.values.filter { Self.contains($0, in: region) }
+        let latitudeSpan = region.span.latitudeDelta
+        let longitudeSpan = region.span.longitudeDelta
+        guard latitudeSpan.isFinite, longitudeSpan.isFinite,
+              latitudeSpan > 0, longitudeSpan > 0
+        else { return }
+
+        let minLat = region.center.latitude - latitudeSpan / 2
+        let maxLat = region.center.latitude + latitudeSpan / 2
+        let minLon = region.center.longitude - longitudeSpan / 2
+        let maxLon = region.center.longitude + longitudeSpan / 2
+
+        let visibleStops = cachedStopsByID.values.filter { stop in
+            stop.latitude >= minLat && stop.latitude <= maxLat
+                && stop.longitude >= minLon && stop.longitude <= maxLon
+        }
 
         var renderedStops: [Stop]
         if visibleStops.count > Self.maxRenderedStops {
@@ -794,7 +850,8 @@ final class MapViewModel {
         // even if grid thinning would have dropped its cell.
         if let selectedStopID = selectedStopID,
            let selectedStop = cachedStopsByID[selectedStopID],
-           Self.contains(selectedStop, in: region),
+           selectedStop.latitude >= minLat && selectedStop.latitude <= maxLat,
+           selectedStop.longitude >= minLon && selectedStop.longitude <= maxLon,
            !renderedStops.contains(where: { $0.id == selectedStopID }) {
             renderedStops.append(selectedStop)
             renderedStops.sort { $0.id < $1.id }
@@ -818,22 +875,54 @@ final class MapViewModel {
         guard latitudeSpan.isFinite, longitudeSpan.isFinite,
               latitudeSpan > 0, longitudeSpan > 0
         else { return false }
-        let dx = (stop.longitude - region.center.longitude) / longitudeSpan
-        let dy = (stop.latitude - region.center.latitude) / latitudeSpan
-        return abs(dx) <= 0.5 && abs(dy) <= 0.5
+        let minLat = region.center.latitude - latitudeSpan / 2
+        let maxLat = region.center.latitude + latitudeSpan / 2
+        let minLon = region.center.longitude - longitudeSpan / 2
+        let maxLon = region.center.longitude + longitudeSpan / 2
+        return stop.latitude >= minLat && stop.latitude <= maxLat
+            && stop.longitude >= minLon && stop.longitude <= maxLon
+    }
+
+    /// World-aligned spatial grid steps derived from the region span.
+    /// Steps are quantized using ceil(log2(...)) to powers of two, ensuring that
+    /// grid cell boundaries remain fixed in world coordinates during panning,
+    /// and the total number of visible cells is strictly bounded by maxRenderedStops.
+    private static func thinningSteps(for region: MKCoordinateRegion) -> (latStep: Double, lonStep: Double) {
+        let latSpan = max(region.span.latitudeDelta, 1e-6)
+        let lonSpan = max(region.span.longitudeDelta, 1e-6)
+        // With at most 14 cells per axis, a viewport can intersect at most 15x15 = 225 cells <= 250.
+        let targetLatStep = latSpan / 14.0
+        let targetLonStep = lonSpan / 14.0
+        let latStep = pow(2.0, ceil(log2(targetLatStep)))
+        let lonStep = pow(2.0, ceil(log2(targetLonStep)))
+        return (max(latStep, 1e-6), max(lonStep, 1e-6))
+    }
+
+    /// World-aligned cell index for a stop within the region.
+    private static func cellIndex(
+        for stop: Stop,
+        in region: MKCoordinateRegion,
+        latStep: Double,
+        lonStep: Double
+    ) -> Int? {
+        guard contains(stop, in: region) else { return nil }
+        let col = Int(floor(stop.longitude / lonStep))
+        let row = Int(floor(stop.latitude / latStep))
+        return (row &* 73856093) ^ (col &* 19349663)
     }
 
     /// Grid-based thinning: keep one deterministic representative per cell of
-    /// a grid laid over the visible region.
+    /// a world-aligned spatial grid laid over the visible region.
     static func thinnedStops(_ rawStops: [Stop], region: MKCoordinateRegion?) -> [Stop] {
         guard let region = region else { return [] }
-        let grid = thinningGrid()
+        let (latStep, lonStep) = thinningSteps(for: region)
         var buckets: [Int: Stop] = [:]
         for stop in rawStops {
             guard let cell = cellIndex(
                 for: stop,
                 in: region,
-                grid: grid
+                latStep: latStep,
+                lonStep: lonStep
             ) else { continue }
             if let current = buckets[cell] {
                 // Deterministic pick so repainting does not flicker markers.
@@ -844,41 +933,11 @@ final class MapViewModel {
                 buckets[cell] = stop
             }
         }
-        return buckets.values.sorted { $0.id < $1.id }
-    }
-
-    private struct ThinningGrid {
-        let columns: Int
-        let rows: Int
-    }
-
-    /// Fixed grid sized to `maxRenderedStops`. It must not be derived from the
-    /// stop count: `sqrt(count / cap)` produces very few cells for dense
-    /// viewports (e.g. a 2×2 grid for 1,000 stops), discarding nearly every
-    /// marker. 15×16 = 240 slots stays under the cap.
-    private static func thinningGrid() -> ThinningGrid {
-        let columns = max(2, Int(Double(maxRenderedStops).squareRoot()))
-        let rows = max(2, maxRenderedStops / columns)
-        return ThinningGrid(columns: columns, rows: rows)
-    }
-
-    private static func cellIndex(
-        for stop: Stop,
-        in region: MKCoordinateRegion,
-        grid: ThinningGrid
-    ) -> Int? {
-        let latitudeSpan = max(region.span.latitudeDelta, 1e-6)
-        let longitudeSpan = max(region.span.longitudeDelta, 1e-6)
-        let dx = (stop.longitude - region.center.longitude) / longitudeSpan
-        let dy = (stop.latitude - region.center.latitude) / latitudeSpan
-        guard abs(dx) <= 0.5, abs(dy) <= 0.5 else { return nil }  // outside viewport
-        let column = clampCell(Int((dx + 0.5) * Double(grid.columns)), limit: grid.columns)
-        let row = clampCell(Int((dy + 0.5) * Double(grid.rows)), limit: grid.rows)
-        return row * grid.columns + column
-    }
-
-    private static func clampCell(_ value: Int, limit: Int) -> Int {
-        min(max(value, 0), limit - 1)
+        let sorted = buckets.values.sorted { $0.id < $1.id }
+        if sorted.count > maxRenderedStops {
+            return Array(sorted.prefix(maxRenderedStops))
+        }
+        return sorted
     }
 }
 

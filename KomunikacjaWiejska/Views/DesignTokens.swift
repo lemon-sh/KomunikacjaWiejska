@@ -23,5 +23,4 @@ public enum DesignTokens {
     public static let sheetSmallDetentHeight: CGFloat = 240
 
     public static let badgeCornerRadius: CGFloat = 12
-    public static let modePreviewSize: CGFloat = 82
 }

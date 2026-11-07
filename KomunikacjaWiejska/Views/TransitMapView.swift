@@ -281,6 +281,7 @@ private struct StopAnnotationContent: View {
             isCompact: viewModel.isCompactDisplayMode,
             heading: viewModel.currentHeading
         )
+        .equatable()
         .onTapGesture {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                 viewModel.selectedStopID = stop.id

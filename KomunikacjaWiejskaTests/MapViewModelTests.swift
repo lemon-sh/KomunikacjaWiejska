@@ -16,6 +16,10 @@ struct MapViewModelTests {
 
         viewModel.selectedMapMode = .satellite
         #expect(viewModel.selectedMapMode == .satellite)
+        viewModel.toggleMapMode()
+        #expect(viewModel.selectedMapMode == .explore)
+        viewModel.toggleMapMode()
+        #expect(viewModel.selectedMapMode == .satellite)
 
         let targetCoord = CLLocationCoordinate2D(latitude: 52.2297, longitude: 21.0122)
         viewModel.centerOnUserLocation(coordinate: targetCoord)

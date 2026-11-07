@@ -28,17 +28,10 @@ struct MapControlsComboView: View {
         GlassEffectContainer {
             VStack(spacing: 0) {
                 Button {
-                    viewModel.isShowingMapModes.toggle()
+                    viewModel.toggleMapMode()
                 } label: {
-                    Image(systemName: "map")
+                    Image(systemName: viewModel.selectedMapMode == .satellite ? "map" : "globe")
                         .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
-                }
-                .popover(isPresented: $viewModel.isShowingMapModes, arrowEdge: .trailing) {
-                    MapModesPopoverView(
-                        selectedMode: $viewModel.selectedMapMode,
-                        isPresented: $viewModel.isShowingMapModes
-                    )
-                    .presentationCompactAdaptation(.popover)
                 }
                 .glassEffect(.regular.interactive(), in: .capsule)
                 .foregroundStyle(.primary)
@@ -111,98 +104,6 @@ struct MapControlsComboView: View {
     private func openAppSettings() {
         if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
             openURL(settingsURL)
-        }
-    }
-}
-
-struct MapModesPopoverView: View {
-    @Binding var selectedMode: MapMode
-    @Binding var isPresented: Bool
-
-    init(selectedMode: Binding<MapMode>, isPresented: Binding<Bool>) {
-        self._selectedMode = selectedMode
-        self._isPresented = isPresented
-    }
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("map.modes.title")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.primary)
-
-            HStack(spacing: 18) {
-                ForEach(MapMode.allCases) { mode in
-                    MapModeCardView(
-                        mode: mode,
-                        isSelected: selectedMode == mode
-                    ) {
-                        selectedMode = mode
-                        isPresented = false
-                    }
-                }
-            }
-
-            Text("map.modes.attribution")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 18)
-    }
-}
-
-private struct MapModeCardView: View {
-    let mode: MapMode
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: DesignTokens.badgeCornerRadius, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: mode.previewColors,
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    Image(systemName: mode.previewSymbol)
-                        .font(.system(size: 30, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .frame(width: DesignTokens.modePreviewSize, height: DesignTokens.modePreviewSize)
-                .overlay(
-                    RoundedRectangle(cornerRadius: DesignTokens.badgeCornerRadius, style: .continuous)
-                        .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 3)
-                )
-
-                Text(mode.displayName)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-private extension MapMode {
-    var previewSymbol: String {
-        switch self {
-        case .explore: "map.fill"
-        case .satellite: "globe.americas.fill"
-        }
-    }
-
-    var previewColors: [Color] {
-        switch self {
-        case .explore:
-            return [Color(red: 0.16, green: 0.42, blue: 0.32), Color(red: 0.30, green: 0.62, blue: 0.44)]
-        case .satellite:
-            return [Color(red: 0.16, green: 0.24, blue: 0.36), Color(red: 0.36, green: 0.52, blue: 0.62)]
         }
     }
 }

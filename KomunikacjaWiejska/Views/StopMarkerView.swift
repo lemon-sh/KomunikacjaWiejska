@@ -1,11 +1,18 @@
 import Foundation
 import SwiftUI
 
-struct StopMarkerView: View {
+struct StopMarkerView: View, Equatable {
     let stop: Stop
     let isSelected: Bool
     let isCompact: Bool
     let heading: Double
+
+    static func == (lhs: StopMarkerView, rhs: StopMarkerView) -> Bool {
+        lhs.stop.id == rhs.stop.id
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isCompact == rhs.isCompact
+            && (lhs.stop.bearing == nil || abs(lhs.heading - rhs.heading) < 0.5)
+    }
 
     /// `@ScaledMetric` keeps markers legible at larger text sizes, capped so
     /// they never cover the map or neighbouring stops.
@@ -30,7 +37,7 @@ struct StopMarkerView: View {
     }
 
     private var markerColor: Color {
-        Color(hex: stop.primaryVehicleType.defaultHexColor, fallback: .blue)
+        stop.primaryVehicleType.defaultColor
     }
 
     private var badgeSize: CGFloat {

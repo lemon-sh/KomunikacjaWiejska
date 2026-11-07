@@ -25,8 +25,34 @@ extension RouteType {
         }
     }
 
+    private static let tramColor = Color(hex: "#E53935", fallback: .red)
+    private static let subwayColor = Color(hex: "#1E88E5", fallback: .blue)
+    private static let railColor = Color(hex: "#43A047", fallback: .green)
+    private static let busColor = Color(hex: "#FB8C00", fallback: .orange)
+    private static let ferryColor = Color(hex: "#00ACC1", fallback: .teal)
+    private static let trolleybusColor = Color(hex: "#8E24AA", fallback: .purple)
+    private static let cableColor = Color(hex: "#546E7A", fallback: .gray)
+    private static let unknownColor = Color(hex: "#757575", fallback: .gray)
+
     var defaultColor: Color {
-        Color(hex: defaultHexColor, fallback: .blue)
+        switch self {
+        case .tram:
+            return Self.tramColor
+        case .subway:
+            return Self.subwayColor
+        case .rail:
+            return Self.railColor
+        case .bus:
+            return Self.busColor
+        case .ferry:
+            return Self.ferryColor
+        case .trolleybus:
+            return Self.trolleybusColor
+        case .aerialLift, .funicular, .monorail:
+            return Self.cableColor
+        case .unknown:
+            return Self.unknownColor
+        }
     }
 
     var systemImageName: String {
