@@ -41,7 +41,11 @@ struct TransitMapView: View {
                 UserAnnotation()
 
                 ForEach(viewModel.stops) { stop in
-                    Annotation(stop.displayName, coordinate: stop.coordinate, anchor: .center) {
+                    Annotation(
+                        viewModel.isCompactDisplayMode ? "" : stop.displayName,
+                        coordinate: stop.coordinate,
+                        anchor: .center
+                    ) {
                         StopAnnotationContent(stop: stop, viewModel: viewModel)
                     }
                     .annotationTitles(viewModel.isCompactDisplayMode ? .hidden : .visible)
@@ -282,10 +286,5 @@ private struct StopAnnotationContent: View {
             heading: viewModel.currentHeading
         )
         .equatable()
-        .onTapGesture {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                viewModel.selectedStopID = stop.id
-            }
-        }
     }
 }

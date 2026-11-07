@@ -208,15 +208,10 @@ final class MapViewModel {
         case failed(RequestKey)
     }
 
-    private var fetchState: FetchState = .idle
+    @ObservationIgnored private var fetchState: FetchState = .idle
 
     /// Whether the currently selected city's viewport has a request in flight.
-    var isLoading: Bool {
-        if case .loading(let key) = fetchState {
-            return key.cityID == selectedCity.id
-        }
-        return false
-    }
+    private(set) var isLoading: Bool = false
 
     /// The reason for the current load, or `nil` when nothing is in flight.
     private(set) var loadingPhase: StopLoadingPhase?
@@ -224,8 +219,23 @@ final class MapViewModel {
     /// Failure message for the currently selected city, if any. Errors are
     /// tracked per city so a failed fetch for city A never surfaces while
     /// viewing city B.
-    var errorMessage: String? {
-        errorsByCity[selectedCity.id]
+    private(set) var errorMessage: String?
+
+    private func updateLoadingAndErrorStates() {
+        let newLoading: Bool
+        if case .loading(let key) = fetchState {
+            newLoading = key.cityID == selectedCity.id
+        } else {
+            newLoading = false
+        }
+        if isLoading != newLoading {
+            isLoading = newLoading
+        }
+
+        let newError = errorsByCity[selectedCity.id]
+        if errorMessage != newError {
+            errorMessage = newError
+        }
     }
 
     /// The stop currently selected, looked up by `selectedStopID`. Derived —
@@ -265,16 +275,16 @@ final class MapViewModel {
     /// Session-only stop cache for the selected city. Never persisted, and
     /// cleared on every city switch. Stop data is treated as stable for the
     /// lifetime of the app process, so entries never expire.
-    private var cachedStopsByID: [String: Stop] = [:]
+    @ObservationIgnored private var cachedStopsByID: [String: Stop] = [:]
     /// Tiles whose bbox has been fetched successfully in this session.
-    private var fetchedTiles: Set<MapTile> = []
-    private var errorsByCity: [String: String] = [:]
+    @ObservationIgnored private var fetchedTiles: Set<MapTile> = []
+    @ObservationIgnored private var errorsByCity: [String: String] = [:]
     /// Generation token guarding against stale responses: each fetch gets a
     /// fresh token, and a response only applies if it still matches.
-    private var requestGeneration = UUID()
+    @ObservationIgnored private var requestGeneration = UUID()
     /// City of the last request, even when no data has arrived yet. Lets the
     /// loading phase distinguish a switch from a cold start.
-    private var lastRequestedCityID: String?
+    @ObservationIgnored private var lastRequestedCityID: String?
 
     init(
         apiClient: any StopsProviding = ZbiorkomAPIClient.shared,
@@ -518,6 +528,10 @@ final class MapViewModel {
             let radius = city.coverageRadiusMeters
             guard radius > 0 else { continue }
 
+            // Fast bounding-box prefilter: 1 degree latitude is ~111 km everywhere.
+            let maxDeltaLat = (radius / 111_000.0) * 1.05
+            guard abs(center.latitude - city.coordinate.latitude) <= maxDeltaLat else { continue }
+
             let cityLocation = CLLocation(latitude: city.coordinate.latitude, longitude: city.coordinate.longitude)
             let distance = viewportLocation.distance(from: cityLocation)
             if distance <= radius {
@@ -638,6 +652,7 @@ final class MapViewModel {
             fetchState = .idle
             errorsByCity[city.id] = nil
             loadingPhase = nil
+            updateLoadingAndErrorStates()
             updateStops()
         case .fetch(let bbox, let tiles):
             startFetch(city: city, bbox: bbox, tiles: tiles)
@@ -720,6 +735,7 @@ final class MapViewModel {
         let generation = requestGeneration
         errorsByCity[city.id] = nil
         fetchState = .loading(requestKey)
+        updateLoadingAndErrorStates()
 
         if lastRequestedCityID == nil {
             loadingPhase = .initial
@@ -762,6 +778,7 @@ final class MapViewModel {
                 self.fetchState = .loaded(requestKey)
                 self.loadingPhase = nil
                 self.errorsByCity.removeValue(forKey: city.id)
+                self.updateLoadingAndErrorStates()
                 Logger.mapCache.debug("Fetch completed for \(city.id, privacy: .public): +\(fetchedStops.count, privacy: .public) stops (total cached: \(self.cachedStopsByID.count, privacy: .public)), +\(tiles.count, privacy: .public) tiles (total tiles: \(self.fetchedTiles.count, privacy: .public))")
                 self.updateStops()
             } catch {
@@ -775,6 +792,7 @@ final class MapViewModel {
                     self.errorsByCity[city.id] = Self.userFacingMessage(for: error)
                     self.fetchState = .failed(requestKey)
                     self.loadingPhase = nil
+                    self.updateLoadingAndErrorStates()
                 }
             }
         }
@@ -793,6 +811,7 @@ final class MapViewModel {
         loadingPhase = nil
         if case .loading = fetchState {
             fetchState = .idle
+            updateLoadingAndErrorStates()
         }
     }
 
@@ -809,6 +828,7 @@ final class MapViewModel {
         cachedStopsByID.removeAll()
         fetchedTiles.removeAll()
         errorsByCity.removeAll()
+        updateLoadingAndErrorStates()
         updateStops()
     }
 

@@ -82,10 +82,8 @@ struct StopMarkerView: View, Equatable {
                         Circle()
                             .strokeBorder(.white.opacity(0.85), lineWidth: 1)
                     )
-                    .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 0.5)
                     .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
                     .contentShape(Rectangle())
-                    .transition(.scale.combined(with: .opacity))
             } else {
                 ZStack {
                     // Directional pointer / triangle notch if bearing is known.
@@ -113,10 +111,10 @@ struct StopMarkerView: View, Equatable {
                                 .strokeBorder(.white, lineWidth: isSelected ? 2.5 : 2)
                         )
                         .shadow(
-                            color: isSelected ? .black.opacity(0.35) : .black.opacity(0.25),
-                            radius: isSelected ? 4 : 3,
+                            color: isSelected ? .black.opacity(0.35) : .black.opacity(0.2),
+                            radius: isSelected ? 4 : 2,
                             x: 0,
-                            y: isSelected ? 2 : 1.5
+                            y: isSelected ? 2 : 1
                         )
 
                     // Icon inside badge
@@ -131,7 +129,6 @@ struct StopMarkerView: View, Equatable {
                     height: badgeSize + notchSize * 2
                 )
                 .scaleEffect(isSelected ? selectedScale : 1.0)
-                .transition(.scale.combined(with: .opacity))
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isSelected)
