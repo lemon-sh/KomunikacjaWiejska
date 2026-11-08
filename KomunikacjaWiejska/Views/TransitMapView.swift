@@ -34,7 +34,10 @@ struct TransitMapView: View {
     var body: some View {
         ZStack(alignment: .top) {
             Map(
-                position: $viewModel.cameraPosition,
+                position: Binding(
+                    get: { viewModel.cameraPosition },
+                    set: { viewModel.setCameraPositionFromGesture($0) }
+                ),
                 selection: $viewModel.selectedStopID,
                 scope: mapScope
             ) {
@@ -59,7 +62,7 @@ struct TransitMapView: View {
             .mapControlVisibility(.hidden)
             .ignoresSafeArea()
 
-            topChrome
+            TopChromeView(viewModel: viewModel, mapScope: mapScope)
         }
         // Bottom Right: Apple Maps Map Style + Location Combo Capsule
         .overlay(alignment: .bottomTrailing) {
@@ -104,12 +107,18 @@ struct TransitMapView: View {
         }
     }
 
-    // MARK: - Top chrome
+}
 
-    /// One top-aligned stack instead of a fixed spacer: controls sit below the
-    /// safe area, and the status capsule flows underneath them without a magic
-    /// 52 pt offset. Works with the Dynamic Island and in landscape.
-    private var topChrome: some View {
+// MARK: - Top chrome
+
+/// Isolated subview for top controls and notifications.
+/// Isolating these controls prevents status and error changes from invalidating
+/// the parent `TransitMapView.body` and triggering expensive MapKit annotation diffing.
+private struct TopChromeView: View {
+    @Bindable var viewModel: MapViewModel
+    let mapScope: Namespace.ID
+
+    var body: some View {
         VStack(spacing: 8) {
             HStack(alignment: .top) {
                 cityPickerButton
@@ -279,11 +288,13 @@ private struct StopAnnotationContent: View {
     let viewModel: MapViewModel
 
     var body: some View {
+        let isCompact = viewModel.isCompactDisplayMode
+        let heading: Double = (!isCompact && stop.bearing != nil) ? viewModel.currentHeading : 0
         StopMarkerView(
             stop: stop,
             isSelected: viewModel.selectedStopID == stop.id,
-            isCompact: viewModel.isCompactDisplayMode,
-            heading: viewModel.currentHeading
+            isCompact: isCompact,
+            heading: heading
         )
         .equatable()
     }

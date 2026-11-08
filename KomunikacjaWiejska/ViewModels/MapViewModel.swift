@@ -101,8 +101,27 @@ final class MapViewModel {
     /// City ID whose suggestion was dismissed by the user to avoid repeated prompting.
     private(set) var dismissedCityID: String?
 
-    var cameraPosition: MapCameraPosition
+    @ObservationIgnored private var _cameraPosition: MapCameraPosition
     @ObservationIgnored private var _cameraState: CameraState
+
+    var cameraPosition: MapCameraPosition {
+        get {
+            access(keyPath: \.cameraPosition)
+            return _cameraPosition
+        }
+        set {
+            withMutation(keyPath: \.cameraPosition) {
+                _cameraPosition = newValue
+            }
+        }
+    }
+
+    /// Updates internal camera position from MapKit user gestures without triggering
+    /// SwiftUI Observation invalidations. User panning is already rendered smoothly by MapKit/Metal;
+    /// re-evaluating the SwiftUI Map and annotation tree on every pan tick causes 30–56ms main thread hitches.
+    func setCameraPositionFromGesture(_ newPosition: MapCameraPosition) {
+        _cameraPosition = newPosition
+    }
 
     var cameraState: CameraState {
         get { _cameraState }
@@ -336,7 +355,7 @@ final class MapViewModel {
                 distance: restored.distance,
                 center: restored.center
             )
-            self.cameraPosition = .camera(MapCamera(
+            self._cameraPosition = .camera(MapCamera(
                 centerCoordinate: restored.center,
                 distance: restored.distance,
                 heading: 0,
@@ -358,7 +377,7 @@ final class MapViewModel {
                 distance: initialDistance,
                 center: chosenCity.coordinate
             )
-            self.cameraPosition = .region(initialRegion)
+            self._cameraPosition = .region(initialRegion)
             self.isCompactDisplayMode = initialDistance > compactDisplayDistanceThreshold
             self.areStopsVisible = initialDistance <= stopVisibilityDistanceThreshold
         }
