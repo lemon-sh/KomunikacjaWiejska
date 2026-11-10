@@ -170,4 +170,46 @@ struct ZbiorkomAPIClientTests {
             try await makeClient().fetchStops(city: "warsaw", bbox: nil)
         }
     }
+
+    @Test("Fetches and decodes vehicles with path-based bbox")
+    func fetchVehiclesSuccess() async throws {
+        let capturedURL = LockedValue<URL?>(nil)
+        let sampleJSON = """
+        {
+            "positions": [
+                {
+                    "vehicle": {
+                        "id": "1001",
+                        "type": "3",
+                        "agency": "default",
+                        "model": "Solaris"
+                    },
+                    "routeName": "189",
+                    "routeColor": "#a5248c",
+                    "brigade": "1",
+                    "location": [21.01, 52.23],
+                    "timestamp": 1700000000000,
+                    "bearing": 180,
+                    "delay": 0,
+                    "headsign": "Centrum",
+                    "upcomingStops": [],
+                    "url": "https://zbiorkom.live/sample"
+                }
+            ]
+        }
+        """.data(using: .utf8)!
+
+        MockURLProtocol.handler = { request in
+            capturedURL.value = request.url
+            return try (StubResponses.http(), sampleJSON)
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let bbox = BoundingBox(minLon: 21.0, minLat: 52.2, maxLon: 21.1, maxLat: 52.3)
+        let vehicles = try await makeClient().fetchVehicles(city: "warsaw", bbox: bbox)
+
+        #expect(vehicles.count == 1)
+        #expect(vehicles[0].id == "default:3:1001")
+        #expect(capturedURL.value?.path.contains("/api6-open/warsaw/positions/21.000000,52.200000,21.100000,52.300000") == true)
+    }
 }

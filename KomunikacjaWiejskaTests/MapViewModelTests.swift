@@ -2,6 +2,7 @@ import CoreLocation
 import Foundation
 @testable import KomunikacjaWiejska
 import MapKit
+import SwiftUI
 import Testing
 
 @Suite("MapViewModel Tests")
@@ -40,6 +41,7 @@ struct MapViewModelTests {
     func testLoadFetchesOnce() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -58,6 +60,7 @@ struct MapViewModelTests {
     func testLoadingPhases() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()], holdsRequests: true)
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntil { !provider.requestedCities.isEmpty }
@@ -86,6 +89,7 @@ struct MapViewModelTests {
     func testTypedLoadStateAcrossCitySwitch() async throws {
         let provider = StubStopsProvider(holdsRequests: true)
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         #expect(viewModel.isLoading)
@@ -120,7 +124,7 @@ struct MapViewModelTests {
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
         viewModel.cameraState = MapViewModel.CameraState(
             region: region,
-            distance: 5_000,
+            distance: 2_000,
             center: region.center
         )
 
@@ -135,6 +139,7 @@ struct MapViewModelTests {
     func testStopsKeptInMemory() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -166,6 +171,7 @@ struct MapViewModelTests {
     func testViewportLoadAppliesUpdatedStopContent() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample(bearing: 90)])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -188,6 +194,7 @@ struct MapViewModelTests {
         let stopB = StopFixtures.sample(id: "stop-b", name: "Stop Beta")
         let provider = StubStopsProvider(stops: [stopA, stopB])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -212,28 +219,113 @@ struct MapViewModelTests {
 
     @Test("Selected stop is preserved in rendered stops")
     func testSelectedStopPreserved() async throws {
-        let count = 300
+        let count = 50
         var allStops: [Stop] = []
         for index in 0..<count {
             allStops.append(
                 StopFixtures.sample(
-                    id: String(format: "thin-stop-%03d", index),
+                    id: String(format: "stop-%03d", index),
                     longitude: 21.0 + Double(index) * 0.0001,
                     latitude: 52.2 + Double(index) * 0.0001
                 )
             )
         }
 
-        let targetID = "thin-stop-150"
+        let targetID = "stop-025"
         let provider = StubStopsProvider(stops: allStops)
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
         viewModel.selectedStopID = targetID
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
 
-        #expect(viewModel.stops.count <= MapViewModel.maxRenderedStops)
         #expect(viewModel.stops.contains(where: { $0.id == targetID }))
+    }
+
+    @Test("Vehicles spatial grid thinning caps rendered count to maxRenderedVehicles and preserves selected vehicle")
+    func testVehicleSpatialGridThinning() async throws {
+        let count = 200
+        var allVehicles: [VehiclePosition] = []
+        for index in 0..<count {
+            allVehicles.append(
+                VehicleFixtures.sample(
+                    id: String(format: "%04d", index),
+                    longitude: 21.0 + Double(index) * 0.0002,
+                    latitude: 52.2 + Double(index) * 0.0002
+                )
+            )
+        }
+
+        let selectedID = "default:3:0150"
+        let provider = StubStopsProvider(vehicles: allVehicles)
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 4_000
+        viewModel.selectedVehicleID = selectedID
+
+        await viewModel.fetchVehiclesForCurrentViewport()
+
+        #expect(viewModel.vehicles.count <= MapViewModel.maxRenderedVehicles)
+        #expect(viewModel.vehicles.contains(where: { $0.id == selectedID }))
+    }
+
+    @Test("Vehicle distance thresholds control visibility and compact display mode")
+    func testVehicleDistanceThresholds() {
+        let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
+
+        viewModel.currentDistance = 1_500
+        #expect(viewModel.isVehiclesVisible == true)
+        #expect(viewModel.isVehicleCompactDisplayMode == false)
+
+        viewModel.currentDistance = 5_000
+        #expect(viewModel.isVehiclesVisible == true)
+        #expect(viewModel.isVehicleCompactDisplayMode == true)
+
+        viewModel.currentDistance = 12_000
+        #expect(viewModel.isVehiclesVisible == false)
+    }
+
+    @Test("Vehicle selection is mutually exclusive with stop selection and enables tracking")
+    func testVehicleSelectionAndTracking() async throws {
+        let vehicle = VehicleFixtures.sample(id: "500", longitude: 21.02, latitude: 52.24)
+        let stop = StopFixtures.sample(id: "stop-1")
+        let provider = StubStopsProvider(stops: [stop], vehicles: [vehicle])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
+
+        viewModel.loadStopsForSelectedCity()
+        try await waitUntilLoaded(viewModel)
+        await viewModel.fetchVehiclesForCurrentViewport()
+
+        // Select stop first
+        viewModel.selectedStopID = stop.id
+        #expect(viewModel.selectedStopID == stop.id)
+        #expect(viewModel.selectedVehicleID == nil)
+
+        // Select vehicle: mutual exclusivity
+        viewModel.selection = .vehicle(vehicle.id)
+        #expect(viewModel.selectedVehicleID == vehicle.id)
+        #expect(viewModel.selectedStopID == nil)
+        #expect(viewModel.isTrackingVehicle == true)
+
+        // Manual gesture cancels tracking
+        viewModel.setCameraPositionFromGesture(.region(MKCoordinateRegion()))
+        #expect(viewModel.isTrackingVehicle == false)
+    }
+
+    @Test("Vehicle network failure marks error as non-retryable")
+    func testVehicleNetworkErrorNonRetryable() async throws {
+        struct VehicleNetworkError: LocalizedError {
+            var errorDescription: String? { "Vehicle service unavailable" }
+        }
+        let provider = StubStopsProvider(vehicleError: VehicleNetworkError())
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
+
+        await viewModel.fetchVehiclesForCurrentViewport()
+
+        #expect(viewModel.errorMessage == "Vehicle service unavailable")
+        #expect(viewModel.isRetryableError == false)
     }
 
     @Test("Selecting a stop does not recompute rendered stops array instance if stop is already present")
@@ -242,6 +334,7 @@ struct MapViewModelTests {
         let stopB = StopFixtures.sample(id: "stop-b", name: "B")
         let provider = StubStopsProvider(stops: [stopA, stopB])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -297,17 +390,22 @@ struct MapViewModelTests {
             ]
         )
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
         #expect(viewModel.errorMessage == "Failed to load")
 
         viewModel.selectCity(.krakow)
+        viewModel.currentDistance = 2_000
+        viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
         #expect(viewModel.errorMessage == nil)
 
         provider.setStops([StopFixtures.sample(city: "warsaw")])
         viewModel.selectCity(.warsaw)
+        viewModel.currentDistance = 2_000
+        viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
         #expect(viewModel.errorMessage == nil)
     }
@@ -323,6 +421,7 @@ struct MapViewModelTests {
             defaultLongitudeDelta: 0.08
         )
         let viewModel = MapViewModel(apiClient: provider, initialCity: startingCity)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -342,6 +441,7 @@ struct MapViewModelTests {
     func testViewportInsideCoverageDoesNotFetch() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
         let initialRegion = MKCoordinateRegion(
             center: City.warsaw.coordinate,
             span: MKCoordinateSpan(
@@ -375,6 +475,7 @@ struct MapViewModelTests {
     func testZoomingInUsesTileCoverage() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -393,6 +494,7 @@ struct MapViewModelTests {
     func testZoomingOutFetchesAdditionalCoverage() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
         let wideRegion = MKCoordinateRegion(
             center: City.warsaw.coordinate,
             span: MKCoordinateSpan(latitudeDelta: 0.18, longitudeDelta: 0.18)
@@ -426,6 +528,7 @@ struct MapViewModelTests {
         )
         let provider = StubStopsProvider(stops: [stopA])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -457,6 +560,7 @@ struct MapViewModelTests {
     func testEmptyResponseMarksTiles() async throws {
         let provider = StubStopsProvider(stops: [])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -472,6 +576,7 @@ struct MapViewModelTests {
         struct NetworkFailure: Error {}
         let provider = StubStopsProvider(error: NetworkFailure())
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -503,6 +608,7 @@ struct MapViewModelTests {
             holdsRequests: true
         )
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntil { provider.requestedCities.count >= 1 }
@@ -510,6 +616,8 @@ struct MapViewModelTests {
         #expect(viewModel.isLoading == true)
 
         viewModel.selectCity(.krakow)
+        viewModel.currentDistance = 2_000
+        viewModel.loadStopsForSelectedCity()
         try await waitUntil { provider.requestedCities.count >= 2 }
         #expect(viewModel.stops.isEmpty)
         #expect(provider.requestedCities == ["warsaw", "krakow"])
@@ -539,6 +647,7 @@ struct MapViewModelTests {
             ]
         )
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -546,42 +655,18 @@ struct MapViewModelTests {
 
         viewModel.selectCity(.krakow)
         #expect(viewModel.stops.isEmpty)
+        viewModel.currentDistance = 2_000
+        viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
         #expect(viewModel.stops == krakowStops)
 
         viewModel.selectCity(.warsaw)
         #expect(viewModel.stops.isEmpty)
+        viewModel.currentDistance = 2_000
+        viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
         #expect(viewModel.stops == warsawStops)
         #expect(provider.callCount == 3)
-    }
-
-    @Test("Compact mode is correct from launch and after switching to a wide network")
-    func testCompactModeAtLaunchAndSwitch() {
-        let warsawViewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
-        #expect(warsawViewModel.isCompactDisplayMode == true)
-
-        warsawViewModel.currentDistance = 4_000
-        #expect(warsawViewModel.isCompactDisplayMode == false)
-
-        let pkp = City.pkp
-        let pkpViewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: pkp)
-        #expect(pkpViewModel.isCompactDisplayMode == true)
-
-        warsawViewModel.selectCity(pkp)
-        #expect(warsawViewModel.isCompactDisplayMode == true)
-    }
-
-    @Test("Compact display mode respects the threshold boundaries")
-    func testCompactDisplayMode() {
-        let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
-        let threshold = viewModel.compactDisplayDistanceThreshold
-
-        viewModel.currentDistance = threshold - 1
-        #expect(viewModel.isCompactDisplayMode == false)
-
-        viewModel.currentDistance = threshold + 1
-        #expect(viewModel.isCompactDisplayMode == true)
     }
 
     @Test("No region suggestion when viewing current city")
@@ -735,7 +820,7 @@ struct MapViewModelTests {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
 
-        viewModel.currentDistance = 13_000
+        viewModel.currentDistance = 4_000
         #expect(!viewModel.areStopsVisible)
 
         viewModel.loadStopsForSelectedCity()
@@ -744,7 +829,7 @@ struct MapViewModelTests {
         #expect(viewModel.stops.isEmpty)
         #expect(provider.callCount == 0)
 
-        viewModel.currentDistance = 8_000
+        viewModel.currentDistance = 2_000
         #expect(viewModel.areStopsVisible)
 
         viewModel.loadStopsForSelectedCity()
@@ -753,7 +838,7 @@ struct MapViewModelTests {
         #expect(provider.callCount == 1)
         #expect(viewModel.stops.count == 1)
 
-        viewModel.currentDistance = 15_000
+        viewModel.currentDistance = 5_000
         #expect(!viewModel.areStopsVisible)
         viewModel.loadStopsForSelectedCity()
         #expect(viewModel.stops.isEmpty)
@@ -851,6 +936,7 @@ struct MapViewModelTests {
 
         let provider = StubStopsProvider(stops: allStops)
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
 
         viewModel.visibleRegion = MKCoordinateRegion(
             center: CLLocationCoordinate2D(latitude: 52.23, longitude: 21.01),

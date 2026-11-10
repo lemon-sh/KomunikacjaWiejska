@@ -4,6 +4,7 @@ import SwiftUI
 struct TransitMapView: View {
     @State private var viewModel: MapViewModel
     @State private var presentedStop: Stop?
+    @State private var presentedVehicle: VehiclePosition?
     private var locationManager: any LocationProviding
     @Environment(\.scenePhase) private var scenePhase
     @Namespace private var mapScope
@@ -31,6 +32,18 @@ struct TransitMapView: View {
         )
     }
 
+    private var isVehicleSheetPresented: Binding<Bool> {
+        Binding(
+            get: { viewModel.selectedVehicleID != nil },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.selectedVehicleID = nil
+                    presentedVehicle = nil
+                }
+            }
+        )
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             Map(
@@ -38,21 +51,37 @@ struct TransitMapView: View {
                     get: { viewModel.cameraPosition },
                     set: { viewModel.setCameraPositionFromGesture($0) }
                 ),
-                selection: $viewModel.selectedStopID,
+                selection: $viewModel.selection,
                 scope: mapScope
             ) {
                 UserAnnotation()
 
-                ForEach(viewModel.stops) { stop in
-                    Annotation(
-                        viewModel.isCompactDisplayMode ? "" : stop.displayName,
-                        coordinate: stop.coordinate,
-                        anchor: .center
-                    ) {
-                        StopAnnotationContent(stop: stop, viewModel: viewModel)
+                if viewModel.areStopsVisible {
+                    ForEach(viewModel.stops) { stop in
+                        Annotation(
+                            stop.displayName,
+                            coordinate: stop.coordinate,
+                            anchor: .center
+                        ) {
+                            StopAnnotationContent(stop: stop, viewModel: viewModel)
+                        }
+                        .annotationTitles(.visible)
+                        .tag(MapViewModel.FeatureSelection.stop(stop.id))
                     }
-                    .annotationTitles(viewModel.isCompactDisplayMode ? .hidden : .visible)
-                    .tag(stop.id)
+                }
+
+                if viewModel.isVehiclesVisible {
+                    ForEach(viewModel.vehicles) { vehicle in
+                        Annotation(
+                            viewModel.isVehicleCompactDisplayMode ? "" : vehicle.routeName,
+                            coordinate: vehicle.coordinate,
+                            anchor: .center
+                        ) {
+                            VehicleAnnotationContent(vehicle: vehicle, viewModel: viewModel)
+                        }
+                        .annotationTitles(viewModel.isVehicleCompactDisplayMode ? .hidden : .visible)
+                        .tag(MapViewModel.FeatureSelection.vehicle(vehicle.id))
+                    }
                 }
             }
             .mapStyle(viewModel.selectedMapMode.mapStyle)
@@ -79,6 +108,7 @@ struct TransitMapView: View {
         }
         .task {
             viewModel.loadStopsForSelectedCity()
+            viewModel.startVehiclePolling()
         }
         .onChange(of: scenePhase) { _, newPhase in
             // No network/GPS activity while the app is in the background.
@@ -89,11 +119,16 @@ struct TransitMapView: View {
             } else if newPhase == .active {
                 locationManager.requestWhenInUseAuthorization()
                 viewModel.loadStopsForSelectedCity()
+                viewModel.startVehiclePolling()
             }
         }
         .onChange(of: viewModel.selectedStopID) { _, newID in
             guard let newID, let stop = viewModel.cachedStop(for: newID) else { return }
             presentedStop = stop
+        }
+        .onChange(of: viewModel.selectedVehicleID) { _, newID in
+            guard let newID, let vehicle = viewModel.cachedVehicle(for: newID) else { return }
+            presentedVehicle = vehicle
         }
         .sheet(isPresented: isStopSheetPresented) {
             if let stop = presentedStop ?? viewModel.selectedStop {
@@ -103,6 +138,16 @@ struct TransitMapView: View {
                 .presentationDetents([.height(DesignTokens.sheetSmallDetentHeight), .medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+            }
+        }
+        .sheet(isPresented: isVehicleSheetPresented) {
+            if let vehicle = presentedVehicle ?? viewModel.selectedVehicle {
+                VehicleDetailSheet(vehicle: vehicle) {
+                    viewModel.selectedVehicleID = nil
+                }
+                .presentationDetents([.height(DesignTokens.vehicleSheetSmallDetentHeight), .medium])
+                .presentationDragIndicator(.visible)
+                .presentationBackgroundInteraction(.enabled(upThrough: .height(DesignTokens.vehicleSheetSmallDetentHeight)))
             }
         }
     }
@@ -212,14 +257,16 @@ private struct TopChromeView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    viewModel.loadStopsForSelectedCity()
-                } label: {
-                    Text("map.error.retry")
-                        .font(.caption.weight(.semibold))
+                if viewModel.isRetryableError {
+                    Button {
+                        viewModel.loadStopsForSelectedCity()
+                    } label: {
+                        Text("map.error.retry")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tint)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -288,11 +335,26 @@ private struct StopAnnotationContent: View {
     let viewModel: MapViewModel
 
     var body: some View {
-        let isCompact = viewModel.isCompactDisplayMode
-        let heading: Double = (!isCompact && stop.bearing != nil) ? viewModel.currentHeading : 0
+        let heading: Double = stop.bearing != nil ? viewModel.currentHeading : 0
         StopMarkerView(
             stop: stop,
             isSelected: viewModel.selectedStopID == stop.id,
+            heading: heading
+        )
+        .equatable()
+    }
+}
+
+private struct VehicleAnnotationContent: View {
+    let vehicle: VehiclePosition
+    let viewModel: MapViewModel
+
+    var body: some View {
+        let isCompact = viewModel.isVehicleCompactDisplayMode
+        let heading: Double = (!isCompact && vehicle.bearing != nil) ? viewModel.currentHeading : 0
+        VehicleMarkerView(
+            vehicle: vehicle,
+            isSelected: viewModel.selectedVehicleID == vehicle.id,
             isCompact: isCompact,
             heading: heading
         )

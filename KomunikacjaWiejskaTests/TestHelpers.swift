@@ -28,7 +28,7 @@ func waitUntilLoaded(
     timeout: Duration = .seconds(3)
 ) async throws {
     try await waitUntil(timeout: timeout) {
-        !viewModel.isLoading && !viewModel.isThinning
+        !viewModel.isLoading
     }
 }
 

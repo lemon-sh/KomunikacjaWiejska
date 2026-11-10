@@ -4,13 +4,11 @@ import SwiftUI
 struct StopMarkerView: View, Equatable {
     let stop: Stop
     let isSelected: Bool
-    let isCompact: Bool
     let heading: Double
 
     static func == (lhs: StopMarkerView, rhs: StopMarkerView) -> Bool {
         lhs.stop.id == rhs.stop.id
             && lhs.isSelected == rhs.isSelected
-            && lhs.isCompact == rhs.isCompact
             && (lhs.stop.bearing == nil || abs(lhs.heading - rhs.heading) < 0.5)
     }
 
@@ -21,12 +19,10 @@ struct StopMarkerView: View, Equatable {
     init(
         stop: Stop,
         isSelected: Bool = false,
-        isCompact: Bool = false,
         heading: Double = 0
     ) {
         self.stop = stop
         self.isSelected = isSelected
-        self.isCompact = isCompact
         self.heading = heading
     }
 
@@ -42,10 +38,6 @@ struct StopMarkerView: View, Equatable {
 
     private var badgeSize: CGFloat {
         min(max(scaledMarkerSize, DesignTokens.markerSize), DesignTokens.markerMaximumSize)
-    }
-
-    private var compactSize: CGFloat {
-        DesignTokens.markerCompactSize
     }
 
     private var selectedScale: CGFloat {
@@ -73,64 +65,50 @@ struct StopMarkerView: View, Equatable {
     }
 
     var body: some View {
-        Group {
-            if isCompact && !isSelected {
-                Circle()
-                    .fill(markerColor)
-                    .frame(width: compactSize, height: compactSize)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(.white.opacity(0.85), lineWidth: 1)
-                    )
-                    .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
-                    .contentShape(Rectangle())
-            } else {
+        ZStack {
+            // Directional pointer / triangle notch if bearing is known.
+            // The triangle is offset inside a ZStack whose centre is the
+            // badge centre, then the whole container rotates, so the notch
+            // orbits the badge instead of spinning in place.
+            if let bearing = stop.bearing {
                 ZStack {
-                    // Directional pointer / triangle notch if bearing is known.
-                    // The triangle is offset inside a ZStack whose centre is the
-                    // badge centre, then the whole container rotates, so the notch
-                    // orbits the badge instead of spinning in place.
-                    if let bearing = stop.bearing {
-                        ZStack {
-                            Image(systemName: "triangle.fill")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: notchSize, height: notchSize)
-                                .foregroundStyle(markerColor)
-                                .offset(y: notchOffset)
-                        }
-                        .rotationEffect(.degrees(Self.effectiveRotation(bearing: bearing, heading: heading)))
-                    }
-
-                    // Main circular badge
-                    Circle()
-                        .fill(markerColor)
-                        .frame(width: badgeSize, height: badgeSize)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(.white, lineWidth: isSelected ? 2.5 : 2)
-                        )
-                        .shadow(
-                            color: isSelected ? .black.opacity(0.35) : .black.opacity(0.2),
-                            radius: isSelected ? 4 : 2,
-                            x: 0,
-                            y: isSelected ? 2 : 1
-                        )
-
-                    // Icon inside badge
-                    Image(systemName: stop.primaryVehicleType.systemImageName)
+                    Image(systemName: "triangle.fill")
                         .resizable()
-                        .scaledToFit()
-                        .frame(width: iconSize, height: iconSize)
-                        .foregroundStyle(.white)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: notchSize, height: notchSize)
+                        .foregroundStyle(markerColor)
+                        .offset(y: notchOffset)
                 }
-                .frame(
-                    width: badgeSize + notchSize * 2,
-                    height: badgeSize + notchSize * 2
-                )
-                .scaleEffect(isSelected ? selectedScale : 1.0)
+                .rotationEffect(.degrees(Self.effectiveRotation(bearing: bearing, heading: heading)))
             }
+
+            // Main circular badge
+            Circle()
+                .fill(markerColor)
+                .frame(width: badgeSize, height: badgeSize)
+                .overlay(
+                    Circle()
+                        .strokeBorder(.white, lineWidth: isSelected ? 2.5 : 2)
+                )
+                .shadow(
+                    color: isSelected ? .black.opacity(0.35) : .black.opacity(0.2),
+                    radius: isSelected ? 4 : 2,
+                    x: 0,
+                    y: isSelected ? 2 : 1
+                )
+
+            // Icon inside badge
+            Image(systemName: stop.primaryVehicleType.systemImageName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: iconSize, height: iconSize)
+                .foregroundStyle(.white)
         }
+        .frame(
+            width: badgeSize + notchSize * 2,
+            height: badgeSize + notchSize * 2
+        )
+        .scaleEffect(isSelected ? selectedScale : 1.0)
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isSelected)
         .zIndex(isSelected ? 1 : 0)
         .accessibilityElement(children: .ignore)

@@ -101,6 +101,41 @@ actor ZbiorkomAPIClient {
         }
     }
 
+    func fetchVehicles(city: String, bbox: BoundingBox) async throws -> [VehiclePosition] {
+        guard let baseURL = Self.baseURL else {
+            throw ZbiorkomAPIError.invalidURL
+        }
+        let positionsURL = baseURL
+            .appendingPathComponent(city)
+            .appendingPathComponent("positions")
+            .appendingPathComponent(bbox.queryValue)
+
+        var request = URLRequest(url: positionsURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = Self.requestTimeout
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        Logger.api.debug("Fetching vehicles for city: \(city, privacy: .public), bbox: \(bbox.queryValue, privacy: .public)")
+
+        let data = try await perform(request)
+
+        do {
+            let decoded = try Self.decoder.decode(VehiclesResponse.self, from: data)
+            Logger.api.debug("Successfully decoded \(decoded.positions.count, privacy: .public) vehicles for city: \(city, privacy: .public)")
+            return decoded.positions
+        } catch {
+            let details: String
+            #if DEBUG
+            details = String(reflecting: error)
+            Logger.api.error("Vehicles decoding failed: \(details, privacy: .public)")
+            #else
+            details = ""
+            Logger.api.error("Vehicles decoding failed")
+            #endif
+            throw ZbiorkomAPIError.decodingError(details)
+        }
+    }
+
     /// Performs the request with a bounded retry policy (2P5-1).
     private func perform(_ request: URLRequest) async throws -> Data {
         for attempt in 0...Self.maxRetryCount {

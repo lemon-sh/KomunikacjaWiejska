@@ -124,7 +124,64 @@ Returns keyed JSON:
 
 ---
 
-## 5. Error Schema
+## 5. Vehicle Positions Schema (`VehiclePosition`)
+
+`GET /api6-open/{city}/positions/{bbox}`
+
+Returns keyed JSON of all vehicles currently operating inside the bounding box:
+
+```json
+{
+  "positions": [
+    {
+      "vehicle": {
+        "id": "2025",
+        "type": "3",
+        "agency": "default",
+        "model": "Solbus SM18"
+      },
+      "routeName": "189",
+      "routeColor": "#a5248c",
+      "brigade": "D31",
+      "location": [20.908178, 52.228401],
+      "timestamp": 1794335632000,
+      "bearing": 84,
+      "delay": 120000,
+      "headsign": "Rondo Unii Europejskiej",
+      "upcomingStops": [
+        {
+          "sequence": 6,
+          "name": "Raginisa",
+          "scheduledArrival": 1794334200000,
+          "scheduledDeparture": 1794334200000
+        }
+      ],
+      "url": "https://v6-api.zbiorkom-v5.pages.dev/warsaw/vehicle/3%3A2025"
+    }
+  ]
+}
+```
+
+### Field Definitions
+
+- `vehicle.id`: Fleet number (unique per operator agency and vehicle type).
+- `vehicle.type`: GTFS route type integer represented as a string (`"0"` tram, `"1"` metro, `"2"` rail, `"3"` bus, etc.).
+- `vehicle.agency`: Operator agency code (e.g. `"default"`, `"ztm"`).
+- `vehicle.model`: Bus/tram vehicle model name or `null`.
+- `routeName`: Displayed route identifier (e.g. `"189"`, `"4"`, `"M1"`).
+- `routeColor`: Hex color string (`"#rrggbb"`).
+- `brigade`: Duty / run number (`brygada`).
+- `location`: `[longitude, latitude]` in WGS 84.
+- `timestamp`: Epoch millisecond timestamp of the last GPS fix.
+- `bearing`: Heading in degrees (`0..360`), or omitted/null if stationary/unknown.
+- `delay`: Predicted delay in milliseconds (negative = early, positive = late).
+- `headsign`: Destination or trip terminus string.
+- `upcomingStops`: Array of sequence-ordered stops along the current trip.
+- `url`: Canonical web link to vehicle details on zbiorkom.live.
+
+---
+
+## 6. Error Schema
 
 Non-200 responses return:
 

@@ -22,20 +22,26 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
         var cancellationCount = 0
         var requestedCities: [String] = []
         var requestedBBoxes: [BoundingBox?] = []
+        var vehicleCallCount = 0
+        var requestedVehicleCities: [String] = []
+        var requestedVehicleBBoxes: [BoundingBox] = []
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private let gate: OSAllocatedUnfairLock<Gate>
     private let handler: @Sendable (String, BoundingBox?) -> Result<[Stop], Error>
+    private let vehicleHandler: @Sendable (String, BoundingBox) -> Result<[VehiclePosition], Error>
     /// Replaces every fixture after construction, so tests can simulate a
     /// refresh returning updated details for the same stop IDs.
     private let overrideStops = OSAllocatedUnfairLock<[Stop]?>(initialState: nil)
 
     init(
         handler: @escaping @Sendable (String, BoundingBox?) -> Result<[Stop], Error>,
+        vehicleHandler: @escaping @Sendable (String, BoundingBox) -> Result<[VehiclePosition], Error> = { _, _ in .success([]) },
         holdsRequests: Bool = false
     ) {
         self.handler = handler
+        self.vehicleHandler = vehicleHandler
         self.gate = OSAllocatedUnfairLock(initialState: Gate(holdsRequests: holdsRequests))
     }
 
@@ -43,6 +49,8 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
         stops: [Stop] = [],
         error: Error? = nil,
         resultsByCity: [String: Result<[Stop], Error>] = [:],
+        vehicles: [VehiclePosition] = [],
+        vehicleError: Error? = nil,
         holdsRequests: Bool = false
     ) {
         self.init(
@@ -55,12 +63,22 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
                 }
                 return .success(stops)
             },
+            vehicleHandler: { _, _ in
+                if let vehicleError = vehicleError {
+                    return .failure(vehicleError)
+                }
+                return .success(vehicles)
+            },
             holdsRequests: holdsRequests
         )
     }
 
     var callCount: Int {
         state.withLock { $0.callCount }
+    }
+
+    var vehicleCallCount: Int {
+        state.withLock { $0.vehicleCallCount }
     }
 
     var cancellationCount: Int {
@@ -73,6 +91,14 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
 
     var requestedBBoxes: [BoundingBox?] {
         state.withLock { $0.requestedBBoxes }
+    }
+
+    var requestedVehicleCities: [String] {
+        state.withLock { $0.requestedVehicleCities }
+    }
+
+    var requestedVehicleBBoxes: [BoundingBox] {
+        state.withLock { $0.requestedVehicleBBoxes }
     }
 
     func fetchStops(city: String, bbox: BoundingBox?) async throws -> [Stop] {
@@ -90,6 +116,19 @@ final class StubStopsProvider: StopsProviding, @unchecked Sendable {
         }
         if Task.isCancelled {
             state.withLock { $0.cancellationCount += 1 }
+            throw CancellationError()
+        }
+        return try result.get()
+    }
+
+    func fetchVehicles(city: String, bbox: BoundingBox) async throws -> [VehiclePosition] {
+        let result: Result<[VehiclePosition], Error> = state.withLock { testState in
+            testState.vehicleCallCount += 1
+            testState.requestedVehicleCities.append(city)
+            testState.requestedVehicleBBoxes.append(bbox)
+            return vehicleHandler(city, bbox)
+        }
+        if Task.isCancelled {
             throw CancellationError()
         }
         return try result.get()
@@ -167,6 +206,37 @@ enum StopFixtures {
                 )
             ],
             entrances: []
+        )
+    }
+}
+
+nonisolated enum VehicleFixtures {
+    static func sample(
+        id: String = "1001",
+        type: String = "3",
+        agency: String = "default",
+        model: String? = "Solaris Urbino 12",
+        routeName: String = "189",
+        routeColor: String = "#a5248c",
+        brigade: String = "1",
+        longitude: Double = 21.01,
+        latitude: Double = 52.23,
+        bearing: Int? = 180,
+        delay: Int = 120_000,
+        headsign: String? = "Os. Górczewska"
+    ) -> VehiclePosition {
+        VehiclePosition(
+            vehicle: VehicleInfo(id: id, type: type, agency: agency, model: model),
+            routeName: routeName,
+            routeColor: routeColor,
+            brigade: brigade,
+            location: [longitude, latitude],
+            timestamp: 1_700_000_000_000,
+            bearing: bearing,
+            delay: delay,
+            headsign: headsign,
+            upcomingStops: [],
+            url: "https://zbiorkom.live/sample"
         )
     }
 }

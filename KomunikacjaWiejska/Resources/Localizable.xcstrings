@@ -35,6 +35,23 @@
         }
       }
     },
+    "accessibility.vehicle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vehicle route %@, %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pojazd linii %@, %@"
+          }
+        }
+      }
+    },
     "cityPicker.done" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -800,6 +817,9 @@
         }
       }
     },
+    "stop.sheet.close" : {
+
+    },
     "stopDetail.close" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -881,6 +901,91 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Linie na tym przystanku (%lld)"
+          }
+        }
+      }
+    },
+    "vehicle.brigade" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brigade %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brygada %@"
+          }
+        }
+      }
+    },
+    "vehicle.delay.minutesEarly" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d min early"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d min przed czasem"
+          }
+        }
+      }
+    },
+    "vehicle.delay.minutesLate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d min late"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d min spóźnienia"
+          }
+        }
+      }
+    },
+    "vehicle.delay.onTime" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On time"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O czasie"
+          }
+        }
+      }
+    },
+    "vehicle.sheet.placeholder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Route and upcoming stops will be available soon"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trasa i kolejne przystanki będą dostępne wkrótce"
           }
         }
       }

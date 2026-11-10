@@ -19,11 +19,14 @@ This document describes the software architecture, state flow, MapKit integratio
    - Public transit networks in metropolitan areas contain tens of thousands of stop poles.
    - Stops are fetched **per visible viewport**: `.onMapCameraChange(frequency: .onEnd)` debounces camera changes (`MapConstants.cameraDebounceNanoseconds`, 350 ms) and `MapViewModel` determines missing Web Mercator tiles.
    - Fetched stops live in a session-only, per-city tile cache using flat Zoom 12 Web Mercator tiles (`MapTile.zoom = 12`). There is no multi-level tile hierarchy; missing tiles are requested as a single union bounding box (`minLon,minLat,maxLon,maxLat`) and merged into the city cache by stop ID. The cache is cleared on city switch and never persisted.
-   - Camera distance controls stop rendering thresholds:
-     - **Full markers:** Camera distance $\le$ 6,000 m (`MapConstants.stopCompactDistanceThreshold`).
-     - **Compact markers:** Camera distance between 6,000 m and 12,000 m (`MapConstants.stopVisibilityDistanceThreshold`).
-     - **Hidden:** Stops hidden and fetches suppressed when camera distance exceeds 12,000 m.
-   - When a viewport contains more than 250 visible stops (`MapConstants.maxRenderedStops`), `MapViewModel` thins them deterministically using a 2D spatial grid (retaining one representative per cell with smallest ID, and always preserving the currently selected stop) per ADR-0008.
+   - Camera distance controls transit rendering thresholds:
+     - **Stops:** Rendered when camera distance $\le$ 3,000 m (`MapViewModel.stopVisibilityDistanceThreshold`). At this scale, stops are rendered directly in the visible viewport without spatial grid thinning. Stops are hidden and fetches suppressed above 3,000 m.
+     - **Live Vehicles (Two-tier display):**
+       - **Full route badges:** Camera distance $\le$ 2,000 m (`MapViewModel.vehicleCompactDistanceThreshold`) with route pill badge and directional bearing pointer.
+       - **Compact markers:** Camera distance between 2,000 m and 10,000 m (`MapViewModel.vehicleVisibilityDistanceThreshold`) displaying minimal 7pt dots with route colors and hidden annotation titles for fluid MapKit rendering.
+       - **Hidden:** Vehicles hidden and polling suspended above 10,000 m.
+     - **Vehicle Thinning:** When more than 150 vehicles are visible in the viewport, `MapViewModel` thins them deterministically on a background task using a world-aligned 2D spatial grid (`maxRenderedVehicles = 150`), always retaining the selected vehicle.
+     - **Vehicle Polling & Caching:** Vehicle positions are fetched per visible viewport bounding box with a 15-second TTL (`vehicleTTL = 15.0`), refreshing periodically while the app is active. Vehicle network errors surface in the top capsule without a retry button, automatically recovering on the subsequent interval.
    - Camera metrics are grouped into one atomic `CameraState` value, preventing unnecessary annotation redraws during unrelated camera movements.
 4. **Localization & Accessibility:**
    - User-facing copy lives in `Resources/Localizable.xcstrings` with Polish (`pl`) and English (`en`) translations.
@@ -120,6 +123,10 @@ flowchart TD
   - Circular transit badge showing transit icon and a triangle notch rotated to the stop's `bearing`.
 - [`StopDetailSheet.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/StopDetailSheet.swift):
   - Non-blocking bottom sheet showing platform number, direction, and route chips.
+- [`VehicleMarkerView.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/VehicleMarkerView.swift):
+  - Two-tier vehicle marker displaying full route badge with bearing notch pointer ($\le$ 2,000 m) or 7pt compact colored dot (2,000 m – 10,000 m).
+- [`VehicleDetailSheet.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/VehicleDetailSheet.swift):
+  - Non-blocking bottom sheet showing route badge, headsign, live delay status, and upcoming trip placeholder.
 - [`CityPickerSheet.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/CityPickerSheet.swift):
   - Searchable list of Polish cities allowing the user to jump between transit networks.
 
@@ -130,8 +137,10 @@ flowchart TD
 1. **Stop Departures (Milestone 2):**
    - Query `GET /api6-open/{city}/stops/{stopId}` when a stop is selected.
    - Display real-time departure countdowns, delays in minutes, and cancellations.
-2. **Live Vehicle Positions (Milestone 3):**
-   - Poll `GET /api6-open/{city}/positions/{bbox}` periodically (e.g., every 3-5s).
-   - Render animated vehicle markers on the map with route numbers and bearings.
+2. **Live Vehicle Positions (Milestone 3 - Implemented):**
+   - Polling `GET /api6-open/{city}/positions/{bbox}` with 15s TTL cache.
+   - Two-tier MapKit rendering (route pill badge $\le$ 2,000 m; compact dot 2,000 m – 10,000 m).
+   - Spatial grid thinning capped at 150 vehicles on background task.
+   - Vehicle selection, interactive sheet, and camera tracking.
 3. **Trip Route Polyline & Vehicle Trace (Milestone 4):**
    - Query `GET /api6-open/{city}/trips/{tripId}` or route geometries to draw transit lines using `MapPolyline`.

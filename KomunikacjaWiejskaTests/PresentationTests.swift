@@ -162,5 +162,26 @@ struct PresentationTests {
             #expect(size.height > 100)
         }
     }
+
+    @Test("VehicleDetailSheet renders without crashing across delay states")
+    func testVehicleDetailSheetRenders() {
+        let onTime = VehicleFixtures.sample(delay: 0)
+        let late = VehicleFixtures.sample(delay: 180_000)
+        let early = VehicleFixtures.sample(delay: -120_000)
+
+        for vehicle in [onTime, late, early] {
+            let sheet = VehicleDetailSheet(vehicle: vehicle, onDismiss: {})
+            let controller = UIHostingController(rootView: sheet)
+            let size = controller.sizeThatFits(in: CGSize(width: 393, height: 600))
+            #expect(size.height > 100)
+        }
+    }
+
+    @Test("VehicleMarkerView effectiveRotation calculation offsets heading")
+    func testVehicleMarkerViewEffectiveRotation() {
+        #expect(VehicleMarkerView.effectiveRotation(bearing: 180, heading: 0) == 180)
+        #expect(VehicleMarkerView.effectiveRotation(bearing: 180, heading: 90) == 90)
+        #expect(VehicleMarkerView.effectiveRotation(bearing: 90, heading: 90) == 0)
+    }
 }
 

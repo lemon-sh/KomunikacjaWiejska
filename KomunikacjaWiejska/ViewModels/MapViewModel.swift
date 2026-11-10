@@ -121,6 +121,7 @@ final class MapViewModel {
     /// re-evaluating the SwiftUI Map and annotation tree on every pan tick causes 30–56ms main thread hitches.
     func setCameraPositionFromGesture(_ newPosition: MapCameraPosition) {
         _cameraPosition = newPosition
+        isTrackingVehicle = false
     }
 
     var cameraState: CameraState {
@@ -131,8 +132,7 @@ final class MapViewModel {
         }
     }
 
-    /// Markers currently rendered on the map. This is the visible, thinned
-    /// view of the session stop cache.
+    /// Markers currently rendered on the map.
     private(set) var stops: [Stop] = []
     /// Marker selection source of truth: the map writes the tagged stop ID,
     /// the detail sheet is derived from it.
@@ -142,18 +142,50 @@ final class MapViewModel {
     var isShowingMapModes: Bool = false
     var isTrackingUser: Bool = false
 
-    private(set) var isCompactDisplayMode: Bool = true
+    /// Real-time live vehicles currently rendered on the map.
+    private(set) var vehicles: [VehiclePosition] = []
+    var selectedVehicleID: String?
+    private(set) var isTrackingVehicle: Bool = false
+    private(set) var isVehiclesVisible: Bool = true
+    private(set) var isVehicleCompactDisplayMode: Bool = true
+    private(set) var isRetryableError: Bool = true
+
+    enum FeatureSelection: Hashable, Sendable {
+        case stop(String)
+        case vehicle(String)
+    }
+
+    var selection: FeatureSelection? {
+        get {
+            if let stopID = selectedStopID {
+                return .stop(stopID)
+            } else if let vehicleID = selectedVehicleID {
+                return .vehicle(vehicleID)
+            }
+            return nil
+        }
+        set {
+            switch newValue {
+            case .stop(let id):
+                selectedStopID = id
+                selectedVehicleID = nil
+                isTrackingVehicle = false
+            case .vehicle(let id):
+                selectVehicleAndCenter(id)
+            case nil:
+                selectedStopID = nil
+                selectedVehicleID = nil
+                isTrackingVehicle = false
+            }
+        }
+    }
+
     private(set) var isPitched3D: Bool = false
     private(set) var areStopsVisible: Bool = true
     var currentHeading: Double = 0 {
         didSet {
             _cameraState.heading = currentHeading
         }
-    }
-
-    /// Whether a background thinning task is currently running.
-    var isThinning: Bool {
-        thinningTask != nil
     }
 
     var currentPitch: Double {
@@ -171,13 +203,23 @@ final class MapViewModel {
         get { _cameraState.distance }
         set {
             _cameraState.distance = newValue
-            let newCompact = newValue > compactDisplayDistanceThreshold
-            if isCompactDisplayMode != newCompact {
-                isCompactDisplayMode = newCompact
-            }
             let newVisible = newValue <= stopVisibilityDistanceThreshold
             if areStopsVisible != newVisible {
                 areStopsVisible = newVisible
+            }
+            let newVehiclesVisible = newValue <= vehicleVisibilityDistanceThreshold
+            if isVehiclesVisible != newVehiclesVisible {
+                isVehiclesVisible = newVehiclesVisible
+                if !newVehiclesVisible {
+                    vehicles = []
+                    stopVehiclePolling()
+                } else {
+                    startVehiclePolling()
+                }
+            }
+            let newVehicleCompact = newValue > vehicleCompactDistanceThreshold
+            if isVehicleCompactDisplayMode != newVehicleCompact {
+                isVehicleCompactDisplayMode = newVehicleCompact
             }
         }
     }
@@ -193,15 +235,12 @@ final class MapViewModel {
             if let region = newValue {
                 _cameraState.region = region
                 updateStops()
+                updateRenderedVehicles()
             }
         }
     }
 
     private func syncDerivedCameraProperties(from state: CameraState) {
-        let newCompact = state.distance > compactDisplayDistanceThreshold
-        if isCompactDisplayMode != newCompact {
-            isCompactDisplayMode = newCompact
-        }
         let newPitched = state.pitch > 1.0
         if isPitched3D != newPitched {
             isPitched3D = newPitched
@@ -209,6 +248,20 @@ final class MapViewModel {
         let newVisible = state.distance <= stopVisibilityDistanceThreshold
         if areStopsVisible != newVisible {
             areStopsVisible = newVisible
+        }
+        let newVehiclesVisible = state.distance <= vehicleVisibilityDistanceThreshold
+        if isVehiclesVisible != newVehiclesVisible {
+            isVehiclesVisible = newVehiclesVisible
+            if !newVehiclesVisible {
+                vehicles = []
+                stopVehiclePolling()
+            } else {
+                startVehiclePolling()
+            }
+        }
+        let newVehicleCompact = state.distance > vehicleCompactDistanceThreshold
+        if isVehicleCompactDisplayMode != newVehicleCompact {
+            isVehicleCompactDisplayMode = newVehicleCompact
         }
         if abs(currentHeading - state.heading) >= 0.5 {
             currentHeading = state.heading
@@ -274,26 +327,29 @@ final class MapViewModel {
         stopIndexByID[id].map { cachedStops[$0] }
     }
 
-    /// Camera distance (in metres) above which stops are displayed as smaller
-    /// compact points.
-    let compactDisplayDistanceThreshold: Double = 6_000
-
     /// Camera distance (in metres) above which stops are no longer displayed at all.
-    let stopVisibilityDistanceThreshold: Double = 12_000
+    let stopVisibilityDistanceThreshold: Double = 3_000
 
-    /// Keys for camera persistence in non-volatile storage.
+    /// Camera distance (in metres) above which vehicles are hidden and polling stops.
+    let vehicleVisibilityDistanceThreshold: Double = 10_000
 
-    /// Hard ceiling on markers rendered at once; extra stops are thinned to
-    /// one representative per grid cell (see `thinnedStops`).
-    nonisolated static let maxRenderedStops = 250
+    /// Camera distance (in metres) above which vehicles switch to compact dot display mode.
+    let vehicleCompactDistanceThreshold: Double = 2_000
+
+    /// Polling and TTL interval in seconds for live vehicle positions.
+    let vehicleTTL: TimeInterval = 15.0
+
+    /// Hard ceiling on vehicle markers rendered at once; extra vehicles are thinned to
+    /// one representative per grid cell (see `thinnedVehicles`).
+    nonisolated static let maxRenderedVehicles = 150
 
     /// Margin expansion multiplier for buffering the visible viewport (e.g. 50% extra on each dimension).
     nonisolated static let viewportBufferFactor: Double = 1.50
 
-    /// Maximum zoom ratio change allowed before re-thinning is forced.
+    /// Maximum zoom ratio change allowed before re-evaluating viewport bounds.
     nonisolated static let zoomChangeRatioThreshold: Double = 0.20
 
-    private let apiClient: any StopsProviding
+    private let apiClient: any TransitDataProviding
     private let persistence: any CameraPersistenceStore
 
     // `nonisolated(unsafe)`: only mutated from `@MainActor` methods, read from
@@ -301,20 +357,27 @@ final class MapViewModel {
     // from any context is safe; the reference itself is never read concurrently.
     @ObservationIgnored private nonisolated(unsafe) var activeFetchTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var debounceTask: Task<Void, Never>?
-    @ObservationIgnored private nonisolated(unsafe) var thinningTask: Task<Void, Never>?
-    @ObservationIgnored private var thinningGeneration = UUID()
-    /// Region for which `stops` was last thinned, expanded by `viewportBufferFactor`.
+    @ObservationIgnored private nonisolated(unsafe) var vehiclePollingTask: Task<Void, Never>?
+    @ObservationIgnored private nonisolated(unsafe) var vehicleThinningTask: Task<Void, Never>?
+    @ObservationIgnored private var vehicleThinningGeneration = UUID()
+    /// Region for which `stops` was last updated, expanded by `viewportBufferFactor`.
     @ObservationIgnored private var lastBufferedRegion: MKCoordinateRegion?
+    /// Region for which `vehicles` was last thinned, expanded by `viewportBufferFactor`.
+    @ObservationIgnored private var lastVehicleBufferedRegion: MKCoordinateRegion?
     @ObservationIgnored private var inFlightTiles: Set<MapTile> = []
-    /// Session-only stop cache for the selected city. Never persisted, and
-    /// cleared on every city switch. Stop data is treated as stable for the
-    /// lifetime of the app process, so entries never expire.
+    /// Session-only stop cache for the selected city.
     @ObservationIgnored private var stopIndexByID: [String: Int] = [:]
     /// Contiguous array of cached stops, maintained incrementally to avoid
     /// expensive main-thread dictionary iterations and allocations.
     @ObservationIgnored private var cachedStops: [Stop] = []
     /// Tiles whose bbox has been fetched successfully in this session.
     @ObservationIgnored private var fetchedTiles: Set<MapTile> = []
+
+    /// Live vehicles cache for current session/city.
+    @ObservationIgnored private var vehicleIndexByID: [String: Int] = [:]
+    @ObservationIgnored private var cachedVehicles: [VehiclePosition] = []
+    @ObservationIgnored private var lastVehicleFetchTime: Date?
+
     @ObservationIgnored private var errorsByCity: [String: String] = [:]
     /// Generation token guarding against stale responses: each fetch gets a
     /// fresh token, and a response only applies if it still matches.
@@ -324,7 +387,7 @@ final class MapViewModel {
     @ObservationIgnored private var lastRequestedCityID: String?
 
     init(
-        apiClient: any StopsProviding = ZbiorkomAPIClient.shared,
+        apiClient: any TransitDataProviding = ZbiorkomAPIClient.shared,
         initialCity: City? = nil,
         persistence: any CameraPersistenceStore = UserDefaultsCameraPersistenceStore()
     ) {
@@ -379,8 +442,9 @@ final class MapViewModel {
                 heading: 0,
                 pitch: 0
             ))
-            self.isCompactDisplayMode = restored.distance > compactDisplayDistanceThreshold
             self.areStopsVisible = restored.distance <= stopVisibilityDistanceThreshold
+            self.isVehiclesVisible = restored.distance <= vehicleVisibilityDistanceThreshold
+            self.isVehicleCompactDisplayMode = restored.distance > vehicleCompactDistanceThreshold
         } else {
             let initialRegion = MKCoordinateRegion(
                 center: chosenCity.coordinate,
@@ -396,8 +460,9 @@ final class MapViewModel {
                 center: chosenCity.coordinate
             )
             self._cameraPosition = .region(initialRegion)
-            self.isCompactDisplayMode = initialDistance > compactDisplayDistanceThreshold
             self.areStopsVisible = initialDistance <= stopVisibilityDistanceThreshold
+            self.isVehiclesVisible = initialDistance <= vehicleVisibilityDistanceThreshold
+            self.isVehicleCompactDisplayMode = initialDistance > vehicleCompactDistanceThreshold
         }
         self.isPitched3D = false
         self.currentHeading = 0
@@ -415,7 +480,8 @@ final class MapViewModel {
     deinit {
         activeFetchTask?.cancel()
         debounceTask?.cancel()
-        thinningTask?.cancel()
+        vehiclePollingTask?.cancel()
+        vehicleThinningTask?.cancel()
     }
 
     func repositionCameraForCurrentCity() {
@@ -439,7 +505,7 @@ final class MapViewModel {
 
     /// MapKit does not expose a synchronous camera distance when only a region
     /// is known. The visible height in metres is a close enough proxy for the
-    /// compact-mode threshold: 0.08° ≈ 9 km for a city, 5° ≈ 555 km for PKP.
+    /// distance threshold: 0.08° ≈ 9 km for a city, 5° ≈ 555 km for PKP.
     static func approximateDistance(for region: MKCoordinateRegion) -> Double {
         region.span.latitudeDelta * MapConstants.metresPerDegreeLatitude
     }
@@ -459,11 +525,14 @@ final class MapViewModel {
         guard newState != cameraState else {
             // Still evaluate tracking release; nothing to observe otherwise.
             releaseTrackingIfRoaming(to: newState.center)
+            releaseVehicleTrackingIfRoaming(to: newState.center)
             return
         }
         cameraState = newState
         updateStops()
+        updateRenderedVehicles()
         releaseTrackingIfRoaming(to: newState.center)
+        releaseVehicleTrackingIfRoaming(to: newState.center)
         scheduleViewportFetch()
         updateRegionSuggestion()
     }
@@ -610,13 +679,20 @@ final class MapViewModel {
         selectedCity = city
         persistence.saveLastSelectedCityID(city.id)
         selectedStopID = nil
+        selectedVehicleID = nil
+        isTrackingVehicle = false
         errorsByCity.removeAll()
+        errorMessage = nil
+        isRetryableError = true
         clearStopCache()
+        clearVehicleCache()
+        stopVehiclePolling()
         if repositionCamera {
             repositionCameraForCurrentCity()
         }
         suggestedCity = nil
         loadStopsForSelectedCity()
+        startVehiclePolling()
     }
 
     /// Switches the active city to the currently suggested city without moving the camera,
@@ -662,8 +738,9 @@ final class MapViewModel {
         #endif
         debounceTask?.cancel()
         debounceTask = nil
-        thinningTask?.cancel()
-        thinningTask = nil
+        stopVehiclePolling()
+        vehicleThinningTask?.cancel()
+        vehicleThinningTask = nil
         cancelActiveFetch()
     }
 
@@ -864,8 +941,6 @@ final class MapViewModel {
         #endif
         debounceTask?.cancel()
         debounceTask = nil
-        thinningTask?.cancel()
-        thinningTask = nil
         lastBufferedRegion = nil
         cancelActiveFetch()
         inFlightTiles.removeAll()
@@ -920,12 +995,10 @@ final class MapViewModel {
         )
     }
 
-    /// Pure, thread-safe computation of visible and spatially-thinned stops for a region.
+    /// Pure, thread-safe computation of visible stops for a region (no thinning needed below 3,000 m).
     nonisolated static func computeRenderedStops(
         from cachedStops: [Stop],
-        in region: MKCoordinateRegion,
-        selectedStop: Stop?,
-        maxRenderedStops: Int
+        in region: MKCoordinateRegion
     ) -> [Stop] {
         let latitudeSpan = region.span.latitudeDelta
         let longitudeSpan = region.span.longitudeDelta
@@ -938,98 +1011,15 @@ final class MapViewModel {
         let minLon = region.center.longitude - longitudeSpan / 2
         let maxLon = region.center.longitude + longitudeSpan / 2
 
-        let visibleStops = cachedStops.filter { stop in
+        return cachedStops.filter { stop in
             stop.latitude >= minLat && stop.latitude <= maxLat
                 && stop.longitude >= minLon && stop.longitude <= maxLon
-        }
-
-        var renderedStops: [Stop]
-        if visibleStops.count > maxRenderedStops {
-            renderedStops = thinnedStops(visibleStops, region: region)
-        } else {
-            renderedStops = visibleStops.sorted { $0.id < $1.id }
-        }
-
-        // Always keep the currently selected stop visible if it falls within the region,
-        // even if grid thinning would have dropped its cell.
-        if let selectedStop = selectedStop,
-           selectedStop.latitude >= minLat && selectedStop.latitude <= maxLat,
-           selectedStop.longitude >= minLon && selectedStop.longitude <= maxLon,
-           !renderedStops.contains(where: { $0.id == selectedStop.id }) {
-            renderedStops.append(selectedStop)
-            renderedStops.sort { $0.id < $1.id }
-        }
-
-        return renderedStops
+        }.sorted { $0.id < $1.id }
     }
 
-    /// Schedules background stop thinning if the viewport moved outside the buffered region.
+    /// Fast synchronous update of visible stops for the current viewport.
     func updateStops(force: Bool = false) {
         guard areStopsVisible && !cachedStops.isEmpty else {
-            thinningTask?.cancel()
-            thinningTask = nil
-            lastBufferedRegion = nil
-            if !stops.isEmpty {
-                stops = []
-            }
-            return
-        }
-
-        let currentRegion = cameraState.region
-        guard currentRegion.span.latitudeDelta.isFinite,
-              currentRegion.span.longitudeDelta.isFinite,
-              currentRegion.span.latitudeDelta > 0,
-              currentRegion.span.longitudeDelta > 0
-        else { return }
-
-        if !force, let lastBuffered = lastBufferedRegion,
-           Self.isRegion(currentRegion, safelyContainedIn: lastBuffered) {
-            #if DEBUG
-            Logger.mapCache.debug("updateStops skipped: camera region safely within buffered region")
-            #endif
-            return
-        }
-
-        let targetBuffer = Self.bufferedRegion(for: currentRegion)
-        let allStops = cachedStops
-        let selected = selectedStopID.flatMap { cachedStop(for: $0) }
-        let generation = UUID()
-        thinningGeneration = generation
-
-        // When forced (such as test setups or city reloads), small sets can be evaluated immediately
-        if force && allStops.count <= Self.maxRenderedStops {
-            thinningTask?.cancel()
-            thinningTask = nil
-            let rendered = Self.computeRenderedStops(
-                from: allStops,
-                in: targetBuffer,
-                selectedStop: selected,
-                maxRenderedStops: Self.maxRenderedStops
-            )
-            applyRenderedStops(rendered, for: targetBuffer, generation: generation)
-            return
-        }
-
-        thinningTask?.cancel()
-        thinningTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let rendered = Self.computeRenderedStops(
-                from: allStops,
-                in: targetBuffer,
-                selectedStop: selected,
-                maxRenderedStops: Self.maxRenderedStops
-            )
-
-            guard !Task.isCancelled else { return }
-
-            await self?.finishThinning(rendered, for: targetBuffer, generation: generation)
-        }
-    }
-
-    /// Asynchronous thinning used during fetch settlement to ensure stops are rendered before loading finishes.
-    func updateStopsAsync(force: Bool = false) async {
-        guard areStopsVisible && !cachedStops.isEmpty else {
-            thinningTask?.cancel()
-            thinningTask = nil
             lastBufferedRegion = nil
             if !stops.isEmpty {
                 stops = []
@@ -1050,110 +1040,410 @@ final class MapViewModel {
         }
 
         let targetBuffer = Self.bufferedRegion(for: currentRegion)
-        let allStops = cachedStops
-        let selected = selectedStopID.flatMap { cachedStop(for: $0) }
-        let generation = UUID()
-        thinningGeneration = generation
-
-        thinningTask?.cancel()
-        let rendered = await Task.detached(priority: .userInitiated) {
-            Self.computeRenderedStops(
-                from: allStops,
-                in: targetBuffer,
-                selectedStop: selected,
-                maxRenderedStops: Self.maxRenderedStops
-            )
-        }.value
-
-        guard !Task.isCancelled, generation == thinningGeneration else { return }
-        finishThinning(rendered, for: targetBuffer, generation: generation)
-    }
-
-    private func finishThinning(_ rendered: [Stop], for bufferedRegion: MKCoordinateRegion, generation: UUID) {
-        guard generation == thinningGeneration else { return }
-        thinningTask = nil
-        applyRenderedStops(rendered, for: bufferedRegion, generation: generation)
-    }
-
-    private func applyRenderedStops(_ rendered: [Stop], for bufferedRegion: MKCoordinateRegion, generation: UUID) {
-        guard generation == thinningGeneration else { return }
-        lastBufferedRegion = bufferedRegion
+        lastBufferedRegion = targetBuffer
+        let rendered = Self.computeRenderedStops(from: cachedStops, in: targetBuffer)
         if rendered != stops {
-            #if DEBUG
-            Logger.mapCache.debug("Rendered stops updated: \(rendered.count, privacy: .public) rendered on map (ceiling: \(Self.maxRenderedStops, privacy: .public))")
-            #endif
             stops = rendered
         }
     }
 
-    /// Whether a stop lies inside the visible viewport.
-    nonisolated private static func contains(_ stop: Stop, in region: MKCoordinateRegion) -> Bool {
+    func updateStopsAsync(force: Bool = false) async {
+        updateStops(force: force)
+    }
+
+    // MARK: - Live Vehicles
+
+    func startVehiclePolling() {
+        guard isVehiclesVisible else { return }
+        if vehiclePollingTask != nil { return }
+        vehiclePollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.fetchVehiclesForCurrentViewport()
+                do {
+                    let interval = self?.vehicleTTL ?? 15.0
+                    try await Task.sleep(for: .seconds(interval))
+                } catch {
+                    break
+                }
+            }
+        }
+    }
+
+    func stopVehiclePolling() {
+        vehiclePollingTask?.cancel()
+        vehiclePollingTask = nil
+    }
+
+    func fetchVehiclesForCurrentViewport() async {
+        guard isVehiclesVisible else { return }
+        let city = selectedCity
+        let region = cameraState.region
+        guard region.span.latitudeDelta.isFinite,
+              region.span.longitudeDelta.isFinite,
+              region.span.latitudeDelta > 0,
+              region.span.longitudeDelta > 0
+        else { return }
+
+        let buffer = Self.bufferedRegion(for: region)
+        let bbox = BoundingBox(
+            minLon: max(buffer.center.longitude - buffer.span.longitudeDelta / 2, -180),
+            minLat: max(buffer.center.latitude - buffer.span.latitudeDelta / 2, -90),
+            maxLon: min(buffer.center.longitude + buffer.span.longitudeDelta / 2, 180),
+            maxLat: min(buffer.center.latitude + buffer.span.latitudeDelta / 2, 90)
+        )
+
+        do {
+            let fetched = try await apiClient.fetchVehicles(city: city.id, bbox: bbox)
+            guard !Task.isCancelled, selectedCity.id == city.id else { return }
+
+            if !isRetryableError {
+                errorMessage = nil
+                isRetryableError = true
+            }
+
+            lastVehicleFetchTime = Date()
+            await updateCachedVehiclesAsync(fetched, for: buffer)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled, selectedCity.id == city.id else { return }
+            Logger.api.error("Failed to fetch vehicles for \(city.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            // Instruction: don't include retry action for vehicle network failures
+            isRetryableError = false
+            errorMessage = Self.userFacingMessage(for: error)
+        }
+    }
+
+    private func updateCachedVehiclesAsync(_ newVehicles: [VehiclePosition], for buffer: MKCoordinateRegion) async {
+        cachedVehicles = newVehicles
+        var indexMap: [String: Int] = [:]
+        for (i, v) in newVehicles.enumerated() {
+            indexMap[v.id] = i
+        }
+        vehicleIndexByID = indexMap
+
+        // If tracked vehicle moved, smoothly update camera
+        if isTrackingVehicle, let selectedID = selectedVehicleID, let tracked = cachedVehicle(for: selectedID) {
+            withAnimation(.easeInOut(duration: 0.5)) {
+                _cameraPosition = .camera(MapCamera(
+                    centerCoordinate: tracked.coordinate,
+                    distance: currentDistance,
+                    heading: currentHeading,
+                    pitch: currentPitch
+                ))
+            }
+        }
+
+        await updateRenderedVehiclesAsync(for: buffer, force: true)
+    }
+
+    private func updateCachedVehicles(_ newVehicles: [VehiclePosition], for buffer: MKCoordinateRegion) {
+        cachedVehicles = newVehicles
+        var indexMap: [String: Int] = [:]
+        for (i, v) in newVehicles.enumerated() {
+            indexMap[v.id] = i
+        }
+        vehicleIndexByID = indexMap
+
+        // If tracked vehicle moved, smoothly update camera
+        if isTrackingVehicle, let selectedID = selectedVehicleID, let tracked = cachedVehicle(for: selectedID) {
+            withAnimation(.easeInOut(duration: 0.5)) {
+                _cameraPosition = .camera(MapCamera(
+                    centerCoordinate: tracked.coordinate,
+                    distance: currentDistance,
+                    heading: currentHeading,
+                    pitch: currentPitch
+                ))
+            }
+        }
+
+        updateRenderedVehicles(for: buffer, force: true)
+    }
+
+    private func clearVehicleCache() {
+        vehicleThinningTask?.cancel()
+        vehicleThinningTask = nil
+        cachedVehicles.removeAll()
+        vehicleIndexByID.removeAll()
+        vehicles.removeAll()
+        lastVehicleBufferedRegion = nil
+        lastVehicleFetchTime = nil
+    }
+
+    func selectVehicleAndCenter(_ id: String) {
+        selectedVehicleID = id
+        selectedStopID = nil
+        isTrackingVehicle = true
+        if let vehicle = cachedVehicle(for: id) {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                _cameraPosition = .camera(MapCamera(
+                    centerCoordinate: vehicle.coordinate,
+                    distance: min(currentDistance, vehicleCompactDistanceThreshold),
+                    heading: currentHeading,
+                    pitch: currentPitch
+                ))
+            }
+        }
+    }
+
+    func cachedVehicle(for id: String) -> VehiclePosition? {
+        vehicleIndexByID[id].map { cachedVehicles[$0] }
+    }
+
+    var selectedVehicle: VehiclePosition? {
+        guard let id = selectedVehicleID else { return nil }
+        return cachedVehicle(for: id)
+    }
+
+    private func releaseVehicleTrackingIfRoaming(to center: CLLocationCoordinate2D) {
+        guard isTrackingVehicle, let selectedID = selectedVehicleID, let vehicle = cachedVehicle(for: selectedID) else { return }
+        let cameraLoc = CLLocation(latitude: center.latitude, longitude: center.longitude)
+        let vehicleLoc = CLLocation(latitude: vehicle.coordinate.latitude, longitude: vehicle.coordinate.longitude)
+        if cameraLoc.distance(from: vehicleLoc) > 200 {
+            isTrackingVehicle = false
+        }
+    }
+
+    func updateRenderedVehiclesAsync(for buffer: MKCoordinateRegion? = nil, force: Bool = false) async {
+        guard isVehiclesVisible && !cachedVehicles.isEmpty else {
+            vehicleThinningTask?.cancel()
+            vehicleThinningTask = nil
+            lastVehicleBufferedRegion = nil
+            if !vehicles.isEmpty {
+                vehicles = []
+            }
+            return
+        }
+
+        let currentRegion = cameraState.region
+        guard currentRegion.span.latitudeDelta.isFinite,
+              currentRegion.span.longitudeDelta.isFinite,
+              currentRegion.span.latitudeDelta > 0,
+              currentRegion.span.longitudeDelta > 0
+        else { return }
+
+        let targetBuffer = buffer ?? Self.bufferedRegion(for: currentRegion)
+
+        if !force, buffer == nil, let last = lastVehicleBufferedRegion,
+           Self.isRegion(currentRegion, safelyContainedIn: last) {
+            return
+        }
+
+        let allVehicles = cachedVehicles
+        let selectedID = selectedVehicleID
+        let maxCount = Self.maxRenderedVehicles
+        let generation = UUID()
+        vehicleThinningGeneration = generation
+
+        if allVehicles.count <= maxCount {
+            vehicleThinningTask?.cancel()
+            vehicleThinningTask = nil
+            let rendered = Self.computeRenderedVehicles(
+                from: allVehicles,
+                in: targetBuffer,
+                selectedVehicleID: selectedID,
+                maxRenderedVehicles: maxCount
+            )
+            applyRenderedVehicles(rendered, for: targetBuffer, generation: generation)
+            return
+        }
+
+        vehicleThinningTask?.cancel()
+        let rendered = await Task.detached(priority: .userInitiated) {
+            Self.computeRenderedVehicles(
+                from: allVehicles,
+                in: targetBuffer,
+                selectedVehicleID: selectedID,
+                maxRenderedVehicles: maxCount
+            )
+        }.value
+
+        guard !Task.isCancelled, generation == vehicleThinningGeneration else { return }
+        finishVehicleThinning(rendered, for: targetBuffer, generation: generation)
+    }
+
+    func updateRenderedVehicles(for buffer: MKCoordinateRegion? = nil, force: Bool = false) {
+        guard isVehiclesVisible && !cachedVehicles.isEmpty else {
+            vehicleThinningTask?.cancel()
+            vehicleThinningTask = nil
+            lastVehicleBufferedRegion = nil
+            if !vehicles.isEmpty {
+                vehicles = []
+            }
+            return
+        }
+
+        let currentRegion = cameraState.region
+        guard currentRegion.span.latitudeDelta.isFinite,
+              currentRegion.span.longitudeDelta.isFinite,
+              currentRegion.span.latitudeDelta > 0,
+              currentRegion.span.longitudeDelta > 0
+        else { return }
+
+        let targetBuffer = buffer ?? Self.bufferedRegion(for: currentRegion)
+
+        if !force, buffer == nil, let last = lastVehicleBufferedRegion,
+           Self.isRegion(currentRegion, safelyContainedIn: last) {
+            return
+        }
+
+        let allVehicles = cachedVehicles
+        let selectedID = selectedVehicleID
+        let maxCount = Self.maxRenderedVehicles
+        let generation = UUID()
+        vehicleThinningGeneration = generation
+
+        if allVehicles.count <= maxCount {
+            vehicleThinningTask?.cancel()
+            vehicleThinningTask = nil
+            let rendered = Self.computeRenderedVehicles(
+                from: allVehicles,
+                in: targetBuffer,
+                selectedVehicleID: selectedID,
+                maxRenderedVehicles: maxCount
+            )
+            applyRenderedVehicles(rendered, for: targetBuffer, generation: generation)
+            return
+        }
+
+        vehicleThinningTask?.cancel()
+        vehicleThinningTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let rendered = Self.computeRenderedVehicles(
+                from: allVehicles,
+                in: targetBuffer,
+                selectedVehicleID: selectedID,
+                maxRenderedVehicles: maxCount
+            )
+            guard !Task.isCancelled else { return }
+            await self?.finishVehicleThinning(rendered, for: targetBuffer, generation: generation)
+        }
+    }
+
+    private func finishVehicleThinning(_ rendered: [VehiclePosition], for bufferedRegion: MKCoordinateRegion, generation: UUID) {
+        guard generation == vehicleThinningGeneration else { return }
+        vehicleThinningTask = nil
+        applyRenderedVehicles(rendered, for: bufferedRegion, generation: generation)
+    }
+
+    private func applyRenderedVehicles(_ rendered: [VehiclePosition], for bufferedRegion: MKCoordinateRegion, generation: UUID) {
+        guard generation == vehicleThinningGeneration else { return }
+        lastVehicleBufferedRegion = bufferedRegion
+        if rendered != vehicles {
+            vehicles = rendered
+        }
+    }
+
+    nonisolated static func computeRenderedVehicles(
+        from cachedVehicles: [VehiclePosition],
+        in region: MKCoordinateRegion,
+        selectedVehicleID: String?,
+        maxRenderedVehicles: Int
+    ) -> [VehiclePosition] {
         let latitudeSpan = region.span.latitudeDelta
         let longitudeSpan = region.span.longitudeDelta
         guard latitudeSpan.isFinite, longitudeSpan.isFinite,
               latitudeSpan > 0, longitudeSpan > 0
-        else { return false }
+        else { return [] }
+
         let minLat = region.center.latitude - latitudeSpan / 2
         let maxLat = region.center.latitude + latitudeSpan / 2
         let minLon = region.center.longitude - longitudeSpan / 2
         let maxLon = region.center.longitude + longitudeSpan / 2
-        return stop.latitude >= minLat && stop.latitude <= maxLat
-            && stop.longitude >= minLon && stop.longitude <= maxLon
+
+        let visibleVehicles = cachedVehicles.filter { v in
+            v.latitude >= minLat && v.latitude <= maxLat
+                && v.longitude >= minLon && v.longitude <= maxLon
+        }
+
+        var rendered: [VehiclePosition]
+        if visibleVehicles.count > maxRenderedVehicles {
+            rendered = thinnedVehicles(visibleVehicles, region: region, selectedVehicleID: selectedVehicleID, maxRenderedVehicles: maxRenderedVehicles)
+        } else {
+            rendered = visibleVehicles.sorted { $0.id < $1.id }
+        }
+
+        if let selectedVehicleID = selectedVehicleID,
+           let selected = cachedVehicles.first(where: { $0.id == selectedVehicleID }),
+           selected.latitude >= minLat && selected.latitude <= maxLat,
+           selected.longitude >= minLon && selected.longitude <= maxLon,
+           !rendered.contains(where: { $0.id == selectedVehicleID }) {
+            rendered.append(selected)
+            rendered.sort { $0.id < $1.id }
+        }
+
+        return rendered
     }
 
     /// World-aligned spatial grid steps derived from the region span.
-    /// Steps are quantized using ceil(log2(...)) to powers of two, ensuring that
-    /// grid cell boundaries remain fixed in world coordinates during panning,
-    /// and the total number of visible cells is strictly bounded by maxRenderedStops.
     nonisolated private static func thinningSteps(for region: MKCoordinateRegion) -> (latStep: Double, lonStep: Double) {
         let latSpan = max(region.span.latitudeDelta, 1e-6)
         let lonSpan = max(region.span.longitudeDelta, 1e-6)
-        // With at most 14 cells per axis, a viewport can intersect at most 15x15 = 225 cells <= 250.
-        let targetLatStep = latSpan / 14.0
-        let targetLonStep = lonSpan / 14.0
+        // With at most 12 cells per axis, a viewport can intersect at most 13x13 = 169 cells <= maxRenderedVehicles.
+        let targetLatStep = latSpan / 12.0
+        let targetLonStep = lonSpan / 12.0
         let latStep = pow(2.0, ceil(log2(targetLatStep)))
         let lonStep = pow(2.0, ceil(log2(targetLonStep)))
         return (max(latStep, 1e-6), max(lonStep, 1e-6))
     }
 
-    /// World-aligned cell index for a stop within the region.
+    /// World-aligned cell index for a coordinate within the region.
     nonisolated private static func cellIndex(
-        for stop: Stop,
+        for coord: CLLocationCoordinate2D,
         in region: MKCoordinateRegion,
         latStep: Double,
         lonStep: Double
     ) -> Int? {
-        guard contains(stop, in: region) else { return nil }
-        let col = Int(floor(stop.longitude / lonStep))
-        let row = Int(floor(stop.latitude / latStep))
+        let latitudeSpan = region.span.latitudeDelta
+        let longitudeSpan = region.span.longitudeDelta
+        guard latitudeSpan.isFinite, longitudeSpan.isFinite,
+              latitudeSpan > 0, longitudeSpan > 0
+        else { return nil }
+        let minLat = region.center.latitude - latitudeSpan / 2
+        let maxLat = region.center.latitude + latitudeSpan / 2
+        let minLon = region.center.longitude - longitudeSpan / 2
+        let maxLon = region.center.longitude + longitudeSpan / 2
+
+        guard coord.latitude >= minLat && coord.latitude <= maxLat,
+              coord.longitude >= minLon && coord.longitude <= maxLon
+        else { return nil }
+
+        let col = Int(floor(coord.longitude / lonStep))
+        let row = Int(floor(coord.latitude / latStep))
         return (row &* 73856093) ^ (col &* 19349663)
     }
 
     /// Grid-based thinning: keep one deterministic representative per cell of
     /// a world-aligned spatial grid laid over the visible region.
-    nonisolated static func thinnedStops(_ rawStops: [Stop], region: MKCoordinateRegion?) -> [Stop] {
+    nonisolated static func thinnedVehicles(
+        _ rawVehicles: [VehiclePosition],
+        region: MKCoordinateRegion?,
+        selectedVehicleID: String?,
+        maxRenderedVehicles: Int
+    ) -> [VehiclePosition] {
         guard let region = region else { return [] }
         let (latStep, lonStep) = thinningSteps(for: region)
-        var buckets: [Int: Stop] = [:]
-        for stop in rawStops {
+        var buckets: [Int: VehiclePosition] = [:]
+        for vehicle in rawVehicles {
             guard let cell = cellIndex(
-                for: stop,
+                for: vehicle.coordinate,
                 in: region,
                 latStep: latStep,
                 lonStep: lonStep
             ) else { continue }
+
             if let current = buckets[cell] {
-                // Deterministic pick so repainting does not flicker markers.
-                if stop.id < current.id {
-                    buckets[cell] = stop
+                if vehicle.id == selectedVehicleID {
+                    buckets[cell] = vehicle
+                } else if current.id != selectedVehicleID && vehicle.id < current.id {
+                    buckets[cell] = vehicle
                 }
             } else {
-                buckets[cell] = stop
+                buckets[cell] = vehicle
             }
         }
         let sorted = buckets.values.sorted { $0.id < $1.id }
-        if sorted.count > maxRenderedStops {
-            return Array(sorted.prefix(maxRenderedStops))
+        if sorted.count > maxRenderedVehicles {
+            return Array(sorted.prefix(maxRenderedVehicles))
         }
         return sorted
     }
