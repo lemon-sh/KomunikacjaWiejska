@@ -183,5 +183,12 @@ struct PresentationTests {
         #expect(VehicleMarkerView.effectiveRotation(bearing: 180, heading: 90) == 90)
         #expect(VehicleMarkerView.effectiveRotation(bearing: 90, heading: 90) == 0)
     }
+
+    @Test("TransitMapView initializes without crashing")
+    func testTransitMapViewInit() {
+        let view = TransitMapView()
+        let controller = UIHostingController(rootView: view)
+        #expect(controller.view != nil)
+    }
 }
 

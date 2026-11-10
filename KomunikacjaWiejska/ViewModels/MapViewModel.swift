@@ -182,6 +182,7 @@ final class MapViewModel {
 
     private(set) var isPitched3D: Bool = false
     private(set) var areStopsVisible: Bool = true
+    private(set) var areStopTitlesVisible: Bool = false
     var currentHeading: Double = 0 {
         didSet {
             _cameraState.heading = currentHeading
@@ -203,11 +204,15 @@ final class MapViewModel {
         get { _cameraState.distance }
         set {
             _cameraState.distance = newValue
-            let newVisible = newValue <= stopVisibilityDistanceThreshold
+            let newVisible = newValue <= MapConstants.stopVisibilityDistanceThreshold
             if areStopsVisible != newVisible {
                 areStopsVisible = newVisible
             }
-            let newVehiclesVisible = newValue <= vehicleVisibilityDistanceThreshold
+            let newStopTitlesVisible = newValue <= MapConstants.stopTitleVisibilityDistanceThreshold
+            if areStopTitlesVisible != newStopTitlesVisible {
+                areStopTitlesVisible = newStopTitlesVisible
+            }
+            let newVehiclesVisible = newValue <= MapConstants.vehicleVisibilityDistanceThreshold
             if isVehiclesVisible != newVehiclesVisible {
                 isVehiclesVisible = newVehiclesVisible
                 if !newVehiclesVisible {
@@ -217,7 +222,7 @@ final class MapViewModel {
                     startVehiclePolling()
                 }
             }
-            let newVehicleCompact = newValue > vehicleCompactDistanceThreshold
+            let newVehicleCompact = newValue > MapConstants.vehicleCompactDistanceThreshold
             if isVehicleCompactDisplayMode != newVehicleCompact {
                 isVehicleCompactDisplayMode = newVehicleCompact
             }
@@ -245,11 +250,15 @@ final class MapViewModel {
         if isPitched3D != newPitched {
             isPitched3D = newPitched
         }
-        let newVisible = state.distance <= stopVisibilityDistanceThreshold
+        let newVisible = state.distance <= MapConstants.stopVisibilityDistanceThreshold
         if areStopsVisible != newVisible {
             areStopsVisible = newVisible
         }
-        let newVehiclesVisible = state.distance <= vehicleVisibilityDistanceThreshold
+        let newStopTitlesVisible = state.distance <= MapConstants.stopTitleVisibilityDistanceThreshold
+        if areStopTitlesVisible != newStopTitlesVisible {
+            areStopTitlesVisible = newStopTitlesVisible
+        }
+        let newVehiclesVisible = state.distance <= MapConstants.vehicleVisibilityDistanceThreshold
         if isVehiclesVisible != newVehiclesVisible {
             isVehiclesVisible = newVehiclesVisible
             if !newVehiclesVisible {
@@ -259,7 +268,7 @@ final class MapViewModel {
                 startVehiclePolling()
             }
         }
-        let newVehicleCompact = state.distance > vehicleCompactDistanceThreshold
+        let newVehicleCompact = state.distance > MapConstants.vehicleCompactDistanceThreshold
         if isVehicleCompactDisplayMode != newVehicleCompact {
             isVehicleCompactDisplayMode = newVehicleCompact
         }
@@ -328,26 +337,29 @@ final class MapViewModel {
     }
 
     /// Camera distance (in metres) above which stops are no longer displayed at all.
-    let stopVisibilityDistanceThreshold: Double = 3_000
+    var stopVisibilityDistanceThreshold: Double { MapConstants.stopVisibilityDistanceThreshold }
+
+    /// Camera distance (in metres) above which stop name labels are hidden.
+    var stopTitleVisibilityDistanceThreshold: Double { MapConstants.stopTitleVisibilityDistanceThreshold }
 
     /// Camera distance (in metres) above which vehicles are hidden and polling stops.
-    let vehicleVisibilityDistanceThreshold: Double = 10_000
+    var vehicleVisibilityDistanceThreshold: Double = MapConstants.vehicleVisibilityDistanceThreshold
 
     /// Camera distance (in metres) above which vehicles switch to compact dot display mode.
-    let vehicleCompactDistanceThreshold: Double = 2_000
+    var vehicleCompactDistanceThreshold: Double { MapConstants.vehicleCompactDistanceThreshold }
 
     /// Polling and TTL interval in seconds for live vehicle positions.
-    let vehicleTTL: TimeInterval = 15.0
+    var vehicleTTL: TimeInterval { MapConstants.vehicleTTL }
 
     /// Hard ceiling on vehicle markers rendered at once; extra vehicles are thinned to
     /// one representative per grid cell (see `thinnedVehicles`).
-    nonisolated static let maxRenderedVehicles = 150
+    nonisolated static var maxRenderedVehicles: Int { MapConstants.maxRenderedVehicles }
 
     /// Margin expansion multiplier for buffering the visible viewport (e.g. 50% extra on each dimension).
-    nonisolated static let viewportBufferFactor: Double = 1.50
+    nonisolated static var viewportBufferFactor: Double { MapConstants.viewportBufferFactor }
 
     /// Maximum zoom ratio change allowed before re-evaluating viewport bounds.
-    nonisolated static let zoomChangeRatioThreshold: Double = 0.20
+    nonisolated static var zoomChangeRatioThreshold: Double { MapConstants.zoomChangeRatioThreshold }
 
     private let apiClient: any TransitDataProviding
     private let persistence: any CameraPersistenceStore
@@ -442,9 +454,10 @@ final class MapViewModel {
                 heading: 0,
                 pitch: 0
             ))
-            self.areStopsVisible = restored.distance <= stopVisibilityDistanceThreshold
-            self.isVehiclesVisible = restored.distance <= vehicleVisibilityDistanceThreshold
-            self.isVehicleCompactDisplayMode = restored.distance > vehicleCompactDistanceThreshold
+            self.areStopsVisible = restored.distance <= MapConstants.stopVisibilityDistanceThreshold
+            self.areStopTitlesVisible = restored.distance <= MapConstants.stopTitleVisibilityDistanceThreshold
+            self.isVehiclesVisible = restored.distance <= MapConstants.vehicleVisibilityDistanceThreshold
+            self.isVehicleCompactDisplayMode = restored.distance > MapConstants.vehicleCompactDistanceThreshold
         } else {
             let initialRegion = MKCoordinateRegion(
                 center: chosenCity.coordinate,
@@ -460,9 +473,10 @@ final class MapViewModel {
                 center: chosenCity.coordinate
             )
             self._cameraPosition = .region(initialRegion)
-            self.areStopsVisible = initialDistance <= stopVisibilityDistanceThreshold
-            self.isVehiclesVisible = initialDistance <= vehicleVisibilityDistanceThreshold
-            self.isVehicleCompactDisplayMode = initialDistance > vehicleCompactDistanceThreshold
+            self.areStopsVisible = initialDistance <= MapConstants.stopVisibilityDistanceThreshold
+            self.areStopTitlesVisible = initialDistance <= MapConstants.stopTitleVisibilityDistanceThreshold
+            self.isVehiclesVisible = initialDistance <= MapConstants.vehicleVisibilityDistanceThreshold
+            self.isVehicleCompactDisplayMode = initialDistance > MapConstants.vehicleCompactDistanceThreshold
         }
         self.isPitched3D = false
         self.currentHeading = 0

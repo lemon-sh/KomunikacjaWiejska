@@ -59,13 +59,13 @@ struct TransitMapView: View {
                 if viewModel.areStopsVisible {
                     ForEach(viewModel.stops) { stop in
                         Annotation(
-                            stop.displayName,
+                            viewModel.areStopTitlesVisible ? stop.displayName : "",
                             coordinate: stop.coordinate,
                             anchor: .center
                         ) {
                             StopAnnotationContent(stop: stop, viewModel: viewModel)
                         }
-                        .annotationTitles(.visible)
+                        .annotationTitles(viewModel.areStopTitlesVisible ? .visible : .hidden)
                         .tag(MapViewModel.FeatureSelection.stop(stop.id))
                     }
                 }
@@ -73,13 +73,13 @@ struct TransitMapView: View {
                 if viewModel.isVehiclesVisible {
                     ForEach(viewModel.vehicles) { vehicle in
                         Annotation(
-                            viewModel.isVehicleCompactDisplayMode ? "" : vehicle.routeName,
+                            "",
                             coordinate: vehicle.coordinate,
                             anchor: .center
                         ) {
                             VehicleAnnotationContent(vehicle: vehicle, viewModel: viewModel)
                         }
-                        .annotationTitles(viewModel.isVehicleCompactDisplayMode ? .hidden : .visible)
+                        .annotationTitles(.hidden)
                         .tag(MapViewModel.FeatureSelection.vehicle(vehicle.id))
                     }
                 }

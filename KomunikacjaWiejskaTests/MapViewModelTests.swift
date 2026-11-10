@@ -285,6 +285,25 @@ struct MapViewModelTests {
         #expect(viewModel.isVehiclesVisible == false)
     }
 
+    @Test("Stop title distance threshold controls stop label visibility at street level")
+    func testStopTitleDistanceThreshold() {
+        let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
+
+        viewModel.currentDistance = 1_000
+        #expect(viewModel.areStopsVisible == true)
+        #expect(viewModel.areStopTitlesVisible == false)
+
+        viewModel.currentDistance = MapConstants.stopTitleVisibilityDistanceThreshold
+        #expect(viewModel.areStopsVisible == true)
+        #expect(viewModel.areStopTitlesVisible == true)
+
+        viewModel.currentDistance = 250
+        #expect(viewModel.areStopTitlesVisible == true)
+
+        viewModel.currentDistance = MapConstants.stopTitleVisibilityDistanceThreshold + 100
+        #expect(viewModel.areStopTitlesVisible == false)
+    }
+
     @Test("Vehicle selection is mutually exclusive with stop selection and enables tracking")
     func testVehicleSelectionAndTracking() async throws {
         let vehicle = VehicleFixtures.sample(id: "500", longitude: 21.02, latitude: 52.24)
