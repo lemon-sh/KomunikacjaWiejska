@@ -5,34 +5,25 @@
 > **Notice:** This codebase is almost entirely vibecoded. While I try my best to keep the code quality as high as I can, I've figured this fact should be clearly stated for the ones who care. Additionally, any prose beyond this point may also be AI-generated. Have a nice day >w<
 
 A native iOS client for [zbiorkom.live](https://zbiorkom.live), built with
-SwiftUI, MapKit, CoreLocation, Observation, and Swift Concurrency. There are no
-third-party dependencies.
+SwiftUI, MapKit, CoreLocation, Observation, and Swift Concurrency.
 
 ## Requirements
 
-- **Xcode 27.2 or newer.** This project uses Xcode's JSON project format
-  (`KomunikacjaWiejska.xcodeproj/project.xcproj`, `last-upgrade = 27.2`), which
+- **Xcode 27.2 or newer.** This project uses Xcode's JSON project format, which
   older Xcode versions cannot open.
 - **iOS 26.0** deployment target (the minimum for the native Liquid Glass APIs).
 - A simulator or device running iOS 26 or newer.
 
-Run `scripts/check-toolchain.sh` or `./scripts/verify.sh` before building; it fails loudly when
-Xcode is older than 27.2.
-
 ## Build and test
 
 ```bash
-# Run the complete verification gate (toolchain check, build, and tests)
-./scripts/verify.sh
-
-# Or run individual steps:
 # Build
 xcodebuild -project KomunikacjaWiejska.xcodeproj \
   -scheme KomunikacjaWiejska \
   -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO build
 
-# Test (the suite is hermetic; it never opens a socket)
+# Test
 xcodebuild test -project KomunikacjaWiejska.xcodeproj \
   -scheme KomunikacjaWiejska \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
@@ -41,7 +32,7 @@ xcodebuild test -project KomunikacjaWiejska.xcodeproj \
 
 ## Documentation
 
-- [`AGENTS.md`](AGENTS.md) — engineering guidelines and documentation index.
+- [`AGENTS.md`](AGENTS.md) — engineering guidelines and documentation index for AI agents.
 - [`docs/architecture.md`](docs/architecture.md) — state flow, map pipeline,
   performance strategy.
 - [`docs/api.md`](docs/api.md) — API and positional tuple reference.
