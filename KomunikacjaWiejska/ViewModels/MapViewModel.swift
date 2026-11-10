@@ -151,6 +151,11 @@ final class MapViewModel {
         }
     }
 
+    /// Whether a background thinning task is currently running.
+    var isThinning: Bool {
+        thinningTask != nil
+    }
+
     var currentPitch: Double {
         get { _cameraState.pitch }
         set {
@@ -261,12 +266,12 @@ final class MapViewModel {
     /// never set this; write to `selectedStopID` instead.
     var selectedStop: Stop? {
         guard let selectedStopID = selectedStopID else { return nil }
-        return cachedStopsByID[selectedStopID]
+        return cachedStop(for: selectedStopID)
     }
 
     /// Looks up a stop in the session cache by its identifier.
     func cachedStop(for id: String) -> Stop? {
-        cachedStopsByID[id]
+        stopIndexByID[id].map { cachedStops[$0] }
     }
 
     /// Camera distance (in metres) above which stops are displayed as smaller
@@ -280,7 +285,13 @@ final class MapViewModel {
 
     /// Hard ceiling on markers rendered at once; extra stops are thinned to
     /// one representative per grid cell (see `thinnedStops`).
-    static let maxRenderedStops = 250
+    nonisolated static let maxRenderedStops = 250
+
+    /// Margin expansion multiplier for buffering the visible viewport (e.g. 50% extra on each dimension).
+    nonisolated static let viewportBufferFactor: Double = 1.50
+
+    /// Maximum zoom ratio change allowed before re-thinning is forced.
+    nonisolated static let zoomChangeRatioThreshold: Double = 0.20
 
     private let apiClient: any StopsProviding
     private let persistence: any CameraPersistenceStore
@@ -290,11 +301,18 @@ final class MapViewModel {
     // from any context is safe; the reference itself is never read concurrently.
     @ObservationIgnored private nonisolated(unsafe) var activeFetchTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var debounceTask: Task<Void, Never>?
+    @ObservationIgnored private nonisolated(unsafe) var thinningTask: Task<Void, Never>?
+    @ObservationIgnored private var thinningGeneration = UUID()
+    /// Region for which `stops` was last thinned, expanded by `viewportBufferFactor`.
+    @ObservationIgnored private var lastBufferedRegion: MKCoordinateRegion?
     @ObservationIgnored private var inFlightTiles: Set<MapTile> = []
     /// Session-only stop cache for the selected city. Never persisted, and
     /// cleared on every city switch. Stop data is treated as stable for the
     /// lifetime of the app process, so entries never expire.
-    @ObservationIgnored private var cachedStopsByID: [String: Stop] = [:]
+    @ObservationIgnored private var stopIndexByID: [String: Int] = [:]
+    /// Contiguous array of cached stops, maintained incrementally to avoid
+    /// expensive main-thread dictionary iterations and allocations.
+    @ObservationIgnored private var cachedStops: [Stop] = []
     /// Tiles whose bbox has been fetched successfully in this session.
     @ObservationIgnored private var fetchedTiles: Set<MapTile> = []
     @ObservationIgnored private var errorsByCity: [String: String] = [:]
@@ -397,6 +415,7 @@ final class MapViewModel {
     deinit {
         activeFetchTask?.cancel()
         debounceTask?.cancel()
+        thinningTask?.cancel()
     }
 
     func repositionCameraForCurrentCity() {
@@ -643,6 +662,8 @@ final class MapViewModel {
         #endif
         debounceTask?.cancel()
         debounceTask = nil
+        thinningTask?.cancel()
+        thinningTask = nil
         cancelActiveFetch()
     }
 
@@ -672,7 +693,7 @@ final class MapViewModel {
             errorsByCity[city.id] = nil
             loadingPhase = nil
             updateLoadingAndErrorStates()
-            updateStops()
+            updateStops(force: true)
         case .fetch(let bbox, let tiles):
             startFetch(city: city, bbox: bbox, tiles: tiles)
         case .invalid:
@@ -714,7 +735,7 @@ final class MapViewModel {
         }
         let missingTiles = visibleTiles.filter { !isTileCovered($0) }
         guard !missingTiles.isEmpty else {
-            Logger.mapCache.debug("Cache HIT: all \(visibleTiles.count, privacy: .public) visible tiles at zoom \(MapTileGrid.zoom, privacy: .public) covered. Cached stops: \(self.cachedStopsByID.count, privacy: .public)")
+            Logger.mapCache.debug("Cache HIT: all \(visibleTiles.count, privacy: .public) visible tiles at zoom \(MapTileGrid.zoom, privacy: .public) covered. Cached stops: \(self.cachedStops.count, privacy: .public)")
             return .cached
         }
         guard let bbox = MapTileGrid.boundingBox(covering: missingTiles) else {
@@ -782,22 +803,25 @@ final class MapViewModel {
                     #endif
                     return
                 }
-                var updatedCache = self.cachedStopsByID
                 for stop in fetchedStops {
-                    updatedCache[stop.id] = stop
+                    if let index = self.stopIndexByID[stop.id] {
+                        self.cachedStops[index] = stop
+                    } else {
+                        self.stopIndexByID[stop.id] = self.cachedStops.count
+                        self.cachedStops.append(stop)
+                    }
                 }
-                self.cachedStopsByID = updatedCache
                 // Empty results still mark the tiles as fetched: an empty
                 // viewport is authoritative for this session and must not
                 // trigger a request on every settle.
                 self.fetchedTiles.formUnion(tiles)
                 self.inFlightTiles.removeAll()
+                self.errorsByCity.removeValue(forKey: city.id)
+                await self.updateStopsAsync(force: true)
                 self.fetchState = .loaded(requestKey)
                 self.loadingPhase = nil
-                self.errorsByCity.removeValue(forKey: city.id)
                 self.updateLoadingAndErrorStates()
-                Logger.mapCache.debug("Fetch completed for \(city.id, privacy: .public): +\(fetchedStops.count, privacy: .public) stops (total cached: \(self.cachedStopsByID.count, privacy: .public)), +\(tiles.count, privacy: .public) tiles (total tiles: \(self.fetchedTiles.count, privacy: .public))")
-                self.updateStops()
+                Logger.mapCache.debug("Fetch completed for \(city.id, privacy: .public): +\(fetchedStops.count, privacy: .public) stops (total cached: \(self.cachedStops.count, privacy: .public)), +\(tiles.count, privacy: .public) tiles (total tiles: \(self.fetchedTiles.count, privacy: .public))")
             } catch {
                 guard !Task.isCancelled, !(error is CancellationError), generation == self.requestGeneration else {
                     Logger.mapCache.debug("Fetch error discarded for \(city.id, privacy: .public): cancelled or generation mismatch")
@@ -836,77 +860,234 @@ final class MapViewModel {
     /// session-only and never written to UserDefaults or disk.
     private func clearStopCache() {
         #if DEBUG
-        Logger.mapCache.debug("Clearing stop cache: purging \(self.cachedStopsByID.count, privacy: .public) cached stops and \(self.fetchedTiles.count, privacy: .public) fetched tiles for city \(self.selectedCity.id, privacy: .public)")
+        Logger.mapCache.debug("Clearing stop cache: purging \(self.cachedStops.count, privacy: .public) cached stops and \(self.fetchedTiles.count, privacy: .public) fetched tiles for city \(self.selectedCity.id, privacy: .public)")
         #endif
         debounceTask?.cancel()
         debounceTask = nil
+        thinningTask?.cancel()
+        thinningTask = nil
+        lastBufferedRegion = nil
         cancelActiveFetch()
         inFlightTiles.removeAll()
-        cachedStopsByID.removeAll()
+        stopIndexByID.removeAll()
+        cachedStops.removeAll()
         fetchedTiles.removeAll()
         errorsByCity.removeAll()
         updateLoadingAndErrorStates()
-        updateStops()
+        updateStops(force: true)
     }
 
     // MARK: - Marker rendering
 
-    private func updateStops() {
-        guard areStopsVisible else {
-            if !stops.isEmpty {
-                stops = []
-            }
-            return
+    /// Evaluates whether the current visible region is sufficiently covered by the buffered region
+    /// so that re-thinning can be safely skipped.
+    static func isRegion(_ inner: MKCoordinateRegion, safelyContainedIn outer: MKCoordinateRegion) -> Bool {
+        let innerHalfLat = inner.span.latitudeDelta / 2
+        let innerHalfLon = inner.span.longitudeDelta / 2
+        let outerHalfLat = outer.span.latitudeDelta / 2
+        let outerHalfLon = outer.span.longitudeDelta / 2
+
+        let innerMinLat = inner.center.latitude - innerHalfLat
+        let innerMaxLat = inner.center.latitude + innerHalfLat
+        let innerMinLon = inner.center.longitude - innerHalfLon
+        let innerMaxLon = inner.center.longitude + innerHalfLon
+
+        let outerMinLat = outer.center.latitude - outerHalfLat
+        let outerMaxLat = outer.center.latitude + outerHalfLat
+        let outerMinLon = outer.center.longitude - outerHalfLon
+        let outerMaxLon = outer.center.longitude + outerHalfLon
+
+        // Ensure inner bounds are strictly within outer bounds
+        guard innerMinLat >= outerMinLat, innerMaxLat <= outerMaxLat,
+              innerMinLon >= outerMinLon, innerMaxLon <= outerMaxLon else {
+            return false
         }
 
-        let region = cameraState.region
+        // Check if zoom scale hasn't shifted significantly
+        let nominalOuterLatSpan = outer.span.latitudeDelta / viewportBufferFactor
+        let latRatio = inner.span.latitudeDelta / max(nominalOuterLatSpan, 1e-6)
+        return abs(latRatio - 1.0) <= zoomChangeRatioThreshold
+    }
+
+    /// Computes an expanded buffered region for a given viewport region.
+    static func bufferedRegion(for region: MKCoordinateRegion) -> MKCoordinateRegion {
+        MKCoordinateRegion(
+            center: region.center,
+            span: MKCoordinateSpan(
+                latitudeDelta: region.span.latitudeDelta * viewportBufferFactor,
+                longitudeDelta: region.span.longitudeDelta * viewportBufferFactor
+            )
+        )
+    }
+
+    /// Pure, thread-safe computation of visible and spatially-thinned stops for a region.
+    nonisolated static func computeRenderedStops(
+        from cachedStops: [Stop],
+        in region: MKCoordinateRegion,
+        selectedStop: Stop?,
+        maxRenderedStops: Int
+    ) -> [Stop] {
         let latitudeSpan = region.span.latitudeDelta
         let longitudeSpan = region.span.longitudeDelta
         guard latitudeSpan.isFinite, longitudeSpan.isFinite,
               latitudeSpan > 0, longitudeSpan > 0
-        else { return }
+        else { return [] }
 
         let minLat = region.center.latitude - latitudeSpan / 2
         let maxLat = region.center.latitude + latitudeSpan / 2
         let minLon = region.center.longitude - longitudeSpan / 2
         let maxLon = region.center.longitude + longitudeSpan / 2
 
-        let visibleStops = cachedStopsByID.values.filter { stop in
+        let visibleStops = cachedStops.filter { stop in
             stop.latitude >= minLat && stop.latitude <= maxLat
                 && stop.longitude >= minLon && stop.longitude <= maxLon
         }
 
         var renderedStops: [Stop]
-        if visibleStops.count > Self.maxRenderedStops {
-            renderedStops = Self.thinnedStops(visibleStops, region: region)
+        if visibleStops.count > maxRenderedStops {
+            renderedStops = thinnedStops(visibleStops, region: region)
         } else {
             renderedStops = visibleStops.sorted { $0.id < $1.id }
         }
 
-        // Always keep the currently selected stop visible if it falls within the viewport,
+        // Always keep the currently selected stop visible if it falls within the region,
         // even if grid thinning would have dropped its cell.
-        if let selectedStopID = selectedStopID,
-           let selectedStop = cachedStopsByID[selectedStopID],
+        if let selectedStop = selectedStop,
            selectedStop.latitude >= minLat && selectedStop.latitude <= maxLat,
            selectedStop.longitude >= minLon && selectedStop.longitude <= maxLon,
-           !renderedStops.contains(where: { $0.id == selectedStopID }) {
+           !renderedStops.contains(where: { $0.id == selectedStop.id }) {
             renderedStops.append(selectedStop)
             renderedStops.sort { $0.id < $1.id }
         }
 
-        // Compare full values, not just IDs: a later viewport fetch can change
-        // a stop's bearing, routes, or name while keeping the same identifier.
-        // Camera-only changes still produce an equal array and are ignored.
-        if renderedStops != stops {
+        return renderedStops
+    }
+
+    /// Schedules background stop thinning if the viewport moved outside the buffered region.
+    func updateStops(force: Bool = false) {
+        guard areStopsVisible && !cachedStops.isEmpty else {
+            thinningTask?.cancel()
+            thinningTask = nil
+            lastBufferedRegion = nil
+            if !stops.isEmpty {
+                stops = []
+            }
+            return
+        }
+
+        let currentRegion = cameraState.region
+        guard currentRegion.span.latitudeDelta.isFinite,
+              currentRegion.span.longitudeDelta.isFinite,
+              currentRegion.span.latitudeDelta > 0,
+              currentRegion.span.longitudeDelta > 0
+        else { return }
+
+        if !force, let lastBuffered = lastBufferedRegion,
+           Self.isRegion(currentRegion, safelyContainedIn: lastBuffered) {
             #if DEBUG
-            Logger.mapCache.debug("Rendered stops updated: \(visibleStops.count, privacy: .public) visible in cache -> \(renderedStops.count, privacy: .public) rendered on map (ceiling: \(Self.maxRenderedStops, privacy: .public))")
+            Logger.mapCache.debug("updateStops skipped: camera region safely within buffered region")
             #endif
-            stops = renderedStops
+            return
+        }
+
+        let targetBuffer = Self.bufferedRegion(for: currentRegion)
+        let allStops = cachedStops
+        let selected = selectedStopID.flatMap { cachedStop(for: $0) }
+        let generation = UUID()
+        thinningGeneration = generation
+
+        // When forced (such as test setups or city reloads), small sets can be evaluated immediately
+        if force && allStops.count <= Self.maxRenderedStops {
+            thinningTask?.cancel()
+            thinningTask = nil
+            let rendered = Self.computeRenderedStops(
+                from: allStops,
+                in: targetBuffer,
+                selectedStop: selected,
+                maxRenderedStops: Self.maxRenderedStops
+            )
+            applyRenderedStops(rendered, for: targetBuffer, generation: generation)
+            return
+        }
+
+        thinningTask?.cancel()
+        thinningTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let rendered = Self.computeRenderedStops(
+                from: allStops,
+                in: targetBuffer,
+                selectedStop: selected,
+                maxRenderedStops: Self.maxRenderedStops
+            )
+
+            guard !Task.isCancelled else { return }
+
+            await self?.finishThinning(rendered, for: targetBuffer, generation: generation)
+        }
+    }
+
+    /// Asynchronous thinning used during fetch settlement to ensure stops are rendered before loading finishes.
+    func updateStopsAsync(force: Bool = false) async {
+        guard areStopsVisible && !cachedStops.isEmpty else {
+            thinningTask?.cancel()
+            thinningTask = nil
+            lastBufferedRegion = nil
+            if !stops.isEmpty {
+                stops = []
+            }
+            return
+        }
+
+        let currentRegion = cameraState.region
+        guard currentRegion.span.latitudeDelta.isFinite,
+              currentRegion.span.longitudeDelta.isFinite,
+              currentRegion.span.latitudeDelta > 0,
+              currentRegion.span.longitudeDelta > 0
+        else { return }
+
+        if !force, let lastBuffered = lastBufferedRegion,
+           Self.isRegion(currentRegion, safelyContainedIn: lastBuffered) {
+            return
+        }
+
+        let targetBuffer = Self.bufferedRegion(for: currentRegion)
+        let allStops = cachedStops
+        let selected = selectedStopID.flatMap { cachedStop(for: $0) }
+        let generation = UUID()
+        thinningGeneration = generation
+
+        thinningTask?.cancel()
+        let rendered = await Task.detached(priority: .userInitiated) {
+            Self.computeRenderedStops(
+                from: allStops,
+                in: targetBuffer,
+                selectedStop: selected,
+                maxRenderedStops: Self.maxRenderedStops
+            )
+        }.value
+
+        guard !Task.isCancelled, generation == thinningGeneration else { return }
+        finishThinning(rendered, for: targetBuffer, generation: generation)
+    }
+
+    private func finishThinning(_ rendered: [Stop], for bufferedRegion: MKCoordinateRegion, generation: UUID) {
+        guard generation == thinningGeneration else { return }
+        thinningTask = nil
+        applyRenderedStops(rendered, for: bufferedRegion, generation: generation)
+    }
+
+    private func applyRenderedStops(_ rendered: [Stop], for bufferedRegion: MKCoordinateRegion, generation: UUID) {
+        guard generation == thinningGeneration else { return }
+        lastBufferedRegion = bufferedRegion
+        if rendered != stops {
+            #if DEBUG
+            Logger.mapCache.debug("Rendered stops updated: \(rendered.count, privacy: .public) rendered on map (ceiling: \(Self.maxRenderedStops, privacy: .public))")
+            #endif
+            stops = rendered
         }
     }
 
     /// Whether a stop lies inside the visible viewport.
-    private static func contains(_ stop: Stop, in region: MKCoordinateRegion) -> Bool {
+    nonisolated private static func contains(_ stop: Stop, in region: MKCoordinateRegion) -> Bool {
         let latitudeSpan = region.span.latitudeDelta
         let longitudeSpan = region.span.longitudeDelta
         guard latitudeSpan.isFinite, longitudeSpan.isFinite,
@@ -924,7 +1105,7 @@ final class MapViewModel {
     /// Steps are quantized using ceil(log2(...)) to powers of two, ensuring that
     /// grid cell boundaries remain fixed in world coordinates during panning,
     /// and the total number of visible cells is strictly bounded by maxRenderedStops.
-    private static func thinningSteps(for region: MKCoordinateRegion) -> (latStep: Double, lonStep: Double) {
+    nonisolated private static func thinningSteps(for region: MKCoordinateRegion) -> (latStep: Double, lonStep: Double) {
         let latSpan = max(region.span.latitudeDelta, 1e-6)
         let lonSpan = max(region.span.longitudeDelta, 1e-6)
         // With at most 14 cells per axis, a viewport can intersect at most 15x15 = 225 cells <= 250.
@@ -936,7 +1117,7 @@ final class MapViewModel {
     }
 
     /// World-aligned cell index for a stop within the region.
-    private static func cellIndex(
+    nonisolated private static func cellIndex(
         for stop: Stop,
         in region: MKCoordinateRegion,
         latStep: Double,
@@ -950,7 +1131,7 @@ final class MapViewModel {
 
     /// Grid-based thinning: keep one deterministic representative per cell of
     /// a world-aligned spatial grid laid over the visible region.
-    static func thinnedStops(_ rawStops: [Stop], region: MKCoordinateRegion?) -> [Stop] {
+    nonisolated static func thinnedStops(_ rawStops: [Stop], region: MKCoordinateRegion?) -> [Stop] {
         guard let region = region else { return [] }
         let (latStep, lonStep) = thinningSteps(for: region)
         var buckets: [Int: Stop] = [:]

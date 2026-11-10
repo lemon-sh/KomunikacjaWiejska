@@ -800,5 +800,86 @@ struct MapViewModelTests {
         #expect(abs(pkpVM.currentCenter.longitude - 19.9450) < 1e-6)
         #expect(pkpVM.currentDistance == 15_000)
     }
+
+    @Test("Buffered region containment and hysteresis correctly identifies safe viewport boundaries")
+    func testBufferedRegionContainment() {
+        let center = CLLocationCoordinate2D(latitude: 52.23, longitude: 21.01)
+        let viewport = MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+        )
+        let buffered = MapViewModel.bufferedRegion(for: viewport)
+
+        // The viewport itself is safely contained inside its own buffered region
+        #expect(MapViewModel.isRegion(viewport, safelyContainedIn: buffered) == true)
+
+        // A small pan (e.g. 5% shift) is still safely contained
+        let smallPan = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.232, longitude: 21.012),
+            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+        )
+        #expect(MapViewModel.isRegion(smallPan, safelyContainedIn: buffered) == true)
+
+        // A large pan outside the buffer bounds is NOT safely contained
+        let largePan = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.26, longitude: 21.01),
+            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+        )
+        #expect(MapViewModel.isRegion(largePan, safelyContainedIn: buffered) == false)
+
+        // A significant zoom-in (span shrunk by > 20%) triggers re-thinning even if centered
+        let zoomedIn = MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+        )
+        #expect(MapViewModel.isRegion(zoomedIn, safelyContainedIn: buffered) == false)
+    }
+
+    @Test("Panning within buffered boundary preserves rendered stops without churn")
+    func testPanningWithinBufferDoesNotChurnStops() async throws {
+        let count = 50
+        var allStops: [Stop] = []
+        for index in 0..<count {
+            allStops.append(
+                StopFixtures.sample(
+                    id: String(format: "buf-stop-%03d", index),
+                    longitude: 21.01 + Double(index) * 0.0002,
+                    latitude: 52.23 + Double(index) * 0.0002
+                )
+            )
+        }
+
+        let provider = StubStopsProvider(stops: allStops)
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        viewModel.visibleRegion = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 52.23, longitude: 21.01),
+            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+        )
+
+        viewModel.loadStopsForSelectedCity()
+        try await waitUntilLoaded(viewModel)
+
+        let initialStops = viewModel.stops
+        #expect(!initialStops.isEmpty)
+
+        // Small camera pan within the 25% buffered region
+        viewModel.applyCameraState(
+            MapViewModel.CameraState(
+                region: MKCoordinateRegion(
+                    center: CLLocationCoordinate2D(latitude: 52.232, longitude: 21.012),
+                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                ),
+                heading: 0,
+                pitch: 0,
+                distance: viewModel.currentDistance,
+                center: CLLocationCoordinate2D(latitude: 52.232, longitude: 21.012)
+            )
+        )
+
+        // Wait a brief moment to ensure no background task altered stops
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(viewModel.stops == initialStops)
+    }
 }
 
