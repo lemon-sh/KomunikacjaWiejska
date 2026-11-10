@@ -115,7 +115,6 @@ flowchart TD
 ### Resources (`KomunikacjaWiejska/Resources/`)
 - `Localizable.xcstrings` — Polish and English copy (map chrome, errors, stop sheet, accessibility).
 - `InfoPlist.xcstrings` — localized system permission prompts (location usage description).
-- `cities.json` — the bundled 66-network city catalog.
 - `DesignTokens.swift` — shared spacing, control, and marker metrics.
 - [`StopMarkerView.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Views/StopMarkerView.swift):
   - Circular transit badge showing transit icon and a triangle notch rotated to the stop's `bearing`.

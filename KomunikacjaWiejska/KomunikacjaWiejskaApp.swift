@@ -4,7 +4,7 @@ import SwiftUI
 struct KomunikacjaWiejskaApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            TransitMapView()
         }
     }
 }

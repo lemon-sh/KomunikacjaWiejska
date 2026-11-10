@@ -3,9 +3,9 @@
 All **66** transit networks and cities supported by `api.zbiorkom.live` are
 bundled with the app.
 
-The catalog lives in [`KomunikacjaWiejska/Resources/cities.json`](../KomunikacjaWiejska/Resources/cities.json)
-and is loaded by [`City`](../KomunikacjaWiejska/Models/City.swift). Adding a city means
-adding a JSON entry — no decoder or view changes. Each entry may declare
+The catalog is defined statically in [`City.swift`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejska/Models/City.swift)
+as compile-time `City` constants in `City.allCities`. Adding a city means
+adding a static `City` entry — zero runtime JSON I/O or decoding overhead. Each entry may declare
 `aliases` (additional search terms such as `gdansk` for `tricity`); the city
 picker matches names, IDs, aliases, and diacritic-free queries.
 
