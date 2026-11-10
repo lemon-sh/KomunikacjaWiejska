@@ -42,7 +42,6 @@ struct MapTileTests {
         #expect(tiles.count <= 25)
 
         for tile in tiles {
-            #expect(tile.zoom == 12)
             #expect(tile.x >= 0)
             #expect(tile.y >= 0)
         }
@@ -56,9 +55,6 @@ struct MapTileTests {
 
     @Test("All tiles share fixed Zoom 12 coarseness without hierarchy")
     func testFixedZoomTiles() {
-        let tile = MapTile(x: 2200, y: 1300)
-        #expect(tile.zoom == 12)
-        #expect(MapTile.zoom == 12)
         #expect(MapTileGrid.zoom == 12)
     }
 }

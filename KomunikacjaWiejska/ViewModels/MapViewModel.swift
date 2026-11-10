@@ -714,16 +714,14 @@ final class MapViewModel {
         }
         let missingTiles = visibleTiles.filter { !isTileCovered($0) }
         guard !missingTiles.isEmpty else {
-            let zoom = visibleTiles.first?.zoom ?? MapTile.zoom
-            Logger.mapCache.debug("Cache HIT: all \(visibleTiles.count, privacy: .public) visible tiles at zoom \(zoom, privacy: .public) covered. Cached stops: \(self.cachedStopsByID.count, privacy: .public)")
+            Logger.mapCache.debug("Cache HIT: all \(visibleTiles.count, privacy: .public) visible tiles at zoom \(MapTileGrid.zoom, privacy: .public) covered. Cached stops: \(self.cachedStopsByID.count, privacy: .public)")
             return .cached
         }
         guard let bbox = MapTileGrid.boundingBox(covering: missingTiles) else {
             Logger.mapCache.debug("Load decision: failed to create bounding box for \(missingTiles.count, privacy: .public) missing tiles")
             return .invalid
         }
-        let zoom = visibleTiles.first?.zoom ?? MapTile.zoom
-        Logger.mapCache.debug("Cache MISS: \(missingTiles.count, privacy: .public) of \(visibleTiles.count, privacy: .public) visible tiles missing at zoom \(zoom, privacy: .public). Querying bbox: \(bbox.queryValue, privacy: .public)")
+        Logger.mapCache.debug("Cache MISS: \(missingTiles.count, privacy: .public) of \(visibleTiles.count, privacy: .public) visible tiles missing at zoom \(MapTileGrid.zoom, privacy: .public). Querying bbox: \(bbox.queryValue, privacy: .public)")
         return .fetch(bbox: bbox, tiles: missingTiles)
     }
 
