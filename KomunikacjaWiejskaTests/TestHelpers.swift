@@ -7,12 +7,16 @@ import Testing
 /// Bounded polling helper replacing unconstrained spin-wait loops (2P6-1).
 func waitUntil(
     timeout: Duration = .seconds(3),
-    pollInterval: Duration = .milliseconds(10),
+    pollInterval: Duration = .milliseconds(5),
     _ condition: () async throws -> Bool
 ) async throws {
     let clock = ContinuousClock()
     let deadline = clock.now + timeout
     while clock.now < deadline {
+        if try await condition() {
+            return
+        }
+        await Task.yield()
         if try await condition() {
             return
         }

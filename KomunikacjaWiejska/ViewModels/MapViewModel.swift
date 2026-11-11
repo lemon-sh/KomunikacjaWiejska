@@ -363,6 +363,7 @@ final class MapViewModel {
 
     private let apiClient: any TransitDataProviding
     private let persistence: any CameraPersistenceStore
+    private let debounceDuration: Duration
 
     // `nonisolated(unsafe)`: only mutated from `@MainActor` methods, read from
     // `deinit` (nonisolated by definition). `Task` is `Sendable`, so cancelling
@@ -401,10 +402,12 @@ final class MapViewModel {
     init(
         apiClient: any TransitDataProviding = ZbiorkomAPIClient.shared,
         initialCity: City? = nil,
-        persistence: any CameraPersistenceStore = UserDefaultsCameraPersistenceStore()
+        persistence: any CameraPersistenceStore = UserDefaultsCameraPersistenceStore(),
+        debounceDuration: Duration = MapConstants.cameraFetchDebounce
     ) {
         self.apiClient = apiClient
         self.persistence = persistence
+        self.debounceDuration = debounceDuration
 
         let chosenCity: City
         if let initialCity = initialCity {
@@ -809,7 +812,7 @@ final class MapViewModel {
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard let self = self else { return }
-            try? await Task.sleep(for: MapConstants.cameraFetchDebounce)
+            try? await Task.sleep(for: debounceDuration)
             guard !Task.isCancelled else { return }
             self.debounceTask = nil
             self.fetchCurrentViewport()

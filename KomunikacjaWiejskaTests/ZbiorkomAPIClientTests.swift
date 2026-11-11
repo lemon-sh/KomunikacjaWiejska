@@ -7,7 +7,7 @@ import Testing
 @MainActor
 struct ZbiorkomAPIClientTests {
     private func makeClient() -> ZbiorkomAPIClient {
-        ZbiorkomAPIClient(session: MockURLProtocol.makeSession())
+        ZbiorkomAPIClient(session: MockURLProtocol.makeSession(), retryBackoff: {})
     }
 
     @Test("Decodes a 200 response")

@@ -4,11 +4,8 @@ set -euo pipefail
 echo "==> Checking toolchain..."
 ./scripts/check-toolchain.sh
 
-echo "==> Building project..."
-xcodebuild -project KomunikacjaWiejska.xcodeproj \
-  -scheme KomunikacjaWiejska \
-  -destination 'generic/platform=iOS Simulator' \
-  CODE_SIGNING_ALLOWED=NO build
+# Ensure simulator is booted so xcodebuild avoids cold-boot/shutdown overhead
+xcrun simctl boot "iPhone 17" 2>/dev/null || true
 
 echo "==> Running tests..."
 xcodebuild test -project KomunikacjaWiejska.xcodeproj \

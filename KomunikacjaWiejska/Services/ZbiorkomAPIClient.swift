@@ -52,9 +52,14 @@ actor ZbiorkomAPIClient {
     private static let decoder = JSONDecoder()
 
     private let session: URLSession
+    private let retryBackoff: @Sendable () async throws -> Void
 
-    init(session: URLSession = .shared) {
+    init(
+        session: URLSession = .shared,
+        retryBackoff: (@Sendable () async throws -> Void)? = nil
+    ) {
         self.session = session
+        self.retryBackoff = retryBackoff ?? { try await Self.backoff() }
     }
 
     func fetchStops(city: String, bbox: BoundingBox? = nil) async throws -> [Stop] {
@@ -152,7 +157,7 @@ actor ZbiorkomAPIClient {
 
                 if (500...599).contains(httpResponse.statusCode), attempt < Self.maxRetryCount {
                     Logger.api.debug("Server error \(httpResponse.statusCode, privacy: .public), retrying with backoff...")
-                    try await Self.backoff()
+                    try await retryBackoff()
                     continue
                 }
 
@@ -175,7 +180,7 @@ actor ZbiorkomAPIClient {
                     throw ZbiorkomAPIError.transport(urlError.code)
                 }
                 Logger.api.debug("Transient transport error, retrying with backoff...")
-                try await Self.backoff()
+                try await retryBackoff()
             }
         }
         throw ZbiorkomAPIError.transport(.timedOut)

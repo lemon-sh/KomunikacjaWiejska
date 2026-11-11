@@ -374,7 +374,11 @@ struct MapViewModelTests {
     @Test("Rotating and pitching at a fixed center issues zero network requests")
     func testRotationAndPitchIssuesZeroRequests() async throws {
         let provider = StubStopsProvider(stops: [StopFixtures.sample()])
-        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        let viewModel = MapViewModel(
+            apiClient: provider,
+            initialCity: .warsaw,
+            debounceDuration: .milliseconds(20)
+        )
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -392,7 +396,7 @@ struct MapViewModelTests {
             center: currentCenter
         )
         viewModel.applyCameraState(rotatedState)
-        try await Task.sleep(for: .milliseconds(450))
+        try await Task.sleep(for: .milliseconds(50))
 
         #expect(provider.callCount == initialCallCount)
     }
