@@ -118,11 +118,11 @@ struct StopDetailSheet: View {
             Button {
                 onDismiss()
             } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
-                    .contentShape(Rectangle())
+                Image(systemName: "xmark")
+                    .frame(width: DesignTokens.compactControlSize, height: DesignTokens.compactControlSize)
             }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
             .accessibilityLabel(Text("stopDetail.close"))
         }
     }

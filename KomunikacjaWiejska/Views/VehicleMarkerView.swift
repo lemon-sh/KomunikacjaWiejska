@@ -61,35 +61,25 @@ struct VehicleMarkerView: View, Equatable {
                     .frame(width: DesignTokens.controlSize, height: DesignTokens.controlSize)
                     .contentShape(Rectangle())
             } else {
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     if let bearing = vehicle.bearing {
-                        Image(systemName: "location.north.fill")
-                            .font(.system(size: 8, weight: .bold))
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 12, weight: .bold))
                             .rotationEffect(.degrees(Self.effectiveRotation(bearing: bearing, heading: heading)))
                     }
 
                     Image(systemName: vehicle.routeType.systemImageName)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
 
                     Text(vehicle.routeName)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .font(.system(size: 12, weight: .bold))
                         .lineLimit(1)
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(vehicle.displayColor)
                 .foregroundStyle(vehicle.contrastingTextColor)
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder(.white, lineWidth: isSelected ? 2.5 : 1.5)
-                )
-                .shadow(
-                    color: isSelected ? .black.opacity(0.35) : .black.opacity(0.2),
-                    radius: isSelected ? 4 : 2,
-                    x: 0,
-                    y: isSelected ? 2 : 1
-                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
                 .scaleEffect(isSelected ? 1.2 : 1.0)
                 .frame(minWidth: DesignTokens.controlSize, minHeight: DesignTokens.controlSize)
                 .contentShape(Rectangle())
