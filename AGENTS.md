@@ -64,5 +64,6 @@ Always refer to the dedicated guides in [`docs/`](docs) for deep technical speci
 - **Testing:**
   - Use Swift `Testing` (`import Testing`, `@Suite`, `@Test`, `#expect`) in [`KomunikacjaWiejskaTests`](KomunikacjaWiejskaTests).
   - Tests must be hermetic: inject `StopsProviding` stubs and `MockURLProtocol`; never hit the production API.
+  - Do not run tests before doing work. Tests take a long time and should only be ran once ideally (until success).
 - **Tooling Awareness:**
   - When running within Xcode: use `xcode-tools` (`BuildProject`, `RunAllTests`, `XcodeRead`, `XcodeWrite`) instead of shell commands like `ls` or `find` to minimize user approval prompts.
