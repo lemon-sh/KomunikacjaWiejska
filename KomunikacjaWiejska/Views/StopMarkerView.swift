@@ -108,6 +108,8 @@ struct StopMarkerView: View, Equatable {
             width: badgeSize + notchSize * 2,
             height: badgeSize + notchSize * 2
         )
+        .frame(minWidth: DesignTokens.controlSize, minHeight: DesignTokens.controlSize)
+        .contentShape(Rectangle())
         .scaleEffect(isSelected ? selectedScale : 1.0)
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isSelected)
         .zIndex(isSelected ? 1 : 0)

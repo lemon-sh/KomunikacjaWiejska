@@ -1141,10 +1141,11 @@ final class MapViewModel {
 
         // If tracked vehicle moved, smoothly update camera
         if isTrackingVehicle, let selectedID = selectedVehicleID, let tracked = cachedVehicle(for: selectedID) {
-            withAnimation(.easeInOut(duration: 0.5)) {
-                _cameraPosition = .camera(MapCamera(
+            let targetDistance = currentDistance > 0 ? currentDistance : vehicleCompactDistanceThreshold
+            withAnimation(.easeInOut(duration: 1.0)) {
+                cameraPosition = .camera(MapCamera(
                     centerCoordinate: tracked.coordinate,
-                    distance: currentDistance,
+                    distance: targetDistance,
                     heading: currentHeading,
                     pitch: currentPitch
                 ))
@@ -1164,10 +1165,11 @@ final class MapViewModel {
 
         // If tracked vehicle moved, smoothly update camera
         if isTrackingVehicle, let selectedID = selectedVehicleID, let tracked = cachedVehicle(for: selectedID) {
-            withAnimation(.easeInOut(duration: 0.5)) {
-                _cameraPosition = .camera(MapCamera(
+            let targetDistance = currentDistance > 0 ? currentDistance : vehicleCompactDistanceThreshold
+            withAnimation(.easeInOut(duration: 1.0)) {
+                cameraPosition = .camera(MapCamera(
                     centerCoordinate: tracked.coordinate,
-                    distance: currentDistance,
+                    distance: targetDistance,
                     heading: currentHeading,
                     pitch: currentPitch
                 ))
@@ -1192,10 +1194,11 @@ final class MapViewModel {
         selectedStopID = nil
         isTrackingVehicle = true
         if let vehicle = cachedVehicle(for: id) {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                _cameraPosition = .camera(MapCamera(
+            let targetDistance = currentDistance > 0 ? min(currentDistance, vehicleCompactDistanceThreshold) : vehicleCompactDistanceThreshold
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                cameraPosition = .camera(MapCamera(
                     centerCoordinate: vehicle.coordinate,
-                    distance: min(currentDistance, vehicleCompactDistanceThreshold),
+                    distance: targetDistance,
                     heading: currentHeading,
                     pitch: currentPitch
                 ))
@@ -1346,7 +1349,9 @@ final class MapViewModel {
         guard generation == vehicleThinningGeneration else { return }
         lastVehicleBufferedRegion = bufferedRegion
         if rendered != vehicles {
-            vehicles = rendered
+            withAnimation(.easeInOut(duration: 1.0)) {
+                vehicles = rendered
+            }
         }
     }
 

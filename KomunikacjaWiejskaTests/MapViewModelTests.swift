@@ -332,6 +332,30 @@ struct MapViewModelTests {
         #expect(viewModel.isTrackingVehicle == false)
     }
 
+    @Test("Selecting a vehicle updates cameraPosition to center on the vehicle")
+    func testVehicleSelectionCentersCamera() async throws {
+        let vehicle = VehicleFixtures.sample(
+            id: "v-center",
+            longitude: 21.05,
+            latitude: 52.25
+        )
+        let provider = StubStopsProvider(vehicles: [vehicle])
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        await viewModel.fetchVehiclesForCurrentViewport()
+
+        viewModel.selection = .vehicle(vehicle.id)
+        #expect(viewModel.selectedVehicleID == vehicle.id)
+        #expect(viewModel.isTrackingVehicle == true)
+
+        // Verify cameraPosition was updated to center on the vehicle
+        if let camera = viewModel.cameraPosition.camera {
+            #expect(abs(camera.centerCoordinate.latitude - vehicle.coordinate.latitude) < 1e-5)
+            #expect(abs(camera.centerCoordinate.longitude - vehicle.coordinate.longitude) < 1e-5)
+        } else {
+            Issue.record("Expected cameraPosition to have a camera, got \(viewModel.cameraPosition)")
+        }
+    }
+
     @Test("Vehicle network failure marks error as non-retryable")
     func testVehicleNetworkErrorNonRetryable() async throws {
         struct VehicleNetworkError: LocalizedError {

@@ -96,6 +96,7 @@ struct VehicleMarkerView: View, Equatable {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isSelected)
+        .animation(.easeInOut(duration: 1.0), value: vehicle.bearing)
         .zIndex(isSelected ? 2 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: accessibilityDescription))

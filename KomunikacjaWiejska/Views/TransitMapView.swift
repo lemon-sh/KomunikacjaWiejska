@@ -3,8 +3,7 @@ import SwiftUI
 
 struct TransitMapView: View {
     @State private var viewModel: MapViewModel
-    @State private var presentedStop: Stop?
-    @State private var presentedVehicle: VehiclePosition?
+    @State private var activeDetail: ActiveMapDetail?
     private var locationManager: any LocationProviding
     @Environment(\.scenePhase) private var scenePhase
     @Namespace private var mapScope
@@ -18,30 +17,40 @@ struct TransitMapView: View {
     }
 
     /// Keeps the detail sheet presented while only its content swaps. Binding
-    /// the sheet to the selected stop instead would dismiss and re-present on
-    /// every new selection, losing the chosen detent.
-    private var isStopSheetPresented: Binding<Bool> {
+    /// the sheet to an active detail instead of an item prevents dismiss/re-present
+    /// thrashing and preserves chosen presentation detents.
+    private var isDetailSheetPresented: Binding<Bool> {
         Binding(
-            get: { viewModel.selectedStopID != nil },
+            get: { viewModel.selection != nil },
             set: { isPresented in
                 if !isPresented {
-                    viewModel.selectedStopID = nil
-                    presentedStop = nil
+                    viewModel.selection = nil
                 }
             }
         )
     }
 
-    private var isVehicleSheetPresented: Binding<Bool> {
-        Binding(
-            get: { viewModel.selectedVehicleID != nil },
-            set: { isPresented in
-                if !isPresented {
-                    viewModel.selectedVehicleID = nil
-                    presentedVehicle = nil
-                }
-            }
-        )
+    private var currentDetailFromSelection: ActiveMapDetail? {
+        if let stopID = viewModel.selectedStopID, let stop = viewModel.cachedStop(for: stopID) {
+            return .stop(stop)
+        } else if let vehicleID = viewModel.selectedVehicleID, let vehicle = viewModel.cachedVehicle(for: vehicleID) {
+            return .vehicle(vehicle)
+        }
+        return nil
+    }
+
+    private func selectStop(_ stop: Stop) {
+        activeDetail = .stop(stop)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+            viewModel.selection = .stop(stop.id)
+        }
+    }
+
+    private func selectVehicle(_ vehicle: VehiclePosition) {
+        activeDetail = .vehicle(vehicle)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+            viewModel.selection = .vehicle(vehicle.id)
+        }
     }
 
     var body: some View {
@@ -63,7 +72,11 @@ struct TransitMapView: View {
                             coordinate: stop.coordinate,
                             anchor: .center
                         ) {
-                            StopAnnotationContent(stop: stop, viewModel: viewModel)
+                            StopAnnotationContent(
+                                stop: stop,
+                                viewModel: viewModel,
+                                onSelect: { selectStop(stop) }
+                            )
                         }
                         .annotationTitles(viewModel.areStopTitlesVisible ? .visible : .hidden)
                         .tag(MapViewModel.FeatureSelection.stop(stop.id))
@@ -77,7 +90,11 @@ struct TransitMapView: View {
                             coordinate: vehicle.coordinate,
                             anchor: .center
                         ) {
-                            VehicleAnnotationContent(vehicle: vehicle, viewModel: viewModel)
+                            VehicleAnnotationContent(
+                                vehicle: vehicle,
+                                viewModel: viewModel,
+                                onSelect: { selectVehicle(vehicle) }
+                            )
                         }
                         .annotationTitles(.hidden)
                         .tag(MapViewModel.FeatureSelection.vehicle(vehicle.id))
@@ -122,32 +139,44 @@ struct TransitMapView: View {
                 viewModel.startVehiclePolling()
             }
         }
-        .onChange(of: viewModel.selectedStopID) { _, newID in
-            guard let newID, let stop = viewModel.cachedStop(for: newID) else { return }
-            presentedStop = stop
-        }
-        .onChange(of: viewModel.selectedVehicleID) { _, newID in
-            guard let newID, let vehicle = viewModel.cachedVehicle(for: newID) else { return }
-            presentedVehicle = vehicle
-        }
-        .sheet(isPresented: isStopSheetPresented) {
-            if let stop = presentedStop ?? viewModel.selectedStop {
-                StopDetailSheet(stop: stop) {
-                    viewModel.selectedStopID = nil
+        .onChange(of: viewModel.selection) { _, newSelection in
+            switch newSelection {
+            case .stop(let id):
+                if let stop = viewModel.cachedStop(for: id) {
+                    activeDetail = .stop(stop)
                 }
-                .presentationDetents([.height(DesignTokens.sheetSmallDetentHeight), .medium, .large])
-                .presentationDragIndicator(.visible)
-                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+            case .vehicle(let id):
+                if let vehicle = viewModel.cachedVehicle(for: id) {
+                    activeDetail = .vehicle(vehicle)
+                }
+            case nil:
+                break
             }
         }
-        .sheet(isPresented: isVehicleSheetPresented) {
-            if let vehicle = presentedVehicle ?? viewModel.selectedVehicle {
-                VehicleDetailSheet(vehicle: vehicle) {
-                    viewModel.selectedVehicleID = nil
+        .onChange(of: viewModel.vehicles) { _, newVehicles in
+            if case .vehicle(let vehicle) = activeDetail,
+               let updated = newVehicles.first(where: { $0.id == vehicle.id }) {
+                activeDetail = .vehicle(updated)
+            }
+        }
+        .sheet(isPresented: isDetailSheetPresented) {
+            if let detail = activeDetail ?? currentDetailFromSelection {
+                switch detail {
+                case .stop(let stop):
+                    StopDetailSheet(stop: stop) {
+                        viewModel.selection = nil
+                    }
+                    .presentationDetents([.height(DesignTokens.sheetSmallDetentHeight), .medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                case .vehicle(let vehicle):
+                    VehicleDetailSheet(vehicle: vehicle) {
+                        viewModel.selection = nil
+                    }
+                    .presentationDetents([.height(DesignTokens.vehicleSheetSmallDetentHeight), .medium])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackgroundInteraction(.enabled(upThrough: .height(DesignTokens.vehicleSheetSmallDetentHeight)))
                 }
-                .presentationDetents([.height(DesignTokens.vehicleSheetSmallDetentHeight), .medium])
-                .presentationDragIndicator(.visible)
-                .presentationBackgroundInteraction(.enabled(upThrough: .height(DesignTokens.vehicleSheetSmallDetentHeight)))
             }
         }
     }
@@ -326,13 +355,20 @@ private struct TopChromeView: View {
     }
 }
 
+private enum ActiveMapDetail: Equatable {
+    case stop(Stop)
+    case vehicle(VehiclePosition)
+}
+
 /// Reads the selection and camera state on the annotation's own view body so
 /// Observation invalidates the marker immediately. Reading the same values in
 /// `Annotation`'s escaping content closure is not tracked by SwiftUI, which
 /// left markers stale until the next camera update.
+/// `.onTapGesture` eliminates the ~350ms MapKit gesture recognizer delay when tapping.
 private struct StopAnnotationContent: View {
     let stop: Stop
     let viewModel: MapViewModel
+    let onSelect: () -> Void
 
     var body: some View {
         let heading: Double = stop.bearing != nil ? viewModel.currentHeading : 0
@@ -342,12 +378,16 @@ private struct StopAnnotationContent: View {
             heading: heading
         )
         .equatable()
+        .onTapGesture {
+            onSelect()
+        }
     }
 }
 
 private struct VehicleAnnotationContent: View {
     let vehicle: VehiclePosition
     let viewModel: MapViewModel
+    let onSelect: () -> Void
 
     var body: some View {
         let isCompact = viewModel.isVehicleCompactDisplayMode
@@ -359,5 +399,8 @@ private struct VehicleAnnotationContent: View {
             heading: heading
         )
         .equatable()
+        .onTapGesture {
+            onSelect()
+        }
     }
 }
