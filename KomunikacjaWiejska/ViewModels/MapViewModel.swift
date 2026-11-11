@@ -11,6 +11,12 @@ extension CLLocationCoordinate2D {
     func isApproximatelyEqual(to other: CLLocationCoordinate2D) -> Bool {
         abs(latitude - other.latitude) < 1e-7 && abs(longitude - other.longitude) < 1e-7
     }
+
+    /// Great-circle distance in metres to another coordinate.
+    nonisolated func distance(to other: CLLocationCoordinate2D) -> CLLocationDistance {
+        CLLocation(latitude: latitude, longitude: longitude)
+            .distance(from: CLLocation(latitude: other.latitude, longitude: other.longitude))
+    }
 }
 
 /// Available map rendering modes.
@@ -134,17 +140,12 @@ final class MapViewModel {
 
     /// Markers currently rendered on the map.
     private(set) var stops: [Stop] = []
-    /// Marker selection source of truth: the map writes the tagged stop ID,
-    /// the detail sheet is derived from it.
-    var selectedStopID: String?
     var isShowingCityPicker: Bool = false
     var selectedMapMode: MapMode = .explore
-    var isShowingMapModes: Bool = false
     var isTrackingUser: Bool = false
 
     /// Real-time live vehicles currently rendered on the map.
     private(set) var vehicles: [VehiclePosition] = []
-    var selectedVehicleID: String?
     private(set) var isTrackingVehicle: Bool = false
     private(set) var isVehiclesVisible: Bool = true
     private(set) var isVehicleCompactDisplayMode: Bool = true
@@ -155,29 +156,36 @@ final class MapViewModel {
         case vehicle(String)
     }
 
+    /// Active map selection (single source of truth shared with `Map(selection:)`).
     var selection: FeatureSelection? {
-        get {
-            if let stopID = selectedStopID {
-                return .stop(stopID)
-            } else if let vehicleID = selectedVehicleID {
-                return .vehicle(vehicleID)
-            }
-            return nil
-        }
-        set {
-            switch newValue {
-            case .stop(let id):
-                selectedStopID = id
-                selectedVehicleID = nil
-                isTrackingVehicle = false
+        didSet {
+            switch selection {
             case .vehicle(let id):
-                selectVehicleAndCenter(id)
-            case nil:
-                selectedStopID = nil
-                selectedVehicleID = nil
+                isTrackingVehicle = true
+                if let vehicle = cachedVehicle(for: id) {
+                    let distance = currentDistance > 0
+                        ? min(currentDistance, MapConstants.vehicleCompactDistanceThreshold)
+                        : MapConstants.vehicleCompactDistanceThreshold
+                    animateCamera(
+                        center: vehicle.coordinate,
+                        distance: distance,
+                        animation: .spring(response: 0.45, dampingFraction: 0.85)
+                    )
+                }
+            case .stop, nil:
                 isTrackingVehicle = false
             }
         }
+    }
+
+    var selectedStopID: String? {
+        if case .stop(let id) = selection { return id }
+        return nil
+    }
+
+    var selectedVehicleID: String? {
+        if case .vehicle(let id) = selection { return id }
+        return nil
     }
 
     var isPKPSelected: Bool {
@@ -197,10 +205,7 @@ final class MapViewModel {
         get { _cameraState.pitch }
         set {
             _cameraState.pitch = newValue
-            let newPitched = newValue > 1.0
-            if isPitched3D != newPitched {
-                isPitched3D = newPitched
-            }
+            applyPitchFlag(newValue)
         }
     }
 
@@ -217,14 +222,12 @@ final class MapViewModel {
         set { _cameraState.center = newValue }
     }
 
-    var visibleRegion: MKCoordinateRegion? {
+    var visibleRegion: MKCoordinateRegion {
         get { _cameraState.region }
         set {
-            if let region = newValue {
-                _cameraState.region = region
-                updateStops()
-                updateRenderedVehicles()
-            }
+            _cameraState.region = newValue
+            updateStops()
+            updateRenderedVehicles()
         }
     }
 
@@ -242,6 +245,13 @@ final class MapViewModel {
             vehiclesVisible: isPKP || distance <= MapConstants.vehicleVisibilityDistanceThreshold,
             vehicleCompact: distance > MapConstants.vehicleCompactDistanceThreshold
         )
+    }
+
+    private func applyPitchFlag(_ pitch: Double) {
+        let newPitched = pitch > 1.0
+        if isPitched3D != newPitched {
+            isPitched3D = newPitched
+        }
     }
 
     private func applyDistanceDerivedFlags(_ distance: Double) {
@@ -267,34 +277,19 @@ final class MapViewModel {
     }
 
     private func syncDerivedCameraProperties(from state: CameraState) {
-        let newPitched = state.pitch > 1.0
-        if isPitched3D != newPitched {
-            isPitched3D = newPitched
-        }
+        applyPitchFlag(state.pitch)
         applyDistanceDerivedFlags(state.distance)
         if abs(currentHeading - state.heading) >= 0.5 {
             currentHeading = state.heading
         }
     }
 
-    struct RequestKey: Hashable, Sendable {
+    private struct RequestKey: Equatable {
         let cityID: String
         let bbox: BoundingBox
-
-        init(cityID: String, bbox: BoundingBox) {
-            self.cityID = cityID
-            self.bbox = bbox
-        }
     }
 
-    private enum FetchState: Equatable {
-        case idle
-        case loading(RequestKey)
-        case loaded(RequestKey)
-        case failed(RequestKey)
-    }
-
-    @ObservationIgnored private var fetchState: FetchState = .idle
+    @ObservationIgnored private var activeRequest: RequestKey?
 
     /// Whether the currently selected city's viewport has a request in flight.
     private(set) var isLoading: Bool = false
@@ -308,12 +303,7 @@ final class MapViewModel {
     private(set) var errorMessage: String?
 
     private func updateLoadingAndErrorStates() {
-        let newLoading: Bool
-        if case .loading(let key) = fetchState {
-            newLoading = key.cityID == selectedCity.id
-        } else {
-            newLoading = false
-        }
+        let newLoading = activeRequest?.cityID == selectedCity.id
         if isLoading != newLoading {
             isLoading = newLoading
         }
@@ -325,9 +315,9 @@ final class MapViewModel {
     }
 
     /// The stop currently selected, looked up by `selectedStopID`. Derived —
-    /// never set this; write to `selectedStopID` instead.
+    /// never set this; write to `selection` instead.
     var selectedStop: Stop? {
-        guard let selectedStopID = selectedStopID else { return nil }
+        guard let selectedStopID else { return nil }
         return cachedStop(for: selectedStopID)
     }
 
@@ -335,33 +325,6 @@ final class MapViewModel {
     func cachedStop(for id: String) -> Stop? {
         stopIndexByID[id].map { cachedStops[$0] }
     }
-
-    /// Camera distance (in metres) above which stops are no longer displayed at all.
-    var stopVisibilityDistanceThreshold: Double {
-        isPKPSelected ? MapConstants.pkpStopVisibilityDistanceThreshold : MapConstants.stopVisibilityDistanceThreshold
-    }
-
-    /// Camera distance (in metres) above which stop name labels are hidden.
-    var stopTitleVisibilityDistanceThreshold: Double { MapConstants.stopTitleVisibilityDistanceThreshold }
-
-    /// Camera distance (in metres) above which vehicles are hidden and polling stops.
-    var vehicleVisibilityDistanceThreshold: Double = MapConstants.vehicleVisibilityDistanceThreshold
-
-    /// Camera distance (in metres) above which vehicles switch to compact dot display mode.
-    var vehicleCompactDistanceThreshold: Double { MapConstants.vehicleCompactDistanceThreshold }
-
-    /// Polling and TTL interval in seconds for live vehicle positions.
-    var vehicleTTL: TimeInterval { MapConstants.vehicleTTL }
-
-    /// Hard ceiling on vehicle markers rendered at once; extra vehicles are thinned to
-    /// one representative per grid cell (see `thinnedVehicles`).
-    nonisolated static var maxRenderedVehicles: Int { MapConstants.maxRenderedVehicles }
-
-    /// Margin expansion multiplier for buffering the visible viewport (e.g. 50% extra on each dimension).
-    nonisolated static var viewportBufferFactor: Double { MapConstants.viewportBufferFactor }
-
-    /// Maximum zoom ratio change allowed before re-evaluating viewport bounds.
-    nonisolated static var zoomChangeRatioThreshold: Double { MapConstants.zoomChangeRatioThreshold }
 
     private let apiClient: any TransitDataProviding
     private let persistence: any CameraPersistenceStore
@@ -375,9 +338,9 @@ final class MapViewModel {
     @ObservationIgnored private nonisolated(unsafe) var vehiclePollingTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var vehicleThinningTask: Task<Void, Never>?
     @ObservationIgnored private var vehicleThinningGeneration = UUID()
-    /// Region for which `stops` was last updated, expanded by `viewportBufferFactor`.
+    /// Region for which `stops` was last updated, expanded by `MapConstants.viewportBufferFactor`.
     @ObservationIgnored private var lastBufferedRegion: MKCoordinateRegion?
-    /// Region for which `vehicles` was last thinned, expanded by `viewportBufferFactor`.
+    /// Region for which `vehicles` was last thinned, expanded by `MapConstants.viewportBufferFactor`.
     @ObservationIgnored private var lastVehicleBufferedRegion: MKCoordinateRegion?
     @ObservationIgnored private var inFlightTiles: Set<MapTile> = []
     /// Session-only stop cache for the selected city.
@@ -391,7 +354,6 @@ final class MapViewModel {
     /// Live vehicles cache for current session/city.
     @ObservationIgnored private var vehicleIndexByID: [String: Int] = [:]
     @ObservationIgnored private var cachedVehicles: [VehiclePosition] = []
-    @ObservationIgnored private var lastVehicleFetchTime: Date?
 
     @ObservationIgnored private var errorsByCity: [String: String] = [:]
     /// Generation token guarding against stale responses: each fetch gets a
@@ -411,80 +373,68 @@ final class MapViewModel {
         self.persistence = persistence
         self.debounceDuration = debounceDuration
 
-        let chosenCity: City
-        if let initialCity = initialCity {
-            chosenCity = initialCity
-        } else if let savedId = persistence.loadLastSelectedCityID(),
-                  let found = City.allCities.first(where: { $0.id == savedId }) {
-            chosenCity = found
-        } else {
-            chosenCity = .warsaw
-        }
-
+        let chosenCity = initialCity
+            ?? persistence.loadLastSelectedCityID().flatMap { id in City.allCities.first(where: { $0.id == id }) }
+            ?? .warsaw
         self.selectedCity = chosenCity
 
-        var restoredCamera: (center: CLLocationCoordinate2D, distance: Double)?
-        if initialCity == nil,
-           let saved = persistence.loadSavedCamera(),
-           saved.latitude.isFinite, saved.longitude.isFinite, saved.distance.isFinite, saved.distance > 0,
-           (-90.0...90.0).contains(saved.latitude), (-180.0...180.0).contains(saved.longitude) {
-            let savedCoord = CLLocationCoordinate2D(latitude: saved.latitude, longitude: saved.longitude)
-            let isWithinCityBounds: Bool
-            if chosenCity.id == City.pkp.id {
-                isWithinCityBounds = true
-            } else {
-                let cityLocation = CLLocation(latitude: chosenCity.coordinate.latitude, longitude: chosenCity.coordinate.longitude)
-                let savedLocation = CLLocation(latitude: savedCoord.latitude, longitude: savedCoord.longitude)
-                isWithinCityBounds = savedLocation.distance(from: cityLocation) <= chosenCity.coverageRadiusMeters
-            }
-            if isWithinCityBounds {
-                restoredCamera = (center: savedCoord, distance: saved.distance)
-            }
-        }
+        let initialCamera = Self.initialCamera(
+            for: chosenCity,
+            savedCamera: initialCity == nil ? persistence.loadSavedCamera() : nil
+        )
+        self._cameraState = initialCamera.state
+        self._cameraPosition = initialCamera.position
 
-        let initialDistance: Double
-        if let restored = restoredCamera {
-            let delta = max(0.001, min(180.0, restored.distance / MapConstants.metresPerDegreeLatitude))
-            let region = MKCoordinateRegion(
-                center: restored.center,
-                span: MKCoordinateSpan(latitudeDelta: delta, longitudeDelta: delta)
-            )
-            self._cameraState = CameraState(
-                region: region,
-                distance: restored.distance,
-                center: restored.center
-            )
-            self._cameraPosition = .camera(MapCamera(
-                centerCoordinate: restored.center,
-                distance: restored.distance,
-                heading: 0,
-                pitch: 0
-            ))
-            initialDistance = restored.distance
-        } else {
-            let initialRegion = MKCoordinateRegion(
-                center: chosenCity.coordinate,
-                span: MKCoordinateSpan(
-                    latitudeDelta: chosenCity.defaultLatitudeDelta,
-                    longitudeDelta: chosenCity.defaultLongitudeDelta
-                )
-            )
-            let computedDistance = Self.approximateDistance(for: initialRegion)
-            self._cameraState = CameraState(
-                region: initialRegion,
-                distance: computedDistance,
-                center: chosenCity.coordinate
-            )
-            self._cameraPosition = .region(initialRegion)
-            initialDistance = computedDistance
-        }
-        let visibility = Self.computeVisibility(for: initialDistance, isPKP: chosenCity.id == City.pkp.id)
+        let visibility = Self.computeVisibility(
+            for: initialCamera.state.distance,
+            isPKP: chosenCity.id == City.pkp.id
+        )
         self.areStopsVisible = visibility.stopsVisible
         self.areStopTitlesVisible = visibility.stopTitlesVisible
         self.isVehiclesVisible = visibility.vehiclesVisible
         self.isVehicleCompactDisplayMode = visibility.vehicleCompact
-        self.isPitched3D = false
-        self.currentHeading = 0
+    }
+
+    private static func initialCamera(
+        for city: City,
+        savedCamera: (latitude: Double, longitude: Double, distance: Double)?
+    ) -> (state: CameraState, position: MapCameraPosition) {
+        if let saved = savedCamera,
+           saved.latitude.isFinite, saved.longitude.isFinite, saved.distance.isFinite, saved.distance > 0,
+           (-90.0...90.0).contains(saved.latitude), (-180.0...180.0).contains(saved.longitude) {
+            let savedCoord = CLLocationCoordinate2D(latitude: saved.latitude, longitude: saved.longitude)
+            let isWithinBounds = city.id == City.pkp.id
+                || savedCoord.distance(to: city.coordinate) <= city.coverageRadiusMeters
+            if isWithinBounds {
+                let delta = max(0.001, min(180.0, saved.distance / MapConstants.metresPerDegreeLatitude))
+                let region = MKCoordinateRegion(
+                    center: savedCoord,
+                    span: MKCoordinateSpan(latitudeDelta: delta, longitudeDelta: delta)
+                )
+                let state = CameraState(region: region, distance: saved.distance, center: savedCoord)
+                let position: MapCameraPosition = .camera(MapCamera(
+                    centerCoordinate: savedCoord,
+                    distance: saved.distance,
+                    heading: 0,
+                    pitch: 0
+                ))
+                return (state, position)
+            }
+        }
+
+        let defaultRegion = MKCoordinateRegion(
+            center: city.coordinate,
+            span: MKCoordinateSpan(
+                latitudeDelta: city.defaultLatitudeDelta,
+                longitudeDelta: city.defaultLongitudeDelta
+            )
+        )
+        let state = CameraState(
+            region: defaultRegion,
+            distance: approximateDistance(for: defaultRegion),
+            center: city.coordinate
+        )
+        return (state, .region(defaultRegion))
     }
 
     /// Persists current camera center and zoom distance to non-volatile storage.
@@ -541,57 +491,64 @@ final class MapViewModel {
     }
 
     func applyCameraState(_ newState: CameraState) {
-        guard newState != cameraState else {
-            // Still evaluate tracking release; nothing to observe otherwise.
-            releaseTrackingIfRoaming(to: newState.center)
-            releaseVehicleTrackingIfRoaming(to: newState.center)
-            return
-        }
+        releaseTrackingIfRoaming(to: newState.center)
+        guard newState != cameraState else { return }
         cameraState = newState
         updateStops()
         updateRenderedVehicles()
-        releaseTrackingIfRoaming(to: newState.center)
-        releaseVehicleTrackingIfRoaming(to: newState.center)
         scheduleViewportFetch()
         updateRegionSuggestion()
     }
 
     private func releaseTrackingIfRoaming(to center: CLLocationCoordinate2D) {
-        guard isTrackingUser, let userLocation = LocationManager.shared.userLocation else { return }
-        let cameraLoc = CLLocation(latitude: center.latitude, longitude: center.longitude)
-        if cameraLoc.distance(from: userLocation) > 150 {
+        if isTrackingUser, let userLocation = LocationManager.shared.userLocation,
+           center.distance(to: userLocation.coordinate) > 150 {
             isTrackingUser = false
+        }
+        if isTrackingVehicle, let selectedID = selectedVehicleID, let vehicle = cachedVehicle(for: selectedID),
+           center.distance(to: vehicle.coordinate) > 200 {
+            isTrackingVehicle = false
+        }
+    }
+
+    private func animateCamera(
+        center: CLLocationCoordinate2D,
+        distance: Double,
+        pitch: Double? = nil,
+        animation: Animation
+    ) {
+        let camera = MapCamera(
+            centerCoordinate: center,
+            distance: distance,
+            heading: currentHeading,
+            pitch: pitch ?? currentPitch
+        )
+        withAnimation(animation) {
+            cameraPosition = .camera(camera)
         }
     }
 
     /// Centers the map camera on the user's coordinate with a smooth spring animation.
     func centerOnUserLocation(coordinate: CLLocationCoordinate2D?) {
-        guard let coordinate = coordinate else { return }
+        guard let coordinate else { return }
         isTrackingUser = true
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
-            let camera = MapCamera(
-                centerCoordinate: coordinate,
-                distance: min(currentDistance, 4000),
-                heading: currentHeading,
-                pitch: currentPitch
-            )
-            cameraPosition = .camera(camera)
-            cameraState.center = coordinate
-        }
+        animateCamera(
+            center: coordinate,
+            distance: min(currentDistance, 4000),
+            animation: .spring(response: 0.45, dampingFraction: 0.8)
+        )
+        currentCenter = coordinate
     }
 
     /// Flattens the map view to 2D (pitch = 0) while keeping current center, distance, and heading intact.
     func resetPitchTo2D() {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-            let camera = MapCamera(
-                centerCoordinate: currentCenter,
-                distance: currentDistance,
-                heading: currentHeading,
-                pitch: 0
-            )
-            cameraPosition = .camera(camera)
-            cameraState.pitch = 0
-        }
+        animateCamera(
+            center: currentCenter,
+            distance: currentDistance,
+            pitch: 0,
+            animation: .spring(response: 0.4, dampingFraction: 0.85)
+        )
+        currentPitch = 0
     }
 
     /// Toggles between explore (normal) and satellite map rendering modes.
@@ -608,12 +565,10 @@ final class MapViewModel {
         let span = cameraState.region.span
 
         // Clear dismissed city memory if the user has panned far away from it (> 1.5x its radius)
-        if let dismissed = dismissedCityID, let city = City.allCities.first(where: { $0.id == dismissed }) {
-            let viewportLoc = CLLocation(latitude: center.latitude, longitude: center.longitude)
-            let dismissedLoc = CLLocation(latitude: city.coordinate.latitude, longitude: city.coordinate.longitude)
-            if viewportLoc.distance(from: dismissedLoc) > city.coverageRadiusMeters * 1.5 {
-                dismissedCityID = nil
-            }
+        if let dismissed = dismissedCityID,
+           let city = City.allCities.first(where: { $0.id == dismissed }),
+           center.distance(to: city.coordinate) > city.coverageRadiusMeters * 1.5 {
+            dismissedCityID = nil
         }
 
         let newSuggestion = Self.detectSuggestedCity(
@@ -641,35 +596,24 @@ final class MapViewModel {
         // Macro / nationwide zooms shouldn't trigger local city switch suggestions.
         guard regionSpan.latitudeDelta <= 0.6 else { return nil }
 
-        let viewportLocation = CLLocation(latitude: center.latitude, longitude: center.longitude)
-
-        struct Candidate {
-            let city: City
-            let distance: CLLocationDistance
-        }
-
-        var candidates: [Candidate] = []
+        var closestMatch: (city: City, distance: CLLocationDistance)?
         for city in allCities {
-            guard city.id != "pkp", city.id != currentCity.id else { continue }
+            guard city.id != City.pkp.id, city.id != currentCity.id else { continue }
             let radius = city.coverageRadiusMeters
             guard radius > 0 else { continue }
 
-            // Fast bounding-box prefilter: 1 degree latitude is ~111 km everywhere.
-            let maxDeltaLat = (radius / 111_000.0) * 1.05
+            // Fast bounding-box prefilter before great-circle distance.
+            let maxDeltaLat = (radius / MapConstants.metresPerDegreeLatitude) * 1.05
             guard abs(center.latitude - city.coordinate.latitude) <= maxDeltaLat else { continue }
 
-            let cityLocation = CLLocation(latitude: city.coordinate.latitude, longitude: city.coordinate.longitude)
-            let distance = viewportLocation.distance(from: cityLocation)
-            if distance <= radius {
-                candidates.append(Candidate(city: city, distance: distance))
+            let distance = center.distance(to: city.coordinate)
+            guard distance <= radius else { continue }
+            if distance < (closestMatch?.distance ?? .infinity) {
+                closestMatch = (city, distance)
             }
         }
 
-        guard !candidates.isEmpty else { return nil }
-
-        // Pick the closest candidate city to viewport center
-        candidates.sort { $0.distance < $1.distance }
-        guard let best = candidates.first else { return nil }
+        guard let best = closestMatch else { return nil }
 
         // If the user dismissed this specific city, don't nag them while they stay in it
         if best.city.id == dismissedCityID {
@@ -679,11 +623,7 @@ final class MapViewModel {
         // If current city is not PKP, verify the viewport is not still in the current city's territory.
         // Hysteresis: best candidate must be closer than current city by at least 3 km.
         if currentCity.id != City.pkp.id {
-            let currentCityLocation = CLLocation(
-                latitude: currentCity.coordinate.latitude,
-                longitude: currentCity.coordinate.longitude
-            )
-            let currentDistance = viewportLocation.distance(from: currentCityLocation)
+            let currentDistance = center.distance(to: currentCity.coordinate)
             if best.distance >= currentDistance - 3_000 {
                 return nil
             }
@@ -697,11 +637,7 @@ final class MapViewModel {
         guard city != selectedCity else { return }
         selectedCity = city
         persistence.saveLastSelectedCityID(city.id)
-        selectedStopID = nil
-        selectedVehicleID = nil
-        isTrackingVehicle = false
-        errorsByCity.removeAll()
-        errorMessage = nil
+        selection = nil
         isRetryableError = true
         clearStopCache()
         clearVehicleCache()
@@ -787,9 +723,7 @@ final class MapViewModel {
         switch loadDecision(for: cameraState.region) {
         case .cached:
             cancelActiveFetch()
-            fetchState = .idle
             errorsByCity[city.id] = nil
-            loadingPhase = nil
             updateLoadingAndErrorStates()
             updateStops(force: true)
         case .fetch(let bbox, let tiles):
@@ -808,14 +742,14 @@ final class MapViewModel {
             return
         }
         let visibleTiles = MapTileGrid.visibleTiles(in: cameraState.region)
-        let missingTiles = visibleTiles.filter { !isTileCovered($0) }
+        let missingTiles = visibleTiles.filter { !fetchedTiles.contains($0) }
         if missingTiles.isEmpty || missingTiles == inFlightTiles {
             return
         }
 
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             try? await Task.sleep(for: debounceDuration)
             guard !Task.isCancelled else { return }
             self.debounceTask = nil
@@ -831,7 +765,7 @@ final class MapViewModel {
             Logger.mapCache.debug("Load decision: invalid region (visible tiles is empty)")
             return .invalid
         }
-        let missingTiles = visibleTiles.filter { !isTileCovered($0) }
+        let missingTiles = visibleTiles.filter { !fetchedTiles.contains($0) }
         guard !missingTiles.isEmpty else {
             Logger.mapCache.debug("Cache HIT: all \(visibleTiles.count, privacy: .public) visible tiles at zoom \(MapTileGrid.zoom, privacy: .public) covered. Cached stops: \(self.cachedStops.count, privacy: .public)")
             return .cached
@@ -844,15 +778,9 @@ final class MapViewModel {
         return .fetch(bbox: bbox, tiles: missingTiles)
     }
 
-    /// A tile is covered if it has been fetched successfully in this session.
-    /// With fixed-size Zoom 12 tiles, there is no ancestor hierarchy.
-    private func isTileCovered(_ tile: MapTile) -> Bool {
-        fetchedTiles.contains(tile)
-    }
-
     private func startFetch(city: City, bbox: BoundingBox, tiles: Set<MapTile>) {
         let requestKey = RequestKey(cityID: city.id, bbox: bbox)
-        guard fetchState != .loading(requestKey) else {
+        guard activeRequest != requestKey else {
             #if DEBUG
             Logger.mapCache.debug("Start fetch skipped: already in flight for \(city.id, privacy: .public):\(bbox.queryValue, privacy: .public)")
             #endif
@@ -870,7 +798,7 @@ final class MapViewModel {
         requestGeneration = UUID()
         let generation = requestGeneration
         errorsByCity[city.id] = nil
-        fetchState = .loading(requestKey)
+        activeRequest = requestKey
         updateLoadingAndErrorStates()
 
         if lastRequestedCityID == nil {
@@ -886,7 +814,7 @@ final class MapViewModel {
         updateStops()
 
         activeFetchTask = Task { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             do {
                 let fetchedStops = try await self.apiClient.fetchStops(city: city.id, bbox: bbox)
                 guard !Task.isCancelled, generation == self.requestGeneration else {
@@ -915,8 +843,8 @@ final class MapViewModel {
                 self.fetchedTiles.formUnion(tiles)
                 self.inFlightTiles.removeAll()
                 self.errorsByCity.removeValue(forKey: city.id)
-                await self.updateStopsAsync(force: true)
-                self.fetchState = .loaded(requestKey)
+                self.updateStops(force: true)
+                self.activeRequest = nil
                 self.loadingPhase = nil
                 self.updateLoadingAndErrorStates()
                 Logger.mapCache.debug("Fetch completed for \(city.id, privacy: .public): +\(fetchedStops.count, privacy: .public) stops (total cached: \(self.cachedStops.count, privacy: .public)), +\(tiles.count, privacy: .public) tiles (total tiles: \(self.fetchedTiles.count, privacy: .public))")
@@ -929,7 +857,7 @@ final class MapViewModel {
                     Logger.mapCache.error("Fetch failed for \(city.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     self.inFlightTiles.removeAll()
                     self.errorsByCity[city.id] = Self.userFacingMessage(for: error)
-                    self.fetchState = .failed(requestKey)
+                    self.activeRequest = nil
                     self.loadingPhase = nil
                     self.updateLoadingAndErrorStates()
                 }
@@ -948,8 +876,8 @@ final class MapViewModel {
         // nothing after cancellation.
         requestGeneration = UUID()
         loadingPhase = nil
-        if case .loading = fetchState {
-            fetchState = .idle
+        if activeRequest != nil {
+            activeRequest = nil
             updateLoadingAndErrorStates()
         }
     }
@@ -964,7 +892,6 @@ final class MapViewModel {
         debounceTask = nil
         lastBufferedRegion = nil
         cancelActiveFetch()
-        inFlightTiles.removeAll()
         stopIndexByID.removeAll()
         cachedStops.removeAll()
         fetchedTiles.removeAll()
@@ -975,34 +902,59 @@ final class MapViewModel {
 
     // MARK: - Marker rendering
 
+    nonisolated private struct RegionBounds: Sendable {
+        let minLat: Double
+        let maxLat: Double
+        let minLon: Double
+        let maxLon: Double
+
+        init?(_ region: MKCoordinateRegion) {
+            let latSpan = region.span.latitudeDelta
+            let lonSpan = region.span.longitudeDelta
+            guard latSpan.isFinite, lonSpan.isFinite, latSpan > 0, lonSpan > 0 else {
+                return nil
+            }
+            let halfLat = latSpan / 2
+            let halfLon = lonSpan / 2
+            self.minLat = region.center.latitude - halfLat
+            self.maxLat = region.center.latitude + halfLat
+            self.minLon = region.center.longitude - halfLon
+            self.maxLon = region.center.longitude + halfLon
+        }
+
+        func contains(latitude: Double, longitude: Double) -> Bool {
+            latitude >= minLat && latitude <= maxLat
+                && longitude >= minLon && longitude <= maxLon
+        }
+
+        func contains(_ other: RegionBounds) -> Bool {
+            other.minLat >= minLat && other.maxLat <= maxLat
+                && other.minLon >= minLon && other.maxLon <= maxLon
+        }
+
+        var clampedBoundingBox: BoundingBox {
+            BoundingBox(
+                minLon: max(minLon, -180),
+                minLat: max(minLat, -90),
+                maxLon: min(maxLon, 180),
+                maxLat: min(maxLat, 90)
+            )
+        }
+    }
+
     /// Evaluates whether the current visible region is sufficiently covered by the buffered region
     /// so that re-thinning can be safely skipped.
     static func isRegion(_ inner: MKCoordinateRegion, safelyContainedIn outer: MKCoordinateRegion) -> Bool {
-        let innerHalfLat = inner.span.latitudeDelta / 2
-        let innerHalfLon = inner.span.longitudeDelta / 2
-        let outerHalfLat = outer.span.latitudeDelta / 2
-        let outerHalfLon = outer.span.longitudeDelta / 2
-
-        let innerMinLat = inner.center.latitude - innerHalfLat
-        let innerMaxLat = inner.center.latitude + innerHalfLat
-        let innerMinLon = inner.center.longitude - innerHalfLon
-        let innerMaxLon = inner.center.longitude + innerHalfLon
-
-        let outerMinLat = outer.center.latitude - outerHalfLat
-        let outerMaxLat = outer.center.latitude + outerHalfLat
-        let outerMinLon = outer.center.longitude - outerHalfLon
-        let outerMaxLon = outer.center.longitude + outerHalfLon
-
-        // Ensure inner bounds are strictly within outer bounds
-        guard innerMinLat >= outerMinLat, innerMaxLat <= outerMaxLat,
-              innerMinLon >= outerMinLon, innerMaxLon <= outerMaxLon else {
+        guard let innerBounds = RegionBounds(inner),
+              let outerBounds = RegionBounds(outer),
+              outerBounds.contains(innerBounds) else {
             return false
         }
 
         // Check if zoom scale hasn't shifted significantly
-        let nominalOuterLatSpan = outer.span.latitudeDelta / viewportBufferFactor
+        let nominalOuterLatSpan = outer.span.latitudeDelta / MapConstants.viewportBufferFactor
         let latRatio = inner.span.latitudeDelta / max(nominalOuterLatSpan, 1e-6)
-        return abs(latRatio - 1.0) <= zoomChangeRatioThreshold
+        return abs(latRatio - 1.0) <= MapConstants.zoomChangeRatioThreshold
     }
 
     /// Computes an expanded buffered region for a given viewport region.
@@ -1010,8 +962,8 @@ final class MapViewModel {
         MKCoordinateRegion(
             center: region.center,
             span: MKCoordinateSpan(
-                latitudeDelta: region.span.latitudeDelta * viewportBufferFactor,
-                longitudeDelta: region.span.longitudeDelta * viewportBufferFactor
+                latitudeDelta: region.span.latitudeDelta * MapConstants.viewportBufferFactor,
+                longitudeDelta: region.span.longitudeDelta * MapConstants.viewportBufferFactor
             )
         )
     }
@@ -1021,26 +973,15 @@ final class MapViewModel {
         from cachedStops: [Stop],
         in region: MKCoordinateRegion
     ) -> [Stop] {
-        let latitudeSpan = region.span.latitudeDelta
-        let longitudeSpan = region.span.longitudeDelta
-        guard latitudeSpan.isFinite, longitudeSpan.isFinite,
-              latitudeSpan > 0, longitudeSpan > 0
-        else { return [] }
-
-        let minLat = region.center.latitude - latitudeSpan / 2
-        let maxLat = region.center.latitude + latitudeSpan / 2
-        let minLon = region.center.longitude - longitudeSpan / 2
-        let maxLon = region.center.longitude + longitudeSpan / 2
-
-        return cachedStops.filter { stop in
-            stop.latitude >= minLat && stop.latitude <= maxLat
-                && stop.longitude >= minLon && stop.longitude <= maxLon
-        }.sorted { $0.id < $1.id }
+        guard let bounds = RegionBounds(region) else { return [] }
+        return cachedStops
+            .filter { bounds.contains(latitude: $0.latitude, longitude: $0.longitude) }
+            .sorted { $0.id < $1.id }
     }
 
     /// Fast synchronous update of visible stops for the current viewport.
     func updateStops(force: Bool = false) {
-        guard areStopsVisible && !cachedStops.isEmpty else {
+        guard areStopsVisible, !cachedStops.isEmpty else {
             lastBufferedRegion = nil
             if !stops.isEmpty {
                 stops = []
@@ -1049,11 +990,7 @@ final class MapViewModel {
         }
 
         let currentRegion = cameraState.region
-        guard currentRegion.span.latitudeDelta.isFinite,
-              currentRegion.span.longitudeDelta.isFinite,
-              currentRegion.span.latitudeDelta > 0,
-              currentRegion.span.longitudeDelta > 0
-        else { return }
+        guard RegionBounds(currentRegion) != nil else { return }
 
         if !force, let lastBuffered = lastBufferedRegion,
            Self.isRegion(currentRegion, safelyContainedIn: lastBuffered) {
@@ -1068,21 +1005,15 @@ final class MapViewModel {
         }
     }
 
-    func updateStopsAsync(force: Bool = false) async {
-        updateStops(force: force)
-    }
-
     // MARK: - Live Vehicles
 
     func startVehiclePolling() {
-        guard isVehiclesVisible else { return }
-        if vehiclePollingTask != nil { return }
+        guard isVehiclesVisible, vehiclePollingTask == nil else { return }
         vehiclePollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.fetchVehiclesForCurrentViewport()
                 do {
-                    let interval = self?.vehicleTTL ?? 15.0
-                    try await Task.sleep(for: .seconds(interval))
+                    try await Task.sleep(for: .seconds(MapConstants.vehicleTTL))
                 } catch {
                     break
                 }
@@ -1099,19 +1030,11 @@ final class MapViewModel {
         guard isVehiclesVisible else { return }
         let city = selectedCity
         let region = cameraState.region
-        guard region.span.latitudeDelta.isFinite,
-              region.span.longitudeDelta.isFinite,
-              region.span.latitudeDelta > 0,
-              region.span.longitudeDelta > 0
-        else { return }
+        guard RegionBounds(region) != nil else { return }
 
         let buffer = Self.bufferedRegion(for: region)
-        let bbox = BoundingBox(
-            minLon: max(buffer.center.longitude - buffer.span.longitudeDelta / 2, -180),
-            minLat: max(buffer.center.latitude - buffer.span.latitudeDelta / 2, -90),
-            maxLon: min(buffer.center.longitude + buffer.span.longitudeDelta / 2, 180),
-            maxLat: min(buffer.center.latitude + buffer.span.latitudeDelta / 2, 90)
-        )
+        guard let bufferBounds = RegionBounds(buffer) else { return }
+        let bbox = bufferBounds.clampedBoundingBox
 
         do {
             let fetched = try await apiClient.fetchVehicles(city: city.id, bbox: bbox)
@@ -1122,7 +1045,6 @@ final class MapViewModel {
                 isRetryableError = true
             }
 
-            lastVehicleFetchTime = Date()
             await updateCachedVehiclesAsync(fetched, for: buffer)
         } catch is CancellationError {
             return
@@ -1138,6 +1060,7 @@ final class MapViewModel {
     private func updateCachedVehiclesAsync(_ newVehicles: [VehiclePosition], for buffer: MKCoordinateRegion) async {
         cachedVehicles = newVehicles
         var indexMap: [String: Int] = [:]
+        indexMap.reserveCapacity(newVehicles.count)
         for (i, v) in newVehicles.enumerated() {
             indexMap[v.id] = i
         }
@@ -1145,42 +1068,15 @@ final class MapViewModel {
 
         // If tracked vehicle moved, smoothly update camera
         if isTrackingVehicle, let selectedID = selectedVehicleID, let tracked = cachedVehicle(for: selectedID) {
-            let targetDistance = currentDistance > 0 ? currentDistance : vehicleCompactDistanceThreshold
-            withAnimation(.easeInOut(duration: 1.0)) {
-                cameraPosition = .camera(MapCamera(
-                    centerCoordinate: tracked.coordinate,
-                    distance: targetDistance,
-                    heading: currentHeading,
-                    pitch: currentPitch
-                ))
-            }
+            let targetDistance = currentDistance > 0 ? currentDistance : MapConstants.vehicleCompactDistanceThreshold
+            animateCamera(
+                center: tracked.coordinate,
+                distance: targetDistance,
+                animation: .easeInOut(duration: 1.0)
+            )
         }
 
         await updateRenderedVehiclesAsync(for: buffer, force: true)
-    }
-
-    private func updateCachedVehicles(_ newVehicles: [VehiclePosition], for buffer: MKCoordinateRegion) {
-        cachedVehicles = newVehicles
-        var indexMap: [String: Int] = [:]
-        for (i, v) in newVehicles.enumerated() {
-            indexMap[v.id] = i
-        }
-        vehicleIndexByID = indexMap
-
-        // If tracked vehicle moved, smoothly update camera
-        if isTrackingVehicle, let selectedID = selectedVehicleID, let tracked = cachedVehicle(for: selectedID) {
-            let targetDistance = currentDistance > 0 ? currentDistance : vehicleCompactDistanceThreshold
-            withAnimation(.easeInOut(duration: 1.0)) {
-                cameraPosition = .camera(MapCamera(
-                    centerCoordinate: tracked.coordinate,
-                    distance: targetDistance,
-                    heading: currentHeading,
-                    pitch: currentPitch
-                ))
-            }
-        }
-
-        updateRenderedVehicles(for: buffer, force: true)
     }
 
     private func clearVehicleCache() {
@@ -1190,156 +1086,95 @@ final class MapViewModel {
         vehicleIndexByID.removeAll()
         vehicles.removeAll()
         lastVehicleBufferedRegion = nil
-        lastVehicleFetchTime = nil
-    }
-
-    func selectVehicleAndCenter(_ id: String) {
-        selectedVehicleID = id
-        selectedStopID = nil
-        isTrackingVehicle = true
-        if let vehicle = cachedVehicle(for: id) {
-            let targetDistance = currentDistance > 0 ? min(currentDistance, vehicleCompactDistanceThreshold) : vehicleCompactDistanceThreshold
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                cameraPosition = .camera(MapCamera(
-                    centerCoordinate: vehicle.coordinate,
-                    distance: targetDistance,
-                    heading: currentHeading,
-                    pitch: currentPitch
-                ))
-            }
-        }
     }
 
     func cachedVehicle(for id: String) -> VehiclePosition? {
         vehicleIndexByID[id].map { cachedVehicles[$0] }
     }
 
-    var selectedVehicle: VehiclePosition? {
-        guard let id = selectedVehicleID else { return nil }
-        return cachedVehicle(for: id)
+    nonisolated private struct VehicleThinningPlan: Sendable {
+        let vehicles: [VehiclePosition]
+        let region: MKCoordinateRegion
+        let selectedVehicleID: String?
+        let generation: UUID
     }
 
-    private func releaseVehicleTrackingIfRoaming(to center: CLLocationCoordinate2D) {
-        guard isTrackingVehicle, let selectedID = selectedVehicleID, let vehicle = cachedVehicle(for: selectedID) else { return }
-        let cameraLoc = CLLocation(latitude: center.latitude, longitude: center.longitude)
-        let vehicleLoc = CLLocation(latitude: vehicle.coordinate.latitude, longitude: vehicle.coordinate.longitude)
-        if cameraLoc.distance(from: vehicleLoc) > 200 {
-            isTrackingVehicle = false
-        }
-    }
-
-    func updateRenderedVehiclesAsync(for buffer: MKCoordinateRegion? = nil, force: Bool = false) async {
-        guard isVehiclesVisible && !cachedVehicles.isEmpty else {
+    private func prepareVehicleThinning(for buffer: MKCoordinateRegion?, force: Bool) -> VehicleThinningPlan? {
+        guard isVehiclesVisible, !cachedVehicles.isEmpty else {
             vehicleThinningTask?.cancel()
             vehicleThinningTask = nil
             lastVehicleBufferedRegion = nil
             if !vehicles.isEmpty {
                 vehicles = []
             }
-            return
+            return nil
         }
 
         let currentRegion = cameraState.region
-        guard currentRegion.span.latitudeDelta.isFinite,
-              currentRegion.span.longitudeDelta.isFinite,
-              currentRegion.span.latitudeDelta > 0,
-              currentRegion.span.longitudeDelta > 0
-        else { return }
+        guard RegionBounds(currentRegion) != nil else { return nil }
 
         let targetBuffer = buffer ?? Self.bufferedRegion(for: currentRegion)
 
         if !force, buffer == nil, let last = lastVehicleBufferedRegion,
            Self.isRegion(currentRegion, safelyContainedIn: last) {
-            return
+            return nil
         }
 
-        let allVehicles = cachedVehicles
-        let selectedID = selectedVehicleID
-        let maxCount = Self.maxRenderedVehicles
+        let maxCount = MapConstants.maxRenderedVehicles
         let generation = UUID()
         vehicleThinningGeneration = generation
 
-        if allVehicles.count <= maxCount {
+        if cachedVehicles.count <= maxCount {
             vehicleThinningTask?.cancel()
             vehicleThinningTask = nil
             let rendered = Self.computeRenderedVehicles(
-                from: allVehicles,
+                from: cachedVehicles,
                 in: targetBuffer,
-                selectedVehicleID: selectedID,
+                selectedVehicleID: selectedVehicleID,
                 maxRenderedVehicles: maxCount
             )
             applyRenderedVehicles(rendered, for: targetBuffer, generation: generation)
-            return
+            return nil
         }
+
+        return VehicleThinningPlan(
+            vehicles: cachedVehicles,
+            region: targetBuffer,
+            selectedVehicleID: selectedVehicleID,
+            generation: generation
+        )
+    }
+
+    func updateRenderedVehiclesAsync(for buffer: MKCoordinateRegion? = nil, force: Bool = false) async {
+        guard let plan = prepareVehicleThinning(for: buffer, force: force) else { return }
 
         vehicleThinningTask?.cancel()
         let rendered = await Task.detached(priority: .userInitiated) {
             Self.computeRenderedVehicles(
-                from: allVehicles,
-                in: targetBuffer,
-                selectedVehicleID: selectedID,
-                maxRenderedVehicles: maxCount
+                from: plan.vehicles,
+                in: plan.region,
+                selectedVehicleID: plan.selectedVehicleID,
+                maxRenderedVehicles: MapConstants.maxRenderedVehicles
             )
         }.value
 
-        guard !Task.isCancelled, generation == vehicleThinningGeneration else { return }
-        finishVehicleThinning(rendered, for: targetBuffer, generation: generation)
+        guard !Task.isCancelled, plan.generation == vehicleThinningGeneration else { return }
+        finishVehicleThinning(rendered, for: plan.region, generation: plan.generation)
     }
 
     func updateRenderedVehicles(for buffer: MKCoordinateRegion? = nil, force: Bool = false) {
-        guard isVehiclesVisible && !cachedVehicles.isEmpty else {
-            vehicleThinningTask?.cancel()
-            vehicleThinningTask = nil
-            lastVehicleBufferedRegion = nil
-            if !vehicles.isEmpty {
-                vehicles = []
-            }
-            return
-        }
-
-        let currentRegion = cameraState.region
-        guard currentRegion.span.latitudeDelta.isFinite,
-              currentRegion.span.longitudeDelta.isFinite,
-              currentRegion.span.latitudeDelta > 0,
-              currentRegion.span.longitudeDelta > 0
-        else { return }
-
-        let targetBuffer = buffer ?? Self.bufferedRegion(for: currentRegion)
-
-        if !force, buffer == nil, let last = lastVehicleBufferedRegion,
-           Self.isRegion(currentRegion, safelyContainedIn: last) {
-            return
-        }
-
-        let allVehicles = cachedVehicles
-        let selectedID = selectedVehicleID
-        let maxCount = Self.maxRenderedVehicles
-        let generation = UUID()
-        vehicleThinningGeneration = generation
-
-        if allVehicles.count <= maxCount {
-            vehicleThinningTask?.cancel()
-            vehicleThinningTask = nil
-            let rendered = Self.computeRenderedVehicles(
-                from: allVehicles,
-                in: targetBuffer,
-                selectedVehicleID: selectedID,
-                maxRenderedVehicles: maxCount
-            )
-            applyRenderedVehicles(rendered, for: targetBuffer, generation: generation)
-            return
-        }
+        guard let plan = prepareVehicleThinning(for: buffer, force: force) else { return }
 
         vehicleThinningTask?.cancel()
         vehicleThinningTask = Task.detached(priority: .userInitiated) { [weak self] in
             let rendered = Self.computeRenderedVehicles(
-                from: allVehicles,
-                in: targetBuffer,
-                selectedVehicleID: selectedID,
-                maxRenderedVehicles: maxCount
+                from: plan.vehicles,
+                in: plan.region,
+                selectedVehicleID: plan.selectedVehicleID,
+                maxRenderedVehicles: MapConstants.maxRenderedVehicles
             )
             guard !Task.isCancelled else { return }
-            await self?.finishVehicleThinning(rendered, for: targetBuffer, generation: generation)
+            await self?.finishVehicleThinning(rendered, for: plan.region, generation: plan.generation)
         }
     }
 
@@ -1365,20 +1200,10 @@ final class MapViewModel {
         selectedVehicleID: String?,
         maxRenderedVehicles: Int
     ) -> [VehiclePosition] {
-        let latitudeSpan = region.span.latitudeDelta
-        let longitudeSpan = region.span.longitudeDelta
-        guard latitudeSpan.isFinite, longitudeSpan.isFinite,
-              latitudeSpan > 0, longitudeSpan > 0
-        else { return [] }
+        guard let bounds = RegionBounds(region) else { return [] }
 
-        let minLat = region.center.latitude - latitudeSpan / 2
-        let maxLat = region.center.latitude + latitudeSpan / 2
-        let minLon = region.center.longitude - longitudeSpan / 2
-        let maxLon = region.center.longitude + longitudeSpan / 2
-
-        let visibleVehicles = cachedVehicles.filter { v in
-            v.latitude >= minLat && v.latitude <= maxLat
-                && v.longitude >= minLon && v.longitude <= maxLon
+        let visibleVehicles = cachedVehicles.filter {
+            bounds.contains(latitude: $0.latitude, longitude: $0.longitude)
         }
 
         var rendered: [VehiclePosition]
@@ -1388,10 +1213,9 @@ final class MapViewModel {
             rendered = visibleVehicles.sorted { $0.id < $1.id }
         }
 
-        if let selectedVehicleID = selectedVehicleID,
+        if let selectedVehicleID,
            let selected = cachedVehicles.first(where: { $0.id == selectedVehicleID }),
-           selected.latitude >= minLat && selected.latitude <= maxLat,
-           selected.longitude >= minLon && selected.longitude <= maxLon,
+           bounds.contains(latitude: selected.latitude, longitude: selected.longitude),
            !rendered.contains(where: { $0.id == selectedVehicleID }) {
             rendered.append(selected)
             rendered.sort { $0.id < $1.id }
@@ -1419,19 +1243,10 @@ final class MapViewModel {
         latStep: Double,
         lonStep: Double
     ) -> Int? {
-        let latitudeSpan = region.span.latitudeDelta
-        let longitudeSpan = region.span.longitudeDelta
-        guard latitudeSpan.isFinite, longitudeSpan.isFinite,
-              latitudeSpan > 0, longitudeSpan > 0
-        else { return nil }
-        let minLat = region.center.latitude - latitudeSpan / 2
-        let maxLat = region.center.latitude + latitudeSpan / 2
-        let minLon = region.center.longitude - longitudeSpan / 2
-        let maxLon = region.center.longitude + longitudeSpan / 2
-
-        guard coord.latitude >= minLat && coord.latitude <= maxLat,
-              coord.longitude >= minLon && coord.longitude <= maxLon
-        else { return nil }
+        guard let bounds = RegionBounds(region),
+              bounds.contains(latitude: coord.latitude, longitude: coord.longitude) else {
+            return nil
+        }
 
         let col = Int(floor(coord.longitude / lonStep))
         let row = Int(floor(coord.latitude / latStep))

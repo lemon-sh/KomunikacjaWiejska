@@ -12,7 +12,6 @@ struct MapViewModelTests {
     func testMapViewModelControls() {
         let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
         #expect(viewModel.selectedMapMode == .explore)
-        #expect(viewModel.isShowingMapModes == false)
         #expect(viewModel.isTrackingUser == false)
 
         viewModel.selectedMapMode = .satellite
@@ -205,15 +204,15 @@ struct MapViewModelTests {
         #expect(viewModel.cachedStop(for: "stop-b")?.name == "Stop Beta")
         #expect(viewModel.cachedStop(for: "non-existent") == nil)
 
-        viewModel.selectedStopID = "stop-a"
+        viewModel.selection = .stop("stop-a")
         #expect(viewModel.selectedStop?.id == "stop-a")
         #expect(viewModel.selectedStop?.name == "Stop Alpha")
 
-        viewModel.selectedStopID = "stop-b"
+        viewModel.selection = .stop("stop-b")
         #expect(viewModel.selectedStop?.id == "stop-b")
         #expect(viewModel.selectedStop?.name == "Stop Beta")
 
-        viewModel.selectedStopID = nil
+        viewModel.selection = nil
         #expect(viewModel.selectedStop == nil)
     }
 
@@ -235,7 +234,7 @@ struct MapViewModelTests {
         let provider = StubStopsProvider(stops: allStops)
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
         viewModel.currentDistance = 2_000
-        viewModel.selectedStopID = targetID
+        viewModel.selection = .stop(targetID)
 
         viewModel.loadStopsForSelectedCity()
         try await waitUntilLoaded(viewModel)
@@ -261,11 +260,11 @@ struct MapViewModelTests {
         let provider = StubStopsProvider(vehicles: allVehicles)
         let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
         viewModel.currentDistance = 4_000
-        viewModel.selectedVehicleID = selectedID
+        viewModel.selection = .vehicle(selectedID)
 
         await viewModel.fetchVehiclesForCurrentViewport()
 
-        #expect(viewModel.vehicles.count <= MapViewModel.maxRenderedVehicles)
+        #expect(viewModel.vehicles.count <= MapConstants.maxRenderedVehicles)
         #expect(viewModel.vehicles.contains(where: { $0.id == selectedID }))
     }
 
@@ -273,15 +272,15 @@ struct MapViewModelTests {
     func testVehicleDistanceThresholds() {
         let viewModel = MapViewModel(apiClient: StubStopsProvider(), initialCity: .warsaw)
 
-        viewModel.currentDistance = 1_500
+        viewModel.currentDistance = MapConstants.vehicleCompactDistanceThreshold - 500
         #expect(viewModel.isVehiclesVisible == true)
         #expect(viewModel.isVehicleCompactDisplayMode == false)
 
-        viewModel.currentDistance = 5_000
+        viewModel.currentDistance = MapConstants.vehicleCompactDistanceThreshold + 1_000
         #expect(viewModel.isVehiclesVisible == true)
         #expect(viewModel.isVehicleCompactDisplayMode == true)
 
-        viewModel.currentDistance = 12_000
+        viewModel.currentDistance = MapConstants.vehicleVisibilityDistanceThreshold + 1_000
         #expect(viewModel.isVehiclesVisible == false)
     }
 
@@ -317,7 +316,7 @@ struct MapViewModelTests {
         await viewModel.fetchVehiclesForCurrentViewport()
 
         // Select stop first
-        viewModel.selectedStopID = stop.id
+        viewModel.selection = .stop(stop.id)
         #expect(viewModel.selectedStopID == stop.id)
         #expect(viewModel.selectedVehicleID == nil)
 
@@ -385,13 +384,13 @@ struct MapViewModelTests {
         let originalStops = viewModel.stops
         #expect(originalStops.count == 2)
 
-        viewModel.selectedStopID = "stop-a"
+        viewModel.selection = .stop("stop-a")
         #expect(viewModel.stops == originalStops)
 
-        viewModel.selectedStopID = "stop-b"
+        viewModel.selection = .stop("stop-b")
         #expect(viewModel.stops == originalStops)
 
-        viewModel.selectedStopID = nil
+        viewModel.selection = nil
         #expect(viewModel.stops == originalStops)
     }
 
@@ -410,7 +409,7 @@ struct MapViewModelTests {
 
         let currentCenter = viewModel.currentCenter
         let currentDistance = viewModel.currentDistance
-        let currentRegion = viewModel.visibleRegion!
+        let currentRegion = viewModel.visibleRegion
 
         let rotatedState = MapViewModel.CameraState(
             region: currentRegion,

@@ -31,12 +31,14 @@ struct TransitMapView: View {
     }
 
     private var currentDetailFromSelection: ActiveMapDetail? {
-        if let stopID = viewModel.selectedStopID, let stop = viewModel.cachedStop(for: stopID) {
-            return .stop(stop)
-        } else if let vehicleID = viewModel.selectedVehicleID, let vehicle = viewModel.cachedVehicle(for: vehicleID) {
-            return .vehicle(vehicle)
+        switch viewModel.selection {
+        case .stop(let id):
+            return viewModel.cachedStop(for: id).map(ActiveMapDetail.stop)
+        case .vehicle(let id):
+            return viewModel.cachedVehicle(for: id).map(ActiveMapDetail.vehicle)
+        case nil:
+            return nil
         }
-        return nil
     }
 
     private func selectStop(_ stop: Stop) {
