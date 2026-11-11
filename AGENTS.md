@@ -62,7 +62,7 @@ Always refer to the dedicated guides in [`docs/`](docs) for deep technical speci
   - All refactor phases, tasks, and decision records must be namespaced by refactor iteration: `<refactor>P<phase>-<task>` (e.g. `1P2-3`, `2P1-6`, or `2P1` for the whole phase) and `<refactor>D<decision>` (e.g. `1D1`, `2D1`).
   - Code comments and architecture documentation must always use this namespaced format to ensure cross-references remain traceable across refactor cycles.
 - **Testing:**
-  - Use Swift `Testing` (`import Testing`, `@Suite`, `@Test`, `#expect`) in [`KomunikacjaWiejskaTests`](file:///Users/lemon/Documents/coding/KomunikacjaWiejska/KomunikacjaWiejskaTests/KomunikacjaWiejskaTests.swift).
+  - Use Swift `Testing` (`import Testing`, `@Suite`, `@Test`, `#expect`) in [`KomunikacjaWiejskaTests`](KomunikacjaWiejskaTests).
   - Tests must be hermetic: inject `StopsProviding` stubs and `MockURLProtocol`; never hit the production API.
 - **Tooling Awareness:**
   - When running within Xcode: use `xcode-tools` (`BuildProject`, `RunAllTests`, `XcodeRead`, `XcodeWrite`) instead of shell commands like `ls` or `find` to minimize user approval prompts.
