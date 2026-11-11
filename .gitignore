@@ -11,4 +11,4 @@ DerivedData/
 
 .vscode/settings.json
 buildServer.json
-profiling/
+etc/
