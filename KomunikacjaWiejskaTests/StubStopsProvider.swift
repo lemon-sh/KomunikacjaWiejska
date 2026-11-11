@@ -2,242 +2,357 @@ import Foundation
 import os
 @testable import KomunikacjaWiejska
 
-/// In-memory stand-in for `ZbiorkomAPIClient`. Records every request so tests
-/// can assert call counts, and either returns a fixture set or throws a
-/// configured error. Never touches the network.
-final class StubStopsProvider: StopsProviding, @unchecked Sendable {
-    /// Gate for simulating in-flight requests. When `holdsRequests` is true,
-    /// every `fetchStops` call parks on a continuation until `openGate()`.
-    private final class Gate: @unchecked Sendable {
-        var holdsRequests: Bool
-        var parked: [CheckedContinuation<Void, Never>] = []
+/// Hermetic `TransitDataProviding` stub for `MapViewModel` and UI tests.
 
-        init(holdsRequests: Bool) {
-            self.holdsRequests = holdsRequests
-        }
+nonisolated final class StubStopsProvider: TransitDataProviding, @unchecked Sendable {
+    struct MapRequest: Equatable, Sendable {
+        let city: String
+        let zoom: Double
+        let bbox: BoundingBox
     }
 
-    private struct State {
-        var callCount = 0
-        var cancellationCount = 0
-        var requestedCities: [String] = []
-        var requestedBBoxes: [BoundingBox?] = []
-        var vehicleCallCount = 0
-        var requestedVehicleCities: [String] = []
-        var requestedVehicleBBoxes: [BoundingBox] = []
+    struct StopRequest: Equatable, Sendable {
+        let city: String
+        let stopId: String
+        let limit: Int
     }
 
-    private let state = OSAllocatedUnfairLock(initialState: State())
-    private let gate: OSAllocatedUnfairLock<Gate>
-    private let handler: @Sendable (String, BoundingBox?) -> Result<[Stop], Error>
-    private let vehicleHandler: @Sendable (String, BoundingBox) -> Result<[VehiclePosition], Error>
-    /// Replaces every fixture after construction, so tests can simulate a
-    /// refresh returning updated details for the same stop IDs.
-    private let overrideStops = OSAllocatedUnfairLock<[Stop]?>(initialState: nil)
+    struct VehicleRequest: Equatable, Sendable {
+        let city: String
+        let vehicleId: String
+    }
+
+    struct TripRequest: Equatable, Sendable {
+        let city: String
+        let tripId: String
+    }
+
+    private struct State: Sendable {
+        var mapRequests: [MapRequest] = []
+        var stopRequests: [StopRequest] = []
+        var vehicleRequests: [VehicleRequest] = []
+        var tripRequests: [TripRequest] = []
+        var metadataRequests: [VehicleRequest] = []
+        var citiesFetchCount: Int = 0
+    }
+
+    private let stateLock = OSAllocatedUnfairLock(initialState: State())
+
+    var citiesHandler: @Sendable () async throws -> [City]
+    var mapStreamHandler: @Sendable (String, Double, BoundingBox) -> AsyncThrowingStream<MapFeaturesEvent, Error>
+    var stopStreamHandler: @Sendable (String, String, Int) -> AsyncThrowingStream<StopStreamEvent, Error>
+    var vehicleStreamHandler: @Sendable (String, String) -> AsyncThrowingStream<TripStreamEvent, Error>
+    var tripStreamHandler: @Sendable (String, String) -> AsyncThrowingStream<TripStreamEvent, Error>
+    var vehicleMetadataHandler: @Sendable (String, String) async throws -> VehicleMetadata
 
     init(
-        handler: @escaping @Sendable (String, BoundingBox?) -> Result<[Stop], Error>,
-        vehicleHandler: @escaping @Sendable (String, BoundingBox) -> Result<[VehiclePosition], Error> = { _, _ in .success([]) },
-        holdsRequests: Bool = false
+        citiesHandler: @escaping @Sendable () async throws -> [City] = { StubStopsProvider.sampleCities },
+        mapStreamHandler: @escaping @Sendable (String, Double, BoundingBox) -> AsyncThrowingStream<MapFeaturesEvent, Error> = { _, _, _ in
+            AsyncThrowingStream { $0.finish() }
+        },
+        stopStreamHandler: @escaping @Sendable (String, String, Int) -> AsyncThrowingStream<StopStreamEvent, Error> = { _, _, _ in
+            AsyncThrowingStream { $0.finish() }
+        },
+        vehicleStreamHandler: @escaping @Sendable (String, String) -> AsyncThrowingStream<TripStreamEvent, Error> = { _, _ in
+            AsyncThrowingStream { $0.finish() }
+        },
+        tripStreamHandler: @escaping @Sendable (String, String) -> AsyncThrowingStream<TripStreamEvent, Error> = { _, _ in
+            AsyncThrowingStream { $0.finish() }
+        },
+        vehicleMetadataHandler: @escaping @Sendable (String, String) async throws -> VehicleMetadata = { _, id in
+            VehicleMetadata(id: id)
+        }
     ) {
-        self.handler = handler
-        self.vehicleHandler = vehicleHandler
-        self.gate = OSAllocatedUnfairLock(initialState: Gate(holdsRequests: holdsRequests))
+        self.citiesHandler = citiesHandler
+        self.mapStreamHandler = mapStreamHandler
+        self.stopStreamHandler = stopStreamHandler
+        self.vehicleStreamHandler = vehicleStreamHandler
+        self.tripStreamHandler = tripStreamHandler
+        self.vehicleMetadataHandler = vehicleMetadataHandler
     }
 
+    /// Convenience builder emitting static `[MapFeaturesEvent]` sequences in order.
     convenience init(
-        stops: [Stop] = [],
-        error: Error? = nil,
-        resultsByCity: [String: Result<[Stop], Error>] = [:],
-        vehicles: [VehiclePosition] = [],
-        vehicleError: Error? = nil,
-        holdsRequests: Bool = false
+        cities: [City] = StubStopsProvider.sampleCities,
+        mapEventsHandler: @escaping @Sendable (String, Double, BoundingBox) async throws -> [MapFeaturesEvent]
     ) {
         self.init(
-            handler: { city, _ in
-                if let result = resultsByCity[city] {
-                    return result
+            citiesHandler: { cities },
+            mapStreamHandler: { city, zoom, bbox in
+                AsyncThrowingStream { continuation in
+                    let task = Task {
+                        do {
+                            for event in try await mapEventsHandler(city, zoom, bbox) {
+                                continuation.yield(event)
+                            }
+                            continuation.finish()
+                        } catch {
+                            continuation.finish(throwing: error)
+                        }
+                    }
+                    continuation.onTermination = { _ in task.cancel() }
                 }
-                if let error = error {
-                    return .failure(error)
-                }
-                return .success(stops)
-            },
-            vehicleHandler: { _, _ in
-                if let vehicleError = vehicleError {
-                    return .failure(vehicleError)
-                }
-                return .success(vehicles)
-            },
-            holdsRequests: holdsRequests
+            }
         )
     }
 
-    var callCount: Int {
-        state.withLock { $0.callCount }
+    var requestedMapRequests: [MapRequest] {
+        stateLock.withLock { $0.mapRequests }
     }
 
-    var vehicleCallCount: Int {
-        state.withLock { $0.vehicleCallCount }
+    var requestedStopRequests: [StopRequest] {
+        stateLock.withLock { $0.stopRequests }
     }
 
-    var cancellationCount: Int {
-        state.withLock { $0.cancellationCount }
+    var requestedVehicleRequests: [VehicleRequest] {
+        stateLock.withLock { $0.vehicleRequests }
     }
 
-    var requestedCities: [String] {
-        state.withLock { $0.requestedCities }
+    var requestedTripRequests: [TripRequest] {
+        stateLock.withLock { $0.tripRequests }
     }
 
-    var requestedBBoxes: [BoundingBox?] {
-        state.withLock { $0.requestedBBoxes }
+    var requestedMetadataRequests: [VehicleRequest] {
+        stateLock.withLock { $0.metadataRequests }
     }
 
-    var requestedVehicleCities: [String] {
-        state.withLock { $0.requestedVehicleCities }
+    var citiesFetchCount: Int {
+        stateLock.withLock { $0.citiesFetchCount }
     }
 
-    var requestedVehicleBBoxes: [BoundingBox] {
-        state.withLock { $0.requestedVehicleBBoxes }
+    func fetchCities() async throws -> [City] {
+        stateLock.withLock { $0.citiesFetchCount += 1 }
+        return try await citiesHandler()
     }
 
-    func fetchStops(city: String, bbox: BoundingBox?) async throws -> [Stop] {
-        let result: Result<[Stop], Error> = state.withLock { testState in
-            testState.callCount += 1
-            testState.requestedCities.append(city)
-            testState.requestedBBoxes.append(bbox)
-            if let override = overrideStops.withLock({ $0 }) {
-                return .success(override)
-            }
-            return handler(city, bbox)
+    func streamMapFeatures(
+        city: String,
+        zoom: Double,
+        bbox: BoundingBox
+    ) -> AsyncThrowingStream<MapFeaturesEvent, Error> {
+        stateLock.withLock {
+            $0.mapRequests.append(MapRequest(city: city, zoom: zoom, bbox: bbox))
         }
-        if gate.withLock({ $0.holdsRequests }) {
-            await waitForGate()
-        }
-        if Task.isCancelled {
-            state.withLock { $0.cancellationCount += 1 }
-            throw CancellationError()
-        }
-        return try result.get()
+        return mapStreamHandler(city, zoom, bbox)
     }
 
-    func fetchVehicles(city: String, bbox: BoundingBox) async throws -> [VehiclePosition] {
-        let result: Result<[VehiclePosition], Error> = state.withLock { testState in
-            testState.vehicleCallCount += 1
-            testState.requestedVehicleCities.append(city)
-            testState.requestedVehicleBBoxes.append(bbox)
-            return vehicleHandler(city, bbox)
+    func streamStopDepartures(
+        city: String,
+        stopId: String,
+        limit: Int
+    ) -> AsyncThrowingStream<StopStreamEvent, Error> {
+        stateLock.withLock {
+            $0.stopRequests.append(StopRequest(city: city, stopId: stopId, limit: limit))
         }
-        if Task.isCancelled {
-            throw CancellationError()
+        return stopStreamHandler(city, stopId, limit)
+    }
+
+    func streamVehiclePosition(
+        city: String,
+        vehicleId: String
+    ) -> AsyncThrowingStream<TripStreamEvent, Error> {
+        stateLock.withLock {
+            $0.vehicleRequests.append(VehicleRequest(city: city, vehicleId: vehicleId))
         }
-        return try result.get()
+        return vehicleStreamHandler(city, vehicleId)
     }
 
-    /// Changes what every subsequent request returns.
-    func setStops(_ stops: [Stop]) {
-        overrideStops.withLock { $0 = stops }
-    }
-
-    /// Parks the calling task while the gate holds requests.
-    private func waitForGate() async {
-        await withCheckedContinuation { continuation in
-            let parked: Bool = gate.withLock { gateState in
-                if gateState.holdsRequests {
-                    gateState.parked.append(continuation)
-                    return true
-                }
-                return false
-            }
-            if !parked {
-                // The gate opened in the meantime; resume immediately.
-                continuation.resume()
-            }
+    func streamTrip(
+        city: String,
+        tripId: String
+    ) -> AsyncThrowingStream<TripStreamEvent, Error> {
+        stateLock.withLock {
+            $0.tripRequests.append(TripRequest(city: city, tripId: tripId))
         }
+        return tripStreamHandler(city, tripId)
     }
 
-    /// Makes subsequent requests park again (used for multi-phase tests).
-    func holdRequests() {
-        gate.withLock { $0.holdsRequests = true }
-    }
-
-    /// Releases every parked request and stops holding future ones.
-    func openGate() {
-        let toResume: [CheckedContinuation<Void, Never>] = gate.withLock { gateState in
-            gateState.holdsRequests = false
-            let parked = gateState.parked
-            gateState.parked = []
-            return parked
+    func fetchVehicleMetadata(city: String, vehicleId: String) async throws -> VehicleMetadata {
+        stateLock.withLock {
+            $0.metadataRequests.append(VehicleRequest(city: city, vehicleId: vehicleId))
         }
-        toResume.forEach { $0.resume() }
+        return try await vehicleMetadataHandler(city, vehicleId)
     }
-}
 
-@MainActor
-enum StopFixtures {
-    static func sample(
-        id: String = "warsaw-centrum-01",
+    // MARK: - Test Fixtures
+
+    static let sampleWarsaw = City(
+        id: "warsaw",
+        name: "Warszawa",
+        latitude: 52.2297,
+        longitude: 21.0122,
+        description: "WTP",
+        category: "poland",
+        coverageRadiusMeters: 50_000,
+        aliases: ["warsaw", "wtp"]
+    )
+
+    static let sampleKrakow = City(
+        id: "krakow",
+        name: "Kraków",
+        latitude: 50.06865,
+        longitude: 19.94781,
+        description: "ZTP",
+        category: "poland",
+        coverageRadiusMeters: 40_000,
+        aliases: ["krakow", "mpk"]
+    )
+
+    static let samplePoznan = City(
+        id: "poznan",
+        name: "Poznań",
+        latitude: 52.40777,
+        longitude: 16.91249,
+        description: "ZTM",
+        category: "poland",
+        coverageRadiusMeters: 40_000,
+        aliases: ["poznan"]
+    )
+
+    static let sampleTricity = City(
+        id: "tricity",
+        name: "Trójmiasto",
+        latitude: 54.35188,
+        longitude: 18.64631,
+        description: "Gdańsk, Gdynia, Sopot",
+        category: "poland",
+        coverageRadiusMeters: 45_000,
+        aliases: ["gdansk", "gdynia"]
+    )
+
+    static let sampleLodz = City(
+        id: "lodz",
+        name: "Łódź",
+        latitude: 51.77025,
+        longitude: 19.46563,
+        description: "MPK",
+        category: "poland",
+        coverageRadiusMeters: 40_000,
+        aliases: ["lodz"]
+    )
+
+    static let samplePKP = City(
+        id: "pkp",
+        name: "PKP",
+        latitude: 52.255633,
+        longitude: 21.035699,
+        isVirtual: true,
+        coverageRadiusMeters: 0,
+        aliases: ["pkp", "kolej"]
+    )
+
+    static let sampleMLD = City(
+        id: "mld",
+        name: "Małopolskie Linie Dowozowe",
+        latitude: 50.067745,
+        longitude: 19.949332,
+        isVirtual: true,
+        coverageRadiusMeters: 0,
+        aliases: ["mld"]
+    )
+
+    static let sampleCities: [City] = [
+        sampleWarsaw,
+        sampleKrakow,
+        samplePoznan,
+        sampleTricity,
+        sampleLodz,
+        samplePKP,
+        sampleMLD
+    ]
+
+    static func sampleStop(
+        id: String = "s1",
         city: String = "warsaw",
-        name: String = "Testowa",
+        name: String = "Centrum",
         code: String = "01",
-        bearing: Int? = 90,
-        longitude: Double = 21.01,
-        latitude: Double = 52.23
+        lon: Double = 21.0122,
+        lat: Double = 52.2297,
+        vehicleTypes: [RouteType] = [.bus],
+        bearing: Double? = nil,
+        direction: String = "",
+        routes: [StopRoute] = [],
+        entrances: [StopEntrance] = [],
+        hasFullMetadata: Bool = false
     ) -> Stop {
         Stop(
             id: id,
             city: city,
             name: name,
             code: code,
-            longitude: longitude,
-            latitude: latitude,
-            vehicleTypes: [.bus],
+            latitude: lat,
+            longitude: lon,
+            vehicleTypes: vehicleTypes,
             bearing: bearing,
-            direction: "Centrum",
-            routes: [
-                StopRoute(
-                    id: "warsaw-route-100",
-                    city: city,
-                    name: "100",
-                    longName: "Trasa 100",
-                    agency: "ZTM",
-                    type: .bus,
-                    color: "FB8C00"
-                )
-            ],
-            entrances: []
+            direction: direction,
+            routes: routes,
+            entrances: entrances,
+            hasFullMetadata: hasFullMetadata
         )
     }
-}
 
-nonisolated enum VehicleFixtures {
-    static func sample(
-        id: String = "1001",
-        type: String = "3",
+    static func sampleRoute(
+        id: String = "520",
+        city: String = "warsaw",
+        name: String = "520",
+        longName: String = "Płocka-Szpital — Marysin",
         agency: String = "default",
-        model: String? = "Solaris Urbino 12",
-        routeName: String = "189",
-        routeColor: String = "#a5248c",
-        brigade: String = "1",
-        longitude: Double = 21.01,
-        latitude: Double = 52.23,
-        bearing: Int? = 180,
-        delay: Int = 120_000,
-        headsign: String? = "Os. Górczewska",
-        upcomingStops: [VehicleUpcomingStop] = []
+        type: RouteType = .bus,
+        color: String = "#97160f"
+    ) -> StopRoute {
+        StopRoute(
+            id: id,
+            city: city,
+            name: name,
+            longName: longName,
+            agency: agency,
+            type: type,
+            color: color
+        )
+    }
+
+    static func sampleVehicle(
+        id: String = "v1",
+        city: String = "warsaw",
+        routeName: String = "175",
+        routeType: RouteType = .bus,
+        color: String = "#97160f",
+        brigade: String? = "1",
+        lon: Double = 21.0122,
+        lat: Double = 52.2297,
+        bearing: Double? = 90,
+        lastPingMs: Int64? = 1_794_432_450_000,
+        tripId: String? = "trip-1",
+        percentTraveled: Double? = 42.0
     ) -> VehiclePosition {
         VehiclePosition(
-            vehicle: VehicleInfo(id: id, type: type, agency: agency, model: model),
-            routeName: routeName,
-            routeColor: routeColor,
+            id: id,
+            city: city,
+            route: StopRoute(
+                id: routeName,
+                city: city,
+                name: routeName,
+                longName: "Centrum — Lotnisko Chopina",
+                agency: "default",
+                type: routeType,
+                color: color
+            ),
             brigade: brigade,
-            location: [longitude, latitude],
-            timestamp: 1_700_000_000_000,
+            latitude: lat,
+            longitude: lon,
             bearing: bearing,
-            delay: delay,
-            headsign: headsign,
-            upcomingStops: upcomingStops,
-            url: "https://zbiorkom.live/sample"
+            lastPingMs: lastPingMs,
+            tripId: tripId,
+            percentTraveled: percentTraveled
         )
+    }
+
+    static func sampleDot(
+        id: String = "dot-0",
+        colorHex: String = "#296d00",
+        lon: Double = 21.0122,
+        lat: Double = 52.2297
+    ) -> DotVehicle {
+        DotVehicle(id: id, colorHex: colorHex, latitude: lat, longitude: lon)
     }
 }

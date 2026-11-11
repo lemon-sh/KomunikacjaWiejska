@@ -2,7 +2,7 @@ import SwiftUI
 
 /// SwiftUI and localized presentation for `RouteType`, kept out of the model
 /// so the model layer stays UI- and locale-free (ADR-0004).
-extension RouteType {
+nonisolated extension RouteType {
     var defaultHexColor: String {
         switch self {
         case .tram: return "#E53935"

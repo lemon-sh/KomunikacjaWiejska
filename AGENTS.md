@@ -7,7 +7,7 @@
 `KomunikacjaWiejska` is an iOS application built with pure Apple technologies (`SwiftUI`, `MapKit`, `CoreLocation`, `Observation`, Swift Concurrency) bringing Polish public transit tracking to Apple devices.
 
 - **Primary Web Source:** [zbiorkom.live](https://zbiorkom.live)
-- **Primary API Server:** `https://api.zbiorkom.live/api6-open` (OpenAPI 3.1)
+- **Primary API Server:** `https://api.zbiorkom.live/api6` (REST + Server-Sent Events)
 - **Toolchain:** Xcode **27.2+** (JSON `project.xcproj` format), iOS **26.0**
   deployment target, Swift 6 language mode. See [`README.md`](README.md) and
   run `scripts/check-toolchain.sh` before building.
@@ -18,19 +18,18 @@ Always refer to the dedicated guides in [`docs/`](docs) for deep technical speci
 
 1. [**Architecture & Design Guide** (`docs/architecture.md`)](docs/architecture.md)
    - Architectural principles (SwiftUI + MapKit, zero third-party dependencies).
-   - `@Observable` state flow and camera lifecycle (`MapViewModel`).
-   - UI component hierarchy and file map.
-   - Roadmap for future milestones (live vehicle positions, departure boards, trip polylines).
+   - `@Observable` state flow, live SSE streaming lifecycle (`MapViewModel`), selection isolation, and navigation stack.
+   - UI component hierarchy, file map, and hermetic test architecture.
 
 2. [**API Specification & Positional Tuple Reference** (`docs/api.md`)](docs/api.md)
-   - Complete technical reference for `https://api.zbiorkom.live/api6-open`.
-   - Index-by-index breakdown of `StopTuple`, `RouteTuple`, and `EntranceTuple` unkeyed arrays.
-   - Coordinate order conventions (`[longitude, latitude]`).
-   - Millisecond epoch time and error handling schemas.
+   - Complete technical reference for `https://api.zbiorkom.live/api6` (REST + SSE).
+   - Index-by-index breakdown of `Stop`, `VehiclePosition`, `DotVehicle`, `StopRoute`, `StopDeparture`, `Itinerary`, `TripAlert`, and `VehicleMetadata` positional tuples.
+   - Coordinate order conventions (`[longitude, latitude]`) and `1e6` encoded polyline decoding.
+   - Millisecond epoch time, status codes, and error handling schemas.
 
 3. [**Cities & Transit Networks Catalog** (`docs/cities.md`)](docs/cities.md)
-   - Table of all 66 supported Polish cities and metropolitan networks.
-   - City IDs, default coordinates, and search aliases.
+   - Dynamic catalog bootstrap (`GET /api6`).
+   - Virtual network filtering, timezones, and offline error recovery.
 
 4. [**Architecture Decisions** (`docs/decisions.md`)](docs/decisions.md)
    - Central index, executive summaries, and contribution guide for Architecture Decision Records (ADRs).
@@ -63,7 +62,7 @@ Always refer to the dedicated guides in [`docs/`](docs) for deep technical speci
   - Code comments and architecture documentation must always use this namespaced format to ensure cross-references remain traceable across refactor cycles.
 - **Testing:**
   - Use Swift `Testing` (`import Testing`, `@Suite`, `@Test`, `#expect`) in [`KomunikacjaWiejskaTests`](KomunikacjaWiejskaTests).
-  - Tests must be hermetic: inject `StopsProviding` stubs and `MockURLProtocol`; never hit the production API.
+  - Tests must be hermetic: inject `TransitDataProviding` stubs and `MockURLProtocol`; never hit the production API.
   - Do not run tests before doing work. Tests take a long time and should only be ran once ideally (until success).
 - **Tooling Awareness:**
   - When running within Xcode: use `xcode-tools` (`BuildProject`, `RunAllTests`, `XcodeRead`, `XcodeWrite`) instead of shell commands like `ls` or `find` to minimize user approval prompts.

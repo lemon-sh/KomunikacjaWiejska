@@ -1,120 +1,92 @@
-import Foundation
 import SwiftUI
+
+/// Map annotation badge for transit stops (circle for surface stops, rounded square for rail/metro).
 
 struct StopMarkerView: View, Equatable {
     let stop: Stop
-    let isSelected: Bool
     let heading: Double
+    let isSelected: Bool
 
     static func == (lhs: StopMarkerView, rhs: StopMarkerView) -> Bool {
         lhs.stop.id == rhs.stop.id
-            && lhs.isSelected == rhs.isSelected
+            && lhs.stop.name == rhs.stop.name
+            && lhs.stop.code == rhs.stop.code
+            && lhs.stop.vehicleTypes == rhs.stop.vehicleTypes
+            && lhs.stop.bearing == rhs.stop.bearing
             && (lhs.stop.bearing == nil || abs(lhs.heading - rhs.heading) < 0.5)
+            && lhs.isSelected == rhs.isSelected
     }
 
-    /// `@ScaledMetric` keeps markers legible at larger text sizes, capped so
-    /// they never cover the map or neighbouring stops.
     @ScaledMetric(relativeTo: .body) private var scaledMarkerSize: CGFloat = DesignTokens.markerSize
 
-    init(
-        stop: Stop,
-        isSelected: Bool = false,
-        heading: Double = 0
-    ) {
-        self.stop = stop
-        self.isSelected = isSelected
-        self.heading = heading
-    }
-
-    /// Computes the screen rotation angle for a stop's geographic bearing given the map camera's heading.
-    /// Annotations in MapKit stay screen-aligned, so a bearing relative to North must be offset by the map heading.
-    static func effectiveRotation(bearing: Int, heading: Double) -> Double {
-        Double(bearing) - heading
-    }
-
-    private var markerColor: Color {
+    private var iconColor: Color {
         stop.primaryVehicleType.defaultColor
     }
 
-    private var badgeSize: CGFloat {
+    private var circleSize: CGFloat {
         min(max(scaledMarkerSize, DesignTokens.markerSize), DesignTokens.markerMaximumSize)
     }
 
-    private var selectedScale: CGFloat {
+    private var selectedScaleFactor: CGFloat {
         DesignTokens.markerSelectedSize / DesignTokens.markerSize
     }
 
-    private var iconSize: CGFloat {
-        badgeSize * 0.5
+    static func effectiveRotation(bearing: Double, heading: Double) -> Double {
+        bearing - heading
     }
 
-    private var notchSize: CGFloat {
-        badgeSize / 3
+    private var directionalFrameSize: CGFloat {
+        circleSize + 10
     }
 
-    private var notchOffset: CGFloat {
-        -(badgeSize / 2 + 2)
-    }
-
-    private var accessibilityDescription: String {
-        String(
+    private var accessibilityText: String {
+        let namePart = stop.code.isEmpty ? stop.name : "\(stop.name) \(stop.code)"
+        return String(
             format: String(localized: "accessibility.stop"),
-            stop.displayName,
+            namePart,
             stop.primaryVehicleType.displayName
         )
     }
 
     var body: some View {
         ZStack {
-            // Directional pointer / triangle notch if bearing is known.
-            // The triangle is offset inside a ZStack whose centre is the
-            // badge centre, then the whole container rotates, so the notch
-            // orbits the badge instead of spinning in place.
-            if let bearing = stop.bearing {
-                ZStack {
-                    Image(systemName: "triangle.fill")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: notchSize, height: notchSize)
-                        .foregroundStyle(markerColor)
-                        .offset(y: notchOffset)
-                }
-                .rotationEffect(.degrees(Self.effectiveRotation(bearing: bearing, heading: heading)))
+            if let bearing = stop.bearing, !stop.isRailOrSubway {
+                Image(systemName: "arrowtriangle.up.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.4), radius: 1, x: 0, y: 0)
+                    .offset(y: -(circleSize / 2 + 4))
+                    .rotationEffect(.degrees(Self.effectiveRotation(bearing: bearing, heading: heading)))
             }
 
-            // Main circular badge
-            Circle()
-                .fill(markerColor)
-                .frame(width: badgeSize, height: badgeSize)
-                .overlay(
-                    Circle()
-                        .strokeBorder(.white, lineWidth: isSelected ? 2.5 : 2)
-                )
-                .shadow(
-                    color: isSelected ? .black.opacity(0.35) : .black.opacity(0.2),
-                    radius: isSelected ? 4 : 2,
-                    x: 0,
-                    y: isSelected ? 2 : 1
-                )
-
-            // Icon inside badge
-            Image(systemName: stop.primaryVehicleType.systemImageName)
-                .resizable()
-                .scaledToFit()
-                .frame(width: iconSize, height: iconSize)
-                .foregroundStyle(.white)
+            badgeContent
+                .frame(width: circleSize, height: circleSize)
+                .shadow(color: .black.opacity(0.25), radius: 3, x: 0, y: 1.5)
         }
-        .frame(
-            width: badgeSize + notchSize * 2,
-            height: badgeSize + notchSize * 2
-        )
+        .frame(width: directionalFrameSize, height: directionalFrameSize)
+        .scaleEffect(isSelected ? selectedScaleFactor : 1.0)
+        .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isSelected)
         .frame(minWidth: DesignTokens.controlSize, minHeight: DesignTokens.controlSize)
         .contentShape(Rectangle())
-        .scaleEffect(isSelected ? selectedScale : 1.0)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isSelected)
-        .zIndex(isSelected ? 1 : 0)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: accessibilityDescription))
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityLabel(accessibilityText)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    @ViewBuilder
+    private var badgeContent: some View {
+        let cornerRadius = stop.isRailOrSubway ? CGFloat(6) : circleSize / 2
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+
+        shape
+            .fill(iconColor)
+            .overlay(
+                shape.stroke(.white, lineWidth: isSelected ? 3 : 2)
+            )
+            .overlay(
+                Image(systemName: stop.primaryVehicleType.systemImageName)
+                    .font(.system(size: circleSize * 0.48, weight: .bold))
+                    .foregroundStyle(.white)
+            )
     }
 }

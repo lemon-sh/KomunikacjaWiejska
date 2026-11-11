@@ -1,6 +1,6 @@
 # ADR-0008 — Marker Density Strategy: Deterministic Spatial Cap & Buffered Background Thinning (Decision 2D1)
 
-**Status:** Accepted (2026-11-06, updated 2026-11-10)  
+**Status:** Superseded by [ADR-0009](0009-api6-sse-streaming.md) (2026-11-11) — originally accepted 2026-11-06, updated 2026-11-10  
 **Supersedes:** [ADR-0002](0002-marker-density.md)
 
 ## Context

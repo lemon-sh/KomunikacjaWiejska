@@ -10,14 +10,15 @@ Individual, numbered decision records are stored in [`docs/decisions/`](decision
 
 | ADR | Title | Status | Date | Key Decision Summary | Link |
 |---|---|---|---|---|---|
-| **0001** | Stops Fetch Strategy | Accepted | 2026-11-05 | Debounced (350 ms) viewport `bbox` queries on camera idle; no full-city fetches for large networks. | [ADR-0001](decisions/0001-fetch-strategy.md) |
+| **0001** | Stops Fetch Strategy | Superseded | 2026-11-05 | Superseded by ADR-0009. Previously debounced (350 ms) REST viewport `bbox` polling. | [ADR-0001](decisions/0001-fetch-strategy.md) |
 | **0002** | Marker Density Strategy | Superseded | 2026-11-05 | Superseded by ADR-0008. Initial grid-based thinning in `MapViewModel` capping rendered stops to 250 markers. | [ADR-0002](decisions/0002-marker-density.md) |
 | **0003** | Deployment Target iOS 26 | Accepted | 2026-11-05 | Lowered `IPHONEOS_DEPLOYMENT_TARGET` to 26.0 (the minimum for Liquid Glass styling and native MapKit controls). | [ADR-0003](decisions/0003-deployment-target.md) |
 | **0004** | Localization Scope | Accepted | 2026-11-05 | Dual Polish (primary) and English support via `Localizable.xcstrings`; stable enum keys; UI-free model layer. | [ADR-0004](decisions/0004-localization.md) |
 | **0005** | Swift 6 Concurrency & Isolation | Accepted | 2026-11-05 | Strict Swift 6 mode with `MainActor` default; explicit `nonisolated` for cross-actor value types and DTO decoders. | [ADR-0005](decisions/0005-swift6-concurrency.md) |
 | **0006** | Toolchain & JSON Project Format | Accepted | 2026-11-05 | Xcode 27.2+ JSON `project.xcproj` format enforced via `scripts/check-toolchain.sh`; committed shared scheme. | [ADR-0006](decisions/0006-toolchain.md) |
-| **0007** | Session Tile Cache for Stops | Accepted | 2026-11-05 | Session-only flat Zoom 12 Web Mercator tile cache per city; union bbox fetching; no artificial TTL/LRU eviction. | [ADR-0007](decisions/0007-tile-cache.md) |
-| **0008** | Marker Density Strategy: Deterministic Spatial Cap | Accepted | 2026-11-06 | Deterministic spatial cap in `MapViewModel` capping rendered stops to 250 markers with selected stop preservation. | [ADR-0008](decisions/0008-marker-density.md) |
+| **0007** | Session Tile Cache for Stops | Superseded | 2026-11-05 | Superseded by ADR-0009. Previously cached Zoom 12 Web Mercator stop tiles per city. | [ADR-0007](decisions/0007-tile-cache.md) |
+| **0008** | Marker Density Strategy: Deterministic Spatial Cap | Superseded | 2026-11-06 | Superseded by ADR-0009. Previously capped rendered stops to 250 markers via client grid thinning. | [ADR-0008](decisions/0008-marker-density.md) |
+| **0009** | `/api6` SSE Streaming & Viewport Architecture | Accepted | 2026-11-11 | Real-time SSE viewport streams (`mapFeatures`, `stops`, `positions`, `trips`), server `dots` zoom, dynamic `/api6` cities, stop departures, and trip polylines. | [ADR-0009](decisions/0009-api6-sse-streaming.md) |
 
 ---
 
@@ -27,7 +28,7 @@ Individual, numbered decision records are stored in [`docs/decisions/`](decision
 - **Problem:** Poland's metropolitan networks (e.g. Warsaw, GZM) have tens of thousands of transit poles. Fetching an entire network at launch causes high latency, excessive memory consumption, and sluggish map rendering.
 - **Decision:** Trigger bounded bounding-box queries (`{city}/stops?bbox=minLon,minLat,maxLon,maxLat`) via `.onMapCameraChange(frequency: .onEnd)` debounced at 350 ms in `MapViewModel`.
 - **Alternatives Rejected:** Full-city prefetching on city switch (unbounded data transfer on cellular networks and excessive memory overhead).
-- **Outcome:** Predictable memory footprint and instant responsiveness, supported by session tile caching.
+- **Outcome:** Superseded by ADR-0009.
 
 ### [ADR-0002: Marker Density Strategy (Grid Thinning)](decisions/0002-marker-density.md)
 - **Problem:** SwiftUI Map annotations instantiated per stop can overwhelm the main thread and drop frames in dense viewports containing thousands of poles.
@@ -49,7 +50,7 @@ Individual, numbered decision records are stored in [`docs/decisions/`](decision
 
 ### [ADR-0005: Swift 6 Concurrency & Isolation](decisions/0005-swift6-concurrency.md)
 - **Problem:** Strict concurrency checking produced warnings under Swift 5 and broke under Swift 6 when passing models and responses across actors.
-- **Decision:** Adopt Swift 6 language mode with complete strict concurrency. Retain `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` for views and view models, isolate `ZbiorkomAPIClient` to an actor, and mark purely immutable DTOs and value types (`BoundingBox`, `StopsResponse`) as `nonisolated` and `Sendable`.
+- **Decision:** Adopt Swift 6 language mode with complete strict concurrency. Retain `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` for views and view models, isolate `ZbiorkomAPIClient` to an actor, and mark purely immutable DTOs and value types (`BoundingBox`, `TransitDataProviding`, `CitiesResponse`, `City`, `Stop`, `VehiclePosition`, `TripModels`, `TupleReader`, `SSEFrameParser`) as `nonisolated` and `Sendable`.
 - **Alternatives Rejected:** Silencing warnings via `@preconcurrency` imports or disabling strict checking.
 - **Outcome:** 100% compiler-verified data-race safety without runtime concurrency overhead.
 
@@ -63,19 +64,19 @@ Individual, numbered decision records are stored in [`docs/decisions/`](decision
 - **Problem:** Keying cache entries by exact coordinate bounding boxes caused constant cache misses during small pans and zooms, resulting in repeated network calls and flashing markers.
 - **Decision:** Implement a session-only, per-city tile cache using flat Zoom 12 Web Mercator tile keys (`MapTile.zoom = 12`). Viewports request missing tiles via union bboxes without multi-level cache hierarchies, and results are merged by stop ID.
 - **Alternatives Rejected:** Bounding-box cache with 10-minute TTL and LRU eviction (prone to cache misses and unnecessary cache invalidation).
-- **Outcome:** Smooth zoom-in rendering, zero redundant downloads for previously visited neighborhoods, and automatic reset on city switch.
+- **Outcome:** Superseded by ADR-0009.
 
 ### [ADR-0008: Marker Density Strategy: Deterministic Spatial Cap](decisions/0008-marker-density.md)
 - **Problem:** Rendering thousands of live SwiftUI annotations in dense metropolitan regions causes frame drops and main-thread hitches.
 - **Decision:** Formally re-adopt a deterministic spatial representative cap (`maxRenderedStops = 250`) in `MapViewModel`. Visible stops exceeding the ceiling are thinned via a 2D spatial grid, retaining one representative per cell and always preserving the currently selected stop when within the viewport.
 - **Alternatives Rejected:** `UIViewRepresentable` wrapping `MKMapView` (violates native Liquid Glass / MapKit control constraints) or unbounded annotations.
-- **Outcome:** 60/120 fps panning and zooming performance across all cities with deterministic annotation updates.
+- **Outcome:** Superseded by ADR-0009 (zoom-driven server `dots` and viewport streaming).
 
-### [ADR-0008: Marker Density Strategy: Deterministic Spatial Cap](decisions/0008-marker-density.md)
-- **Problem:** Rendering thousands of live SwiftUI annotations in dense metropolitan regions causes frame drops and main-thread hitches.
-- **Decision:** Formally re-adopt a deterministic spatial representative cap (`maxRenderedStops = 250`) in `MapViewModel`. Visible stops exceeding the ceiling are thinned via a 2D spatial grid, retaining one representative per cell and always preserving the currently selected stop when within the viewport.
-- **Alternatives Rejected:** `UIViewRepresentable` wrapping `MKMapView` (violates native Liquid Glass / MapKit control constraints) or unbounded annotations.
-- **Outcome:** 60/120 fps panning and zooming performance across all cities with deterministic annotation updates.
+### [ADR-0009: `/api6` SSE Streaming & Viewport Architecture](decisions/0009-api6-sse-streaming.md)
+- **Problem:** Real-time transit maps need pushed telemetry, server-scaled marker density across zoom levels, live stop departure boards, full trip itineraries (`MapPolyline`, historical + upcoming stops), per-stop delays/statuses, and dynamic city metadata without REST polling timers or client spatial caches.
+- **Decision:** Implement a pure `URLSession.bytes` byte-level SSE parser targeting `https://api.zbiorkom.live/api6`, consuming `mapFeatures/{zoom}/{bbox}/stream`, `stops/{id}/stream`, `positions/{id}/stream`, `trips/{id}/stream`, `vehicles/vehicle/{id}`, and `GET /api6`.
+- **Alternatives Rejected:** Third-party SSE SDKs, REST bbox polling, or maintaining client tile caches and 250-marker thinning caps.
+- **Outcome:** Real-time ~10s SSE pushes aligned with `zbiorkom.live`, live stop departures with tap-to-trip back stack, and full trip timelines with `MapPolyline` routes.
 
 ---
 

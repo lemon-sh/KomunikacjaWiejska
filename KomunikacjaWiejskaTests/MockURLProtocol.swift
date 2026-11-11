@@ -72,13 +72,17 @@ final class MockURLProtocol: URLProtocol {
 enum StubResponses {
     struct FixtureError: Error {}
 
-    static func http(status: Int = 200) throws -> HTTPURLResponse {
-        guard let url = URL(string: "https://api.zbiorkom.live/api6-open/warsaw/stops"),
+    static func http(
+        status: Int = 200,
+        urlString: String = "https://api.zbiorkom.live/api6",
+        headers: [String: String]? = nil
+    ) throws -> HTTPURLResponse {
+        guard let url = URL(string: urlString),
               let response = HTTPURLResponse(
                 url: url,
                 statusCode: status,
                 httpVersion: "HTTP/1.1",
-                headerFields: nil
+                headerFields: headers
               )
         else {
             throw FixtureError()
@@ -86,8 +90,16 @@ enum StubResponses {
         return response
     }
 
+    static func sse(urlString: String) throws -> HTTPURLResponse {
+        try http(
+            status: 200,
+            urlString: urlString,
+            headers: ["Content-Type": "text/event-stream; charset=utf-8"]
+        )
+    }
+
     static func nonHTTP() throws -> URLResponse {
-        guard let url = URL(string: "https://api.zbiorkom.live/api6-open/warsaw/stops") else {
+        guard let url = URL(string: "https://api.zbiorkom.live/api6") else {
             throw FixtureError()
         }
         return URLResponse(

@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-extension Color {
+nonisolated extension Color {
     private static func parseHexRGBA(_ hex: String) -> (r: Double, g: Double, b: Double, a: Double)? {
         let cleaned = hex
             .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1,215 +1,254 @@
 import Foundation
-@testable import KomunikacjaWiejska
 import Testing
+@testable import KomunikacjaWiejska
 
-/// Serialized because `MockURLProtocol.handler` is process-wide state.
-@Suite("ZbiorkomAPIClient", .serialized)
-@MainActor
+/// Hermetic REST + SSE parser and `ZbiorkomAPIClient` tests via `MockURLProtocol`.
+
+@Suite("Zbiorkom API Client Tests", .serialized)
 struct ZbiorkomAPIClientTests {
-    private func makeClient() -> ZbiorkomAPIClient {
-        ZbiorkomAPIClient(session: MockURLProtocol.makeSession(), retryBackoff: {})
-    }
-
-    @Test("Decodes a 200 response")
-    func decodesSuccess() async throws {
-        MockURLProtocol.handler = { _ in
-            try (StubResponses.http(), StubResponses.validStopsJSON)
-        }
-        defer { MockURLProtocol.handler = nil }
-
-        let stops = try await makeClient().fetchStops(city: "rybnik", bbox: nil)
-        #expect(stops.count == 1)
-        #expect(stops.first?.id == "rybnik-srodmiescie-dworek261-0-j58h8")
-    }
-
-    @Test("Sends the bbox query parameter and Accept header")
-    func sendsBBoxAndHeaders() async throws {
-        let capturedURL = LockedValue<URL?>(nil)
-        let capturedAccept = LockedValue<String?>(nil)
-        MockURLProtocol.handler = { request in
-            capturedURL.value = request.url
-            capturedAccept.value = request.value(forHTTPHeaderField: "Accept")
-            return try (StubResponses.http(), StubResponses.validStopsJSON)
-        }
-        defer { MockURLProtocol.handler = nil }
-
-        let bbox = BoundingBox(minLon: 21.0, minLat: 52.2, maxLon: 21.1, maxLat: 52.3)
-        _ = try await makeClient().fetchStops(city: "warsaw", bbox: bbox)
-
-        #expect(capturedURL.value?.query?.contains("bbox=") == true)
-        #expect(capturedURL.value?.absoluteString.contains("21.000000,52.200000,21.100000,52.300000") == true)
-        #expect(capturedAccept.value == "application/json")
-    }
-
-    @Test("Maps an error payload to serverError")
-    func mapsErrorPayload() async throws {
-        MockURLProtocol.handler = { _ in
-            try (StubResponses.http(status: 400), Data(#"{"error":"invalid-city"}"#.utf8))
-        }
-        defer { MockURLProtocol.handler = nil }
-
-        await #expect(throws: ZbiorkomAPIError.serverError("invalid-city")) {
-            try await makeClient().fetchStops(city: "warsaw", bbox: nil)
-        }
-    }
-
-    @Test("Maps a non-error 4xx payload to httpError and does not retry")
-    func mapsHTTPErrorWithoutRetry() async throws {
-        let callCount = LockedValue<Int>(0)
-        MockURLProtocol.handler = { _ in
-            callCount.mutate { $0 += 1 }
-            return try (StubResponses.http(status: 404), Data())
-        }
-        defer { MockURLProtocol.handler = nil }
-
-        await #expect(throws: ZbiorkomAPIError.httpError(statusCode: 404)) {
-            try await makeClient().fetchStops(city: "warsaw", bbox: nil)
-        }
-        #expect(callCount.value == 1)
-    }
-
-    @Test("Retries a 5xx once and succeeds")
-    func retriesServerErrorOnce() async throws {
-        let callCount = LockedValue<Int>(0)
-        MockURLProtocol.handler = { _ in
-            let attempt = callCount.value + 1
-            callCount.value = attempt
-            if attempt == 1 {
-                return try (StubResponses.http(status: 503), Data())
-            }
-            return try (StubResponses.http(), StubResponses.validStopsJSON)
-        }
-        defer { MockURLProtocol.handler = nil }
-
-        let stops = try await makeClient().fetchStops(city: "warsaw", bbox: nil)
-        #expect(stops.count == 1)
-        #expect(callCount.value == 2)
-    }
-
-    @Test("Maps malformed JSON to decodingError")
-    func mapsDecodingError() async throws {
-        MockURLProtocol.handler = { _ in
-            try (StubResponses.http(), Data(#"{"stops": "nope"}"#.utf8))
-        }
-        defer { MockURLProtocol.handler = nil }
-
-        do {
-            _ = try await makeClient().fetchStops(city: "warsaw", bbox: nil)
-            Issue.record("Expected a decoding error")
-        } catch let error as ZbiorkomAPIError {
-            guard case .decodingError = error else {
-                Issue.record("Unexpected error: \(error)")
-                return
-            }
-        }
-    }
-
-    @Test("Maps a non-HTTP response to invalidResponse")
-    func mapsInvalidResponse() async throws {
-        MockURLProtocol.handler = { _ in
-            try (StubResponses.nonHTTP(), Data())
-        }
-        defer { MockURLProtocol.handler = nil }
-
-        await #expect(throws: ZbiorkomAPIError.invalidResponse) {
-            try await makeClient().fetchStops(city: "warsaw", bbox: nil)
-        }
-    }
-
-    @Test("Maps timeouts to a localized transport message")
-    func mapsTimeout() async throws {
-        MockURLProtocol.handler = { _ in
-            throw URLError(.timedOut)
-        }
-        defer { MockURLProtocol.handler = nil }
-
-        await #expect(throws: ZbiorkomAPIError.transport(.timedOut)) {
-            try await makeClient().fetchStops(city: "warsaw", bbox: nil)
-        }
-
-        // The exact copy is localized; assert it is present and distinct from
-        // other transport failures rather than hard-coding one language.
-        let timeoutMessage = try #require(ZbiorkomAPIError.transport(.timedOut).errorDescription)
-        let offlineMessage = try #require(ZbiorkomAPIError.transport(.notConnectedToInternet).errorDescription)
-        #expect(!timeoutMessage.isEmpty)
-        #expect(timeoutMessage != offlineMessage)
-    }
-
-    @Test("Decoding diagnostics stay out of the user-facing message")
-    func hidesDecodingDetails() throws {
-        let message = try #require(
-            ZbiorkomAPIError.decodingError("secret internal detail").errorDescription
+    private func makeClient(
+        reconnectAttempts: Int = 1,
+        reconnectOnCleanEOF: Bool = false
+    ) -> ZbiorkomAPIClient {
+        ZbiorkomAPIClient(
+            session: MockURLProtocol.makeSession(),
+            maxSSEReconnectAttempts: reconnectAttempts,
+            sseReconnectDelay: .milliseconds(10),
+            reconnectOnCleanEOF: reconnectOnCleanEOF
         )
-        #expect(!message.contains("secret internal detail"))
-        #expect(!message.isEmpty)
     }
 
-    @Test("Does not retry when offline")
-    func doesNotRetryOffline() async throws {
-        let callCount = LockedValue<Int>(0)
-        MockURLProtocol.handler = { _ in
-            callCount.mutate { $0 += 1 }
-            throw URLError(.notConnectedToInternet)
+    @Test("SSEFrameParser handles CRLF, comments, multi-line data, retry, and multi-byte UTF-8")
+    func testSSEFrameParserFraming() {
+        var parser = SSEFrameParser()
+        let streamText = ": keepalive\r\nretry: 5000\r\nevent: initial\r\ndata: {\"name\":\"Kraków\"}\r\n\r\nevent: message\ndata: line1\ndata: line2\n\n"
+        var events: [SSEEvent] = []
+        for byte in Data(streamText.utf8) {
+            if let event = parser.append(byte: byte) {
+                events.append(event)
+            }
         }
-        defer { MockURLProtocol.handler = nil }
+        if let tail = parser.finishStream() {
+            events.append(tail)
+        }
 
-        await #expect(throws: ZbiorkomAPIError.transport(.notConnectedToInternet)) {
-            try await makeClient().fetchStops(city: "warsaw", bbox: nil)
-        }
-        #expect(callCount.value == 1)
+        #expect(events.count == 2)
+        #expect(events[0].event == "initial")
+        #expect(String(data: events[0].data, encoding: .utf8) == #"{"name":"Kraków"}"#)
+        #expect(events[0].retryMs == 5000)
+
+        #expect(events[1].event == "message")
+        #expect(String(data: events[1].data, encoding: .utf8) == "line1\nline2")
+        #expect(events[1].retryMs == nil)
     }
 
-    @Test("Cancellation rethrows CancellationError directly")
-    func preservesCancellation() async throws {
-        MockURLProtocol.handler = { _ in
-            throw URLError(.cancelled)
-        }
-        defer { MockURLProtocol.handler = nil }
-
-        await #expect(throws: CancellationError.self) {
-            try await makeClient().fetchStops(city: "warsaw", bbox: nil)
-        }
-    }
-
-    @Test("Fetches and decodes vehicles with path-based bbox")
-    func fetchVehiclesSuccess() async throws {
+    @Test("fetchCities hits GET /api6 and decodes cities catalog")
+    func testFetchCities() async throws {
+        let client = makeClient()
         let capturedURL = LockedValue<URL?>(nil)
-        let sampleJSON = """
+
+        let payload = Data("""
         {
-            "positions": [
-                {
-                    "vehicle": {
-                        "id": "1001",
-                        "type": "3",
-                        "agency": "default",
-                        "model": "Solaris"
-                    },
-                    "routeName": "189",
-                    "routeColor": "#a5248c",
-                    "brigade": "1",
-                    "location": [21.01, 52.23],
-                    "timestamp": 1700000000000,
-                    "bearing": 180,
-                    "delay": 0,
-                    "headsign": "Centrum",
-                    "upcomingStops": [],
-                    "url": "https://zbiorkom.live/sample"
-                }
+            "hash": "h1",
+            "cities": [
+                {"id": "krakow", "name": "Kraków", "location": [19.94, 50.06], "timezone": "Europe/Warsaw"},
+                {"id": "pkp", "name": "PKP", "location": [21.03, 52.25], "virtual": true}
             ]
         }
-        """.data(using: .utf8)!
+        """.utf8)
 
-        MockURLProtocol.handler = { request in
+        let cities = try await MockURLProtocol.withHandler({ request in
             capturedURL.value = request.url
-            return try (StubResponses.http(), sampleJSON)
+            let response = try StubResponses.http(status: 200, urlString: "https://api.zbiorkom.live/api6")
+            return (response, payload)
+        }) {
+            try await client.fetchCities()
         }
-        defer { MockURLProtocol.handler = nil }
 
+        #expect(capturedURL.value?.absoluteString == "https://api.zbiorkom.live/api6")
+        #expect(cities.count == 2)
+        #expect(cities[0].id == "krakow")
+        #expect(cities[1].isVirtual == true)
+    }
+
+    @Test("fetchVehicleMetadata percent-encodes colon in vehicle ID")
+    func testFetchVehicleMetadata() async throws {
+        let client = makeClient()
+        let capturedPath = LockedValue<String?>(nil)
+        let payload = Data(#"["3:MM831","MAN Lion's City 18 G",2024,"Mobilis","hash"]"#.utf8)
+
+        let metadata = try await MockURLProtocol.withHandler({ request in
+            capturedPath.value = request.url?.absoluteString
+            let response = try StubResponses.http(status: 200)
+            return (response, payload)
+        }) {
+            try await client.fetchVehicleMetadata(city: "krakow", vehicleId: "3:MM831")
+        }
+
+        #expect(capturedPath.value == "https://api.zbiorkom.live/api6/krakow/vehicles/vehicle/3%3AMM831")
+        #expect(metadata.id == "3:MM831")
+        #expect(metadata.model == "MAN Lion's City 18 G")
+        #expect(metadata.prodYear == 2024)
+        #expect(metadata.carrier == "Mobilis")
+    }
+
+    @Test("streamMapFeatures builds /{city}/mapFeatures/{zoom}/{bbox}/stream and emits initial + message")
+    func testStreamMapFeatures() async throws {
+        let client = makeClient()
+        let capturedURL = LockedValue<String?>(nil)
         let bbox = BoundingBox(minLon: 21.0, minLat: 52.2, maxLon: 21.1, maxLat: 52.3)
-        let vehicles = try await makeClient().fetchVehicles(city: "warsaw", bbox: bbox)
 
-        #expect(vehicles.count == 1)
-        #expect(vehicles[0].id == "default:3:1001")
-        #expect(capturedURL.value?.path.contains("/api6-open/warsaw/positions/21.000000,52.200000,21.100000,52.300000") == true)
+        let ssePayload = """
+        retry: 6500
+
+        event: initial
+        data: {"stops":[["s1","warsaw","Centrum","01",[21.01,52.23],[3],90]],"suggestedCity":"warsaw"}
+
+        event: message
+        data: {"positions":[["v1","warsaw",["520","warsaw","520","Marysin","default",3,"#97160f"],"1",[21.02,52.24],180]],"dots":[],"bbox":[21.0,52.2,21.1,52.3]}
+
+        """
+
+        let events: [MapFeaturesEvent] = try await MockURLProtocol.withHandler({ request in
+            capturedURL.value = request.url?.absoluteString
+            let response = try StubResponses.sse(urlString: request.url?.absoluteString ?? "https://api.zbiorkom.live/api6")
+            return (response, Data(ssePayload.utf8))
+        }) {
+            var collected: [MapFeaturesEvent] = []
+            for try await event in client.streamMapFeatures(city: "warsaw", zoom: 15.0, bbox: bbox) {
+                collected.append(event)
+            }
+            return collected
+        }
+
+        #expect(capturedURL.value == "https://api.zbiorkom.live/api6/warsaw/mapFeatures/15/21.000000,52.200000,21.100000,52.300000/stream")
+        #expect(events.count == 2)
+
+        guard case .initial(let initial) = events[0],
+              case .message(let update) = events[1] else {
+            Issue.record("Expected initial followed by message")
+            return
+        }
+        #expect(initial.stops.count == 1)
+        #expect(initial.stops[0].hasFullMetadata == false)
+        #expect(update.positions.count == 1)
+        #expect(update.positions[0].id == "v1")
+    }
+
+    @Test("streamStopDepartures hits /{city}/stops/{stopId}/stream?limit=21 and emits 10-tuple initial + departures")
+    func testStreamStopDepartures() async throws {
+        let client = makeClient()
+        let capturedURL = LockedValue<String?>(nil)
+
+        let ssePayload = """
+        event: initial
+        data: ["s1","krakow","Teatr Słowackiego","01",[19.94,50.06],[0,3],263,"Poczta Główna",[["124","krakow","124","Os. Podwawelskie — Tauron","default",3,"#296d00"]],[]]
+
+        event: message
+        data: [[["trip-1","krakow",["124","krakow","124","Os. Podwawelskie — Tauron","default",3,"#296d00"],"Tauron","124-01","",[]],null,[1794433020000,0,0,"B",1]]]
+
+        """
+
+        let events: [StopStreamEvent] = try await MockURLProtocol.withHandler({ request in
+            capturedURL.value = request.url?.absoluteString
+            let response = try StubResponses.sse(urlString: request.url?.absoluteString ?? "https://api.zbiorkom.live/api6")
+            return (response, Data(ssePayload.utf8))
+        }) {
+            var collected: [StopStreamEvent] = []
+            for try await event in client.streamStopDepartures(city: "krakow", stopId: "s1", limit: 21) {
+                collected.append(event)
+            }
+            return collected
+        }
+
+        #expect(capturedURL.value == "https://api.zbiorkom.live/api6/krakow/stops/s1/stream?limit=21")
+        #expect(events.count == 2)
+        guard case .initial(let stop) = events[0],
+              case .message(let departures) = events[1] else {
+            Issue.record("Expected stop initial and departures")
+            return
+        }
+        #expect(stop.hasFullMetadata == true)
+        #expect(stop.direction == "Poczta Główna")
+        #expect(departures.count == 1)
+        #expect(departures[0].departure.platform == "B")
+    }
+
+    @Test("streamVehiclePosition encodes vehicleId with colon and parses TripStreamEvent")
+    func testStreamVehiclePosition() async throws {
+        let client = makeClient()
+        let capturedURL = LockedValue<String?>(nil)
+
+        let ssePayload = """
+        event: initial
+        data: {"trip":["t1","krakow",["129","krakow","129","Czyżyny — Dworzec","default",3,"#296d00"],"Dworzec Główny Zachód","129-02","",[]],"itinerary":[[[["s1","krakow","Czyżyny","01",[19.98,50.07],[3],90],1,0,""]],"o_pp~Ai}v_e@?g@",[]]}
+
+        event: message
+        data: {"position":["3:MM831","krakow",["129","krakow","129","Czyżyny — Dworzec","default",3,"#296d00"],"129-02",[19.95,50.07],108,1794432450000,"t1",55],"stops":[[[1794432400000,60000,1],[1794432400000,60000,1]]],"sequence":0,"alerts":[]}
+
+        """
+
+        let events: [TripStreamEvent] = try await MockURLProtocol.withHandler({ request in
+            capturedURL.value = request.url?.absoluteString
+            let response = try StubResponses.sse(urlString: request.url?.absoluteString ?? "https://api.zbiorkom.live/api6")
+            return (response, Data(ssePayload.utf8))
+        }) {
+            var collected: [TripStreamEvent] = []
+            for try await event in client.streamVehiclePosition(city: "krakow", vehicleId: "3:MM831") {
+                collected.append(event)
+            }
+            return collected
+        }
+
+        #expect(capturedURL.value == "https://api.zbiorkom.live/api6/krakow/positions/3%3AMM831/stream")
+        #expect(events.count == 2)
+    }
+
+    @Test("SSE errorCode event surfaces ZbiorkomAPIError.serverError")
+    func testSSEErrorCodeEvent() async throws {
+        let client = makeClient()
+        let ssePayload = "event: errorCode\ndata: STOP_NOT_FOUND\n\n"
+
+        do {
+            try await MockURLProtocol.withHandler({ _ in
+                let response = try StubResponses.sse(urlString: "https://api.zbiorkom.live/api6/warsaw/stops/missing/stream")
+                return (response, Data(ssePayload.utf8))
+            }) {
+                for try await _ in client.streamStopDepartures(city: "warsaw", stopId: "missing") {}
+            }
+            Issue.record("Expected serverError")
+        } catch let error as ZbiorkomAPIError {
+            #expect(error == .serverError("STOP_NOT_FOUND"))
+        }
+    }
+
+    @Test("HTTP 404 surfaces httpError without retrying")
+    func testHTTP404DoesNotRetry() async throws {
+        let client = makeClient()
+        let attemptCount = LockedValue(0)
+
+        do {
+            _ = try await MockURLProtocol.withHandler({ _ in
+                attemptCount.mutate { $0 += 1 }
+                return (try StubResponses.http(status: 404), Data())
+            }) {
+                try await client.fetchVehicleMetadata(city: "warsaw", vehicleId: "missing")
+            }
+            Issue.record("Expected httpError(404)")
+        } catch let error as ZbiorkomAPIError {
+            #expect(error == .httpError(statusCode: 404))
+            #expect(attemptCount.value == 1)
+        }
+    }
+
+    @Test("Empty city parameter fails with invalidParameter")
+    func testEmptyCityParameterThrows() async throws {
+        let client = makeClient()
+        do {
+            _ = try await client.fetchVehicleMetadata(city: "   ", vehicleId: "v1")
+            Issue.record("Expected invalidParameter")
+        } catch let error as ZbiorkomAPIError {
+            #expect(error == .invalidParameter("city"))
+        }
     }
 }

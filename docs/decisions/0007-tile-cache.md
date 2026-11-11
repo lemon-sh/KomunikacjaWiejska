@@ -1,6 +1,6 @@
 # ADR-0007 — Session tile cache for stops
 
-**Status:** Accepted (2026-11-05, updated 2026-11-06)
+**Status:** Superseded by [ADR-0009](0009-api6-sse-streaming.md) (2026-11-11) — originally accepted 2026-11-05, updated 2026-11-06
 
 ## Context
 The stops endpoint returns every stop inside a bbox, independent of zoom. The

@@ -5,29 +5,14 @@ import Observation
 import os
 import SwiftUI
 
-extension CLLocationCoordinate2D {
-    /// Structure equality with a small epsilon, used for camera-state change
-    /// detection. MapKit reports identical values with float jitter.
-    func isApproximatelyEqual(to other: CLLocationCoordinate2D) -> Bool {
-        abs(latitude - other.latitude) < 1e-7 && abs(longitude - other.longitude) < 1e-7
-    }
+/// Observable MainActor view model coordinating SSE map streams, city selection, and detail sheets.
 
-    /// Great-circle distance in metres to another coordinate.
-    nonisolated func distance(to other: CLLocationCoordinate2D) -> CLLocationDistance {
-        CLLocation(latitude: latitude, longitude: longitude)
-            .distance(from: CLLocation(latitude: other.latitude, longitude: other.longitude))
-    }
-}
-
-/// Available map rendering modes.
 enum MapMode: String, CaseIterable, Identifiable {
     case explore = "Explore"
     case satellite = "Satellite"
 
     var id: String { rawValue }
 
-    /// Localized label. `rawValue` stays a stable, locale-independent
-    /// identifier (persisted state, tests, analytics); never render it.
     var displayName: String {
         switch self {
         case .explore:
@@ -40,138 +25,233 @@ enum MapMode: String, CaseIterable, Identifiable {
     var mapStyle: MapStyle {
         switch self {
         case .explore:
-            return .standard(pointsOfInterest: .excludingAll, showsTraffic: true)
+            return .standard(elevation: .realistic)
         case .satellite:
-            return .hybrid(elevation: .realistic, showsTraffic: true)
+            return .hybrid(elevation: .realistic)
         }
     }
 }
 
-/// Why the map is currently loading. Lets the UI distinguish a cold start
-/// from a same-city viewport load or a city switch without inferring it from
-/// timing.
-enum StopLoadingPhase: Equatable, Sendable {
-    case initial
-    case refresh
-    case citySwitch
+struct ActiveStopDetail: Equatable {
+    var stop: Stop
+    var departures: [StopDeparture] = []
+    var isLoadingDepartures: Bool = true
+    var errorMessage: String?
+}
+
+struct ActiveTripDetail: Equatable {
+    let city: String
+    let vehicleId: String?
+    var tripId: String?
+    var route: StopRoute?
+    var headsign: String?
+    var brigade: String?
+    var tripInfo: TripInfo?
+    var itinerary: Itinerary?
+    var livePosition: VehiclePosition?
+    var stopUpdates: [TripStopUpdate] = []
+    var currentSequence: Int?
+    var alerts: [TripAlert] = []
+    var vehicleMetadata: VehicleMetadata?
+    var isLoading: Bool = true
+    var errorMessage: String?
+
+    var displayRoute: StopRoute? {
+        livePosition?.route ?? tripInfo?.route ?? route
+    }
+
+    var displayHeadsign: String {
+        tripInfo?.headsign ?? headsign ?? displayRoute?.longName ?? ""
+    }
+
+    var displayBrigade: String? {
+        livePosition?.brigade ?? tripInfo?.brigade ?? brigade
+    }
 }
 
 @Observable
 @MainActor
 final class MapViewModel {
-    /// Camera-derived metrics grouped into one tracked value so a camera
-    /// gesture updates a single observation instead of four.
-    /// `center` is derived from `region.center` so they can never diverge.
-    struct CameraState: Equatable, Sendable {
+    struct CameraState: Equatable {
         var region: MKCoordinateRegion
+        var distance: Double
         var heading: Double
         var pitch: Double
-        var distance: Double
-
-        var center: CLLocationCoordinate2D {
-            get { region.center }
-            set { region.center = newValue }
-        }
-
-        init(
-            region: MKCoordinateRegion,
-            heading: Double = 0,
-            pitch: Double = 0,
-            distance: Double = 0,
-            center: CLLocationCoordinate2D? = nil
-        ) {
-            self.region = (center != nil) ? MKCoordinateRegion(center: center!, span: region.span) : region
-            self.heading = heading
-            self.pitch = pitch
-            self.distance = distance
-        }
+        var center: CLLocationCoordinate2D
 
         static func == (lhs: CameraState, rhs: CameraState) -> Bool {
-            lhs.heading == rhs.heading
+            lhs.distance == rhs.distance
+                && lhs.heading == rhs.heading
                 && lhs.pitch == rhs.pitch
-                && lhs.distance == rhs.distance
-                && lhs.center.isApproximatelyEqual(to: rhs.center)
-                && abs(lhs.region.span.latitudeDelta - rhs.region.span.latitudeDelta) < 1e-7
-                && abs(lhs.region.span.longitudeDelta - rhs.region.span.longitudeDelta) < 1e-7
+                && lhs.center.latitude == rhs.center.latitude
+                && lhs.center.longitude == rhs.center.longitude
+                && lhs.region.center.latitude == rhs.region.center.latitude
+                && lhs.region.center.longitude == rhs.region.center.longitude
+                && lhs.region.span.latitudeDelta == rhs.region.span.latitudeDelta
+                && lhs.region.span.longitudeDelta == rhs.region.span.longitudeDelta
         }
     }
-
-    private(set) var selectedCity: City
-
-    /// City suggested to the user when viewing an area outside the current city's territory.
-    private(set) var suggestedCity: City?
-    /// City ID whose suggestion was dismissed by the user to avoid repeated prompting.
-    private(set) var dismissedCityID: String?
-
-    @ObservationIgnored private var _cameraPosition: MapCameraPosition
-    @ObservationIgnored private var _cameraState: CameraState
-
-    var cameraPosition: MapCameraPosition {
-        get {
-            access(keyPath: \.cameraPosition)
-            return _cameraPosition
-        }
-        set {
-            withMutation(keyPath: \.cameraPosition) {
-                _cameraPosition = newValue
-            }
-        }
-    }
-
-    /// Updates internal camera position from MapKit user gestures without triggering
-    /// SwiftUI Observation invalidations. User panning is already rendered smoothly by MapKit/Metal;
-    /// re-evaluating the SwiftUI Map and annotation tree on every pan tick causes 30–56ms main thread hitches.
-    func setCameraPositionFromGesture(_ newPosition: MapCameraPosition) {
-        _cameraPosition = newPosition
-        isTrackingVehicle = false
-    }
-
-    var cameraState: CameraState {
-        get { _cameraState }
-        set {
-            _cameraState = newValue
-            syncDerivedCameraProperties(from: newValue)
-        }
-    }
-
-    /// Markers currently rendered on the map.
-    private(set) var stops: [Stop] = []
-    var isShowingCityPicker: Bool = false
-    var selectedMapMode: MapMode = .explore
-    var isTrackingUser: Bool = false
-
-    /// Real-time live vehicles currently rendered on the map.
-    private(set) var vehicles: [VehiclePosition] = []
-    private(set) var isTrackingVehicle: Bool = false
-    private(set) var isVehiclesVisible: Bool = true
-    private(set) var isVehicleCompactDisplayMode: Bool = true
-    private(set) var isRetryableError: Bool = true
 
     enum FeatureSelection: Hashable, Sendable {
         case stop(String)
         case vehicle(String)
+        case trip(city: String, tripId: String, initialRoute: StopRoute?, headsign: String?, brigade: String?)
     }
 
-    /// Active map selection (single source of truth shared with `Map(selection:)`).
+    enum LoadingPhase: Equatable {
+        case idle
+        case loading
+        case failed(String, retryable: Bool)
+    }
+
+    // MARK: - Published UI State
+
+    var cameraPosition: MapCameraPosition
+    var selectedMapMode: MapMode = .explore
+    var isTrackingUser: Bool = false
+    var isFollowingVehicle: Bool = false
+
+    var citiesCatalog: [City] = []
+    var selectedCity: City?
+    private(set) var selectedCityID: String
+    var isShowingCityPicker: Bool = false
+    var suggestedCity: City?
+
+    var stops: [Stop] = []
+    var vehicles: [VehiclePosition] = []
+    var dots: [DotVehicle] = []
+
     var selection: FeatureSelection? {
         didSet {
-            switch selection {
-            case .vehicle(let id):
-                isTrackingVehicle = true
-                if let vehicle = cachedVehicle(for: id) {
-                    let distance = currentDistance > 0
-                        ? min(currentDistance, MapConstants.vehicleCompactDistanceThreshold)
-                        : MapConstants.vehicleCompactDistanceThreshold
-                    animateCamera(
-                        center: vehicle.coordinate,
-                        distance: distance,
-                        animation: .spring(response: 0.45, dampingFraction: 0.85)
-                    )
-                }
-            case .stop, nil:
-                isTrackingVehicle = false
+            if selection != oldValue {
+                handleSelectionChanged(from: oldValue, to: selection)
             }
         }
+    }
+
+    var activeStopDetail: ActiveStopDetail?
+    var activeTripDetail: ActiveTripDetail?
+    private(set) var canNavigateBackToStop: Bool = false
+
+    var loadingPhase: LoadingPhase = .idle
+
+    var isLoading: Bool {
+        if case .loading = loadingPhase { return true }
+        return false
+    }
+
+    var errorMessage: String? {
+        if case .failed(let message, _) = loadingPhase { return message }
+        return nil
+    }
+
+    var isRetryableError: Bool {
+        if case .failed(_, let retryable) = loadingPhase { return retryable }
+        return false
+    }
+
+    var cameraState: CameraState
+
+    var currentDistance: Double {
+        get { cameraState.distance }
+        set { cameraState.distance = newValue }
+    }
+
+    var currentHeading: Double {
+        get { cameraState.heading }
+        set { cameraState.heading = newValue }
+    }
+
+    var visibleRegion: MKCoordinateRegion? {
+        get { cameraState.region }
+        set {
+            if let region = newValue {
+                cameraState.region = region
+            }
+        }
+    }
+
+    var currentCenter: CLLocationCoordinate2D {
+        get { cameraState.center }
+        set { cameraState.center = newValue }
+    }
+
+    var currentPitch: Double {
+        get { cameraState.pitch }
+        set { cameraState.pitch = newValue }
+    }
+
+    var isPitched3D: Bool {
+        cameraState.pitch >= 5
+    }
+
+    var viewportWidthPoints: Double = MapConstants.defaultViewportWidthPoints
+
+    /// Cities shown in `CityPickerSheet` (virtual meta-networks are hidden, matching webapp).
+    var pickerCities: [City] {
+        City.pickerCities(from: citiesCatalog)
+    }
+
+    // MARK: - Displayed Map Layers (Isolated During Stop/Trip Detail)
+
+    var displayedStops: [Stop] {
+        if let activeStopDetail {
+            return [activeStopDetail.stop]
+        }
+        if activeTripDetail != nil {
+            return []
+        }
+        return stops
+    }
+
+    var displayedVehicles: [VehiclePosition] {
+        if let activeTripDetail {
+            if let live = activeTripDetail.livePosition {
+                return [live]
+            }
+            if let id = activeTripDetail.vehicleId,
+               let cached = vehicles.first(where: { $0.id == id }) {
+                return [cached]
+            }
+            return []
+        }
+        if let activeStopDetail {
+            var unique: [String: VehiclePosition] = [:]
+            for departure in activeStopDetail.departures {
+                if let vehicle = departure.vehicle {
+                    unique[vehicle.id] = vehicle
+                }
+            }
+            return Array(unique.values).sorted { $0.id < $1.id }
+        }
+        return vehicles
+    }
+
+    var displayedDots: [DotVehicle] {
+        guard activeStopDetail == nil, activeTripDetail == nil else {
+            return []
+        }
+        return dots
+    }
+
+    var displayedStopEntrances: [StopEntrance] {
+        activeStopDetail?.stop.entrances ?? []
+    }
+
+    var displayedItineraryStops: [ItineraryStop] {
+        activeTripDetail?.itinerary?.stops ?? []
+    }
+
+    var displayedRouteCoordinates: [CLLocationCoordinate2D] {
+        activeTripDetail?.itinerary?.coordinates ?? []
+    }
+
+    var displayedRouteColor: Color {
+        activeTripDetail?.displayRoute?.displayColor ?? .accentColor
+    }
+
+    var areStopTitlesVisible: Bool {
+        currentDistance <= 750
     }
 
     var selectedStopID: String? {
@@ -181,1069 +261,842 @@ final class MapViewModel {
 
     var selectedVehicleID: String? {
         if case .vehicle(let id) = selection { return id }
-        return nil
+        return activeTripDetail?.vehicleId
     }
 
-    var isPKPSelected: Bool {
-        selectedCity.id == City.pkp.id
-    }
+    // MARK: - Internal State & Tasks
 
-    private(set) var isPitched3D: Bool = false
-    private(set) var areStopsVisible: Bool = true
-    private(set) var areStopTitlesVisible: Bool = false
-    var currentHeading: Double = 0 {
-        didSet {
-            _cameraState.heading = currentHeading
-        }
-    }
+    private let transitDataProvider: TransitDataProviding
+    private let persistence: CameraPersistenceStore
+    private let debounceDuration: Duration
+    private var hasExplicitCityOrCamera: Bool
 
-    var currentPitch: Double {
-        get { _cameraState.pitch }
-        set {
-            _cameraState.pitch = newValue
-            applyPitchFlag(newValue)
-        }
-    }
+    private var stopsByID: [String: Stop] = [:]
+    private var vehiclesByID: [String: VehiclePosition] = [:]
 
-    var currentDistance: Double {
-        get { _cameraState.distance }
-        set {
-            _cameraState.distance = newValue
-            applyDistanceDerivedFlags(newValue)
-        }
-    }
+    private var lastServerSuggestedCityID: String?
+    private(set) var dismissedCityID: String?
+    private var dismissedAtCenter: CLLocationCoordinate2D?
 
-    var currentCenter: CLLocationCoordinate2D {
-        get { _cameraState.center }
-        set { _cameraState.center = newValue }
-    }
+    private var stopReturnSelection: Stop?
 
-    var visibleRegion: MKCoordinateRegion {
-        get { _cameraState.region }
-        set {
-            _cameraState.region = newValue
-            updateStops()
-            updateRenderedVehicles()
-        }
-    }
+    private var citiesLoadTask: Task<Void, Never>?
+    private var debounceTask: Task<Void, Never>?
+    private var mapStreamTask: Task<Void, Never>?
+    private var activeMapStreamKey: MapStreamKey?
+    private var stopStreamTask: Task<Void, Never>?
+    private var tripStreamTask: Task<Void, Never>?
+    private var vehicleMetadataTask: Task<Void, Never>?
+    private var backgroundDisconnectTask: Task<Void, Never>?
 
-    private static func computeVisibility(for distance: Double, isPKP: Bool) -> (
-        stopsVisible: Bool,
-        stopTitlesVisible: Bool,
-        vehiclesVisible: Bool,
-        vehicleCompact: Bool
-    ) {
-        let stopThreshold = isPKP ? MapConstants.pkpStopVisibilityDistanceThreshold : MapConstants.stopVisibilityDistanceThreshold
-        return (
-            stopsVisible: distance <= stopThreshold,
-            stopTitlesVisible: distance <= MapConstants.stopTitleVisibilityDistanceThreshold,
-            // When PKP is explicitly selected, vehicles remain visible at all zoom levels (thinned when dense).
-            vehiclesVisible: isPKP || distance <= MapConstants.vehicleVisibilityDistanceThreshold,
-            vehicleCompact: distance > MapConstants.vehicleCompactDistanceThreshold
-        )
-    }
+    private var lastMapMessageDate: Date?
+    private var backgroundedAt: Date?
 
-    private func applyPitchFlag(_ pitch: Double) {
-        let newPitched = pitch > 1.0
-        if isPitched3D != newPitched {
-            isPitched3D = newPitched
-        }
-    }
-
-    private func applyDistanceDerivedFlags(_ distance: Double) {
-        let visibility = Self.computeVisibility(for: distance, isPKP: isPKPSelected)
-        if areStopsVisible != visibility.stopsVisible {
-            areStopsVisible = visibility.stopsVisible
-        }
-        if areStopTitlesVisible != visibility.stopTitlesVisible {
-            areStopTitlesVisible = visibility.stopTitlesVisible
-        }
-        if isVehiclesVisible != visibility.vehiclesVisible {
-            isVehiclesVisible = visibility.vehiclesVisible
-            if !visibility.vehiclesVisible {
-                vehicles = []
-                stopVehiclePolling()
-                vehicleDebounceTask?.cancel()
-                vehicleDebounceTask = nil
-            } else {
-                startVehiclePolling()
-            }
-        }
-        if isVehicleCompactDisplayMode != visibility.vehicleCompact {
-            isVehicleCompactDisplayMode = visibility.vehicleCompact
-        }
-    }
-
-    private func syncDerivedCameraProperties(from state: CameraState) {
-        applyPitchFlag(state.pitch)
-        applyDistanceDerivedFlags(state.distance)
-        if abs(currentHeading - state.heading) >= 0.5 {
-            currentHeading = state.heading
-        }
-    }
-
-    private struct RequestKey: Equatable {
+    private struct MapStreamKey: Equatable {
         let cityID: String
+        let zoom: Double
         let bbox: BoundingBox
     }
 
-    @ObservationIgnored private var activeRequest: RequestKey?
-
-    /// Whether the currently selected city's viewport has a request in flight.
-    private(set) var isLoading: Bool = false
-
-    /// The reason for the current load, or `nil` when nothing is in flight.
-    private(set) var loadingPhase: StopLoadingPhase?
-
-    /// Failure message for the currently selected city, if any. Errors are
-    /// tracked per city so a failed fetch for city A never surfaces while
-    /// viewing city B.
-    private(set) var errorMessage: String?
-
-    private func updateLoadingAndErrorStates() {
-        let newLoading = activeRequest?.cityID == selectedCity.id
-        if isLoading != newLoading { isLoading = newLoading }
-        let newError = errorsByCity[selectedCity.id]
-        if errorMessage != newError { errorMessage = newError }
-    }
-
-    /// The stop currently selected, looked up by `selectedStopID`. Derived —
-    /// never set this; write to `selection` instead.
-    var selectedStop: Stop? {
-        selectedStopID.flatMap(cachedStop)
-    }
-
-    /// Looks up a stop in the session cache by its identifier.
-    func cachedStop(for id: String) -> Stop? {
-        cachedStopsByID[id]
-    }
-
-    private let apiClient: any TransitDataProviding
-    private let persistence: any CameraPersistenceStore
-    private let debounceDuration: Duration
-
-    // `nonisolated(unsafe)`: only mutated from `@MainActor` methods, read from
-    // `deinit` (nonisolated by definition). `Task` is `Sendable`, so cancelling
-    // from any context is safe; the reference itself is never read concurrently.
-    @ObservationIgnored private nonisolated(unsafe) var activeFetchTask: Task<Void, Never>?
-    @ObservationIgnored private nonisolated(unsafe) var debounceTask: Task<Void, Never>?
-    @ObservationIgnored private nonisolated(unsafe) var vehicleDebounceTask: Task<Void, Never>?
-    @ObservationIgnored private nonisolated(unsafe) var vehiclePollingTask: Task<Void, Never>?
-    @ObservationIgnored private nonisolated(unsafe) var vehicleThinningTask: Task<Void, Never>?
-    @ObservationIgnored private var vehicleThinningGeneration = UUID()
-    /// Region for which `stops` was last updated, expanded by `MapConstants.viewportBufferFactor`.
-    @ObservationIgnored private var lastBufferedRegion: MKCoordinateRegion?
-    /// Region for which `vehicles` was last thinned, expanded by `MapConstants.viewportBufferFactor`.
-    @ObservationIgnored private var lastVehicleBufferedRegion: MKCoordinateRegion?
-    /// Buffered region for which vehicle positions were last fetched from the API.
-    @ObservationIgnored private var lastFetchedVehicleRegion: MKCoordinateRegion?
-    @ObservationIgnored private var inFlightTiles: Set<MapTile> = []
-    /// Session-only stop cache for the selected city.
-    @ObservationIgnored private var cachedStopsByID: [String: Stop] = [:]
-    /// Tiles whose bbox has been fetched successfully in this session.
-    @ObservationIgnored private var fetchedTiles: Set<MapTile> = []
-
-    private struct CachedVehicleEntry: Sendable {
-        let vehicle: VehiclePosition
-        let receivedAt: ContinuousClock.Instant
-    }
-
-    /// Live vehicles cache mapped by ID with client arrival timestamp for TTL eviction.
-    @ObservationIgnored private var cachedVehiclesByID: [String: CachedVehicleEntry] = [:]
-
-    /// Live vehicles cache for current session/city.
-    @ObservationIgnored private var cachedVehicles: [VehiclePosition] = []
-
-    @ObservationIgnored private var errorsByCity: [String: String] = [:]
-    /// Generation token guarding against stale responses: each fetch gets a
-    /// fresh token, and a response only applies if it still matches.
-    @ObservationIgnored private var requestGeneration = UUID()
-    /// City of the last request, even when no data has arrived yet. Lets the
-    /// loading phase distinguish a switch from a cold start.
-    @ObservationIgnored private var lastRequestedCityID: String?
+    // MARK: - Initialization
 
     init(
-        apiClient: any TransitDataProviding = ZbiorkomAPIClient.shared,
-        initialCity: City? = nil,
-        persistence: any CameraPersistenceStore = UserDefaultsCameraPersistenceStore(),
-        debounceDuration: Duration = MapConstants.cameraFetchDebounce
+        transitDataProvider: TransitDataProviding = ZbiorkomAPIClient(),
+        persistence: CameraPersistenceStore = UserDefaultsCameraPersistenceStore(),
+        debounceDuration: Duration = MapConstants.cameraDebounce
     ) {
-        self.apiClient = apiClient
+        self.transitDataProvider = transitDataProvider
         self.persistence = persistence
         self.debounceDuration = debounceDuration
 
-        let chosenCity = initialCity
-            ?? persistence.loadLastSelectedCityID().flatMap { id in City.allCities.first(where: { $0.id == id }) }
-            ?? .warsaw
-        self.selectedCity = chosenCity
+        let savedCityID = persistence.loadLastSelectedCityID()
+        let savedCamera = persistence.loadSavedCamera()
 
-        let initialCamera = Self.initialCamera(
-            for: chosenCity,
-            savedCamera: initialCity == nil ? persistence.loadSavedCamera() : nil
+        let initialCenter = savedCamera.map {
+            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+        } ?? CLLocationCoordinate2D(
+            latitude: MapConstants.defaultCenterLatitude,
+            longitude: MapConstants.defaultCenterLongitude
         )
-        self._cameraState = initialCamera.state
-        self._cameraPosition = initialCamera.position
+        let initialDistance = savedCamera?.distance ?? MapConstants.defaultCityDistance
 
-        let visibility = Self.computeVisibility(
-            for: initialCamera.state.distance,
-            isPKP: chosenCity.id == City.pkp.id
+        self.selectedCityID = savedCityID ?? MapConstants.defaultCityID
+        self.selectedCity = nil
+        self.hasExplicitCityOrCamera = savedCamera != nil
+        self.cameraPosition = .camera(
+            MapCamera(
+                centerCoordinate: initialCenter,
+                distance: initialDistance,
+                heading: 0,
+                pitch: 0
+            )
         )
-        self.areStopsVisible = visibility.stopsVisible
-        self.areStopTitlesVisible = visibility.stopTitlesVisible
-        self.isVehiclesVisible = visibility.vehiclesVisible
-        self.isVehicleCompactDisplayMode = visibility.vehicleCompact
+
+        let span = MKCoordinateSpan(
+            latitudeDelta: MapConstants.defaultCoordinateSpanDelta,
+            longitudeDelta: MapConstants.defaultCoordinateSpanDelta
+        )
+        let initialRegion = MKCoordinateRegion(center: initialCenter, span: span)
+        self.cameraState = CameraState(
+            region: initialRegion,
+            distance: initialDistance,
+            heading: 0,
+            pitch: 0,
+            center: initialCenter
+        )
     }
 
-    private static func initialCamera(
-        for city: City,
-        savedCamera: (latitude: Double, longitude: Double, distance: Double)?
-    ) -> (state: CameraState, position: MapCameraPosition) {
-        if let saved = savedCamera,
-           saved.latitude.isFinite, saved.longitude.isFinite, saved.distance.isFinite, saved.distance > 0,
-           (-90.0...90.0).contains(saved.latitude), (-180.0...180.0).contains(saved.longitude) {
-            let savedCoord = CLLocationCoordinate2D(latitude: saved.latitude, longitude: saved.longitude)
-            let isWithinBounds = city.id == City.pkp.id
-                || savedCoord.distance(to: city.coordinate) <= city.coverageRadiusMeters
-            if isWithinBounds {
-                let delta = max(0.001, min(180.0, saved.distance / MapConstants.metresPerDegreeLatitude))
-                let region = MKCoordinateRegion(
-                    center: savedCoord,
-                    span: MKCoordinateSpan(latitudeDelta: delta, longitudeDelta: delta)
-                )
-                let state = CameraState(region: region, distance: saved.distance, center: savedCoord)
-                let position: MapCameraPosition = .camera(MapCamera(
-                    centerCoordinate: savedCoord,
-                    distance: saved.distance,
-                    heading: 0,
-                    pitch: 0
-                ))
-                return (state, position)
-            }
+    isolated deinit {
+        citiesLoadTask?.cancel()
+        debounceTask?.cancel()
+        mapStreamTask?.cancel()
+        stopStreamTask?.cancel()
+        tripStreamTask?.cancel()
+        vehicleMetadataTask?.cancel()
+        backgroundDisconnectTask?.cancel()
+    }
+
+    // MARK: - Lookup Helpers
+
+    func city(for id: String) -> City? {
+        City.city(id: id, in: citiesCatalog)
+    }
+
+    func timeZone(for cityID: String) -> TimeZone {
+        city(for: cityID)?.timeZone
+            ?? selectedCity?.timeZone
+            ?? TimeZone(identifier: "Europe/Warsaw")
+            ?? .current
+    }
+
+    func cachedStop(for id: String) -> Stop? {
+        if let activeStopDetail, activeStopDetail.stop.id == id {
+            return activeStopDetail.stop
+        }
+        return stopsByID[id]
+    }
+
+    func cachedVehicle(for id: String) -> VehiclePosition? {
+        if let activeTripDetail, activeTripDetail.vehicleId == id, let live = activeTripDetail.livePosition {
+            return live
+        }
+        return vehiclesByID[id]
+    }
+
+    // MARK: - Lifecycle & Map Stream Control
+
+    func start() {
+        if citiesCatalog.isEmpty {
+            loadCitiesCatalogIfNeeded()
+        } else {
+            startMapStreamForCurrentViewport()
+        }
+    }
+
+    func retry() {
+        if citiesCatalog.isEmpty {
+            loadCitiesCatalogIfNeeded(forceReload: true)
+        } else {
+            startMapStreamForCurrentViewport(forceRestart: true)
+        }
+    }
+
+    func loadCitiesCatalogIfNeeded(forceReload: Bool = false) {
+        if forceReload {
+            citiesLoadTask?.cancel()
+            citiesLoadTask = nil
+        }
+        guard citiesLoadTask == nil else { return }
+
+        if citiesCatalog.isEmpty {
+            loadingPhase = .loading
         }
 
-        let defaultRegion = MKCoordinateRegion(
-            center: city.coordinate,
-            span: MKCoordinateSpan(
+        citiesLoadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let fetched = try await transitDataProvider.fetchCities()
+                guard !Task.isCancelled else { return }
+                guard !fetched.isEmpty else {
+                    self.citiesLoadTask = nil
+                    self.loadingPhase = .failed(String(localized: "error.invalidResponse"), retryable: true)
+                    return
+                }
+
+                self.citiesCatalog = fetched
+                self.citiesLoadTask = nil
+
+                if let resolved = City.city(id: self.selectedCityID, in: fetched)
+                    ?? (self.hasExplicitCityOrCamera ? self.selectedCity : nil)
+                    ?? City.city(id: MapConstants.defaultCityID, in: fetched)
+                    ?? fetched.first(where: { !$0.isVirtual })
+                    ?? fetched.first {
+                    let shouldReposition = !self.hasExplicitCityOrCamera && (
+                        abs(resolved.latitude - self.cameraState.center.latitude) > 0.001
+                            || abs(resolved.longitude - self.cameraState.center.longitude) > 0.001
+                    )
+                    self.selectedCity = resolved
+                    self.selectedCityID = resolved.id
+                    self.persistence.saveLastSelectedCityID(resolved.id)
+                    if shouldReposition {
+                        self.applyCameraState(
+                            CameraState(
+                                region: MKCoordinateRegion(
+                                    center: resolved.coordinate,
+                                    span: MKCoordinateSpan(
+                                        latitudeDelta: resolved.defaultLatitudeDelta,
+                                        longitudeDelta: resolved.defaultLongitudeDelta
+                                    )
+                                ),
+                                distance: MapConstants.defaultCityDistance,
+                                heading: 0,
+                                pitch: 0,
+                                center: resolved.coordinate
+                            ),
+                            animated: false
+                        )
+                    }
+                }
+
+                self.startMapStreamForCurrentViewport(forceRestart: true)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.citiesLoadTask = nil
+                let message = error.localizedDescription.isEmpty
+                    ? String(localized: "error.invalidResponse")
+                    : error.localizedDescription
+                self.loadingPhase = .failed(message, retryable: true)
+                Logger.catalog.error("Failed to load /api6 city catalog: \(message, privacy: .public)")
+            }
+        }
+    }
+
+    func pauseForBackground() {
+        debounceTask?.cancel()
+        debounceTask = nil
+        backgroundedAt = Date()
+
+        backgroundDisconnectTask?.cancel()
+        backgroundDisconnectTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: MapConstants.sseBackgroundDisconnectDelay)
+            } catch {
+                return
+            }
+            guard let self, self.backgroundedAt != nil else { return }
+            self.cancelAllStreams()
+        }
+    }
+
+    func resumeFromBackground() {
+        backgroundDisconnectTask?.cancel()
+        backgroundDisconnectTask = nil
+
+        if citiesCatalog.isEmpty {
+            loadCitiesCatalogIfNeeded()
+            return
+        }
+
+        let wasBackgroundedLong = backgroundedAt.map {
+            Date().timeIntervalSince($0) >= MapConstants.sseForegroundStaleInterval
+        } ?? true
+        let isStreamStale = lastMapMessageDate.map {
+            Date().timeIntervalSince($0) >= MapConstants.sseForegroundStaleInterval
+        } ?? true
+        backgroundedAt = nil
+
+        if mapStreamTask == nil || wasBackgroundedLong || isStreamStale {
+            startMapStreamForCurrentViewport(forceRestart: true)
+            restartActiveDetailStreamIfNeeded()
+        }
+    }
+
+    func startMapStreamForCurrentViewport(forceRestart: Bool = false) {
+        guard !citiesCatalog.isEmpty || selectedCity != nil else { return }
+        guard let bbox = BoundingBox(cameraState.region)?.clamped else { return }
+        let zoom = bbox.webMercatorZoom(viewportWidth: viewportWidthPoints)
+        let cityID = selectedCityID
+        let key = MapStreamKey(cityID: cityID, zoom: zoom, bbox: bbox)
+
+        if !forceRestart, activeMapStreamKey == key, mapStreamTask != nil {
+            return
+        }
+
+        cancelMapStream()
+        activeMapStreamKey = key
+
+        if stops.isEmpty && vehicles.isEmpty && dots.isEmpty {
+            loadingPhase = .loading
+        }
+
+        let stream = transitDataProvider.streamMapFeatures(city: cityID, zoom: zoom, bbox: bbox)
+
+        mapStreamTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                for try await event in stream {
+                    guard !Task.isCancelled,
+                          self.selectedCityID == cityID,
+                          self.activeMapStreamKey == key else {
+                        return
+                    }
+                    self.handleMapFeaturesEvent(event)
+                }
+                if self.selectedCityID == cityID && self.activeMapStreamKey == key {
+                    self.mapStreamTask = nil
+                    if case .loading = self.loadingPhase {
+                        self.loadingPhase = .idle
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard self.selectedCityID == cityID, self.activeMapStreamKey == key else { return }
+                self.mapStreamTask = nil
+                let message = error.localizedDescription.isEmpty
+                    ? String(localized: "error.invalidResponse")
+                    : error.localizedDescription
+                self.loadingPhase = .failed(message, retryable: true)
+                Logger.api.error("mapFeatures stream error for \(cityID, privacy: .public): \(message, privacy: .public)")
+            }
+        }
+    }
+
+    private func handleMapFeaturesEvent(_ event: MapFeaturesEvent) {
+        switch event {
+        case .initial(let payload):
+            var newStopsByID: [String: Stop] = [:]
+            newStopsByID.reserveCapacity(payload.stops.count)
+            for stop in payload.stops {
+                newStopsByID[stop.id] = stop
+            }
+            stopsByID = newStopsByID
+            stops = payload.stops
+            lastServerSuggestedCityID = payload.suggestedCity
+            loadingPhase = .idle
+            updateRegionSuggestion()
+
+        case .message(let payload):
+            var newVehiclesByID: [String: VehiclePosition] = [:]
+            newVehiclesByID.reserveCapacity(payload.positions.count)
+            for vehicle in payload.positions {
+                newVehiclesByID[vehicle.id] = vehicle
+            }
+            vehiclesByID = newVehiclesByID
+            vehicles = payload.positions
+            dots = payload.dots
+            lastMapMessageDate = Date()
+            loadingPhase = .idle
+        }
+    }
+
+    private func cancelMapStream() {
+        mapStreamTask?.cancel()
+        mapStreamTask = nil
+        activeMapStreamKey = nil
+    }
+
+    private func cancelAllStreams() {
+        cancelMapStream()
+        stopStreamTask?.cancel()
+        stopStreamTask = nil
+        tripStreamTask?.cancel()
+        tripStreamTask = nil
+        vehicleMetadataTask?.cancel()
+        vehicleMetadataTask = nil
+    }
+
+    // MARK: - City Selection & Camera Handling
+
+    func selectCity(_ city: City, repositionCamera: Bool = true) {
+        let cityChanged = selectedCityID != city.id
+        selectedCity = city
+        selectedCityID = city.id
+        hasExplicitCityOrCamera = true
+        persistence.saveLastSelectedCityID(city.id)
+        isShowingCityPicker = false
+
+        if cityChanged {
+            selection = nil
+            stopReturnSelection = nil
+            canNavigateBackToStop = false
+            activeStopDetail = nil
+            activeTripDetail = nil
+            stops = []
+            stopsByID.removeAll()
+            vehicles = []
+            vehiclesByID.removeAll()
+            dots = []
+            lastServerSuggestedCityID = nil
+            suggestedCity = nil
+            dismissedCityID = nil
+            dismissedAtCenter = nil
+            loadingPhase = .idle
+            cancelAllStreams()
+        }
+
+        if repositionCamera {
+            let center = city.coordinate
+            let distance = MapConstants.defaultCityDistance
+            let span = MKCoordinateSpan(
                 latitudeDelta: city.defaultLatitudeDelta,
                 longitudeDelta: city.defaultLongitudeDelta
             )
-        )
-        let state = CameraState(
-            region: defaultRegion,
-            distance: approximateDistance(for: defaultRegion),
-            center: city.coordinate
-        )
-        return (state, .region(defaultRegion))
-    }
-
-    /// Persists current camera center and zoom distance to non-volatile storage.
-    func saveCameraPosition() {
-        persistence.saveCamera(
-            latitude: currentCenter.latitude,
-            longitude: currentCenter.longitude,
-            distance: currentDistance
-        )
-    }
-
-    deinit {
-        activeFetchTask?.cancel()
-        debounceTask?.cancel()
-        vehicleDebounceTask?.cancel()
-        vehiclePollingTask?.cancel()
-        vehicleThinningTask?.cancel()
-    }
-
-    func repositionCameraForCurrentCity() {
-        let newRegion = MKCoordinateRegion(
-            center: selectedCity.coordinate,
-            span: MKCoordinateSpan(
-                latitudeDelta: selectedCity.defaultLatitudeDelta,
-                longitudeDelta: selectedCity.defaultLongitudeDelta
+            applyCameraState(
+                CameraState(
+                    region: MKCoordinateRegion(center: center, span: span),
+                    distance: distance,
+                    heading: 0,
+                    pitch: 0,
+                    center: center
+                ),
+                animated: true
             )
-        )
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-            cameraPosition = .region(newRegion)
         }
-        cameraState = CameraState(
-            region: newRegion,
-            distance: Self.approximateDistance(for: newRegion),
-            center: selectedCity.coordinate
-        )
-        isTrackingUser = false
+
+        if cityChanged {
+            startMapStreamForCurrentViewport(forceRestart: true)
+        }
     }
 
-    /// MapKit does not expose a synchronous camera distance when only a region
-    /// is known. The visible height in metres is a close enough proxy for the
-    /// distance threshold: 0.08° ≈ 9 km for a city, 5° ≈ 555 km for PKP.
-    static func approximateDistance(for region: MKCoordinateRegion) -> Double {
-        region.span.latitudeDelta * MapConstants.metresPerDegreeLatitude
+    func switchToSuggestedCity() {
+        guard let target = suggestedCity else { return }
+        suggestedCity = nil
+        dismissedCityID = nil
+        dismissedAtCenter = nil
+        selectCity(target, repositionCamera: false)
+        startMapStreamForCurrentViewport(forceRestart: true)
+    }
+
+    func dismissSuggestedCity() {
+        dismissedCityID = suggestedCity?.id
+        dismissedAtCenter = cameraState.center
+        suggestedCity = nil
+    }
+
+    func toggleMapMode() {
+        selectedMapMode = (selectedMapMode == .explore) ? .satellite : .explore
+    }
+
+    func centerOnUserLocation(coordinate: CLLocationCoordinate2D) {
+        isTrackingUser = true
+        isFollowingVehicle = false
+        let distance = MapConstants.userFocusDistance
+        let region = MKCoordinateRegion(
+            center: coordinate,
+            latitudinalMeters: distance,
+            longitudinalMeters: distance
+        )
+        applyCameraState(
+            CameraState(
+                region: region,
+                distance: distance,
+                heading: currentHeading,
+                pitch: currentPitch,
+                center: coordinate
+            ),
+            animated: true
+        )
+    }
+
+    func toggleFollowVehicle() {
+        isFollowingVehicle.toggle()
+        if isFollowingVehicle, let coord = activeTripDetail?.livePosition?.coordinate {
+            focusCameraOnVehicle(coordinate: coord)
+        }
+    }
+
+    func resetPitchTo2D() {
+        applyCameraState(
+            CameraState(
+                region: cameraState.region,
+                distance: cameraState.distance,
+                heading: cameraState.heading,
+                pitch: 0,
+                center: cameraState.center
+            ),
+            animated: true
+        )
+    }
+
+    func setCameraPositionFromGesture(_ newPosition: MapCameraPosition) {
+        isTrackingUser = false
+        isFollowingVehicle = false
+        cameraPosition = newPosition
+    }
+
+    func applyCameraState(_ state: CameraState, animated: Bool) {
+        cameraState = state
+        let mapCamera = MapCamera(
+            centerCoordinate: state.center,
+            distance: state.distance,
+            heading: state.heading,
+            pitch: state.pitch
+        )
+        if animated {
+            withAnimation {
+                cameraPosition = .camera(mapCamera)
+            }
+        } else {
+            cameraPosition = .camera(mapCamera)
+        }
     }
 
     func handleCameraChange(to context: MapCameraUpdateContext) {
         let newState = CameraState(
             region: context.region,
+            distance: context.camera.distance,
             heading: context.camera.heading,
             pitch: context.camera.pitch,
-            distance: context.camera.distance,
             center: context.camera.centerCoordinate
         )
-        applyCameraState(newState)
-    }
-
-    func applyCameraState(_ newState: CameraState) {
-        releaseTrackingIfRoaming(to: newState.center)
-        guard newState != cameraState else { return }
         cameraState = newState
-        updateStops()
-        updateRenderedVehicles()
-        scheduleViewportFetch()
-        scheduleVehicleFetch()
         updateRegionSuggestion()
-    }
 
-    private func releaseTrackingIfRoaming(to center: CLLocationCoordinate2D) {
-        if isTrackingUser, let userLocation = LocationManager.shared.userLocation,
-           center.distance(to: userLocation.coordinate) > 150 {
-            isTrackingUser = false
-        }
-        if isTrackingVehicle, let selectedID = selectedVehicleID, let vehicle = cachedVehicle(for: selectedID),
-           center.distance(to: vehicle.coordinate) > 200 {
-            isTrackingVehicle = false
-        }
-    }
-
-    private func animateCamera(
-        center: CLLocationCoordinate2D,
-        distance: Double,
-        pitch: Double? = nil,
-        animation: Animation
-    ) {
-        let camera = MapCamera(
-            centerCoordinate: center,
-            distance: distance,
-            heading: currentHeading,
-            pitch: pitch ?? currentPitch
-        )
-        withAnimation(animation) {
-            cameraPosition = .camera(camera)
-        }
-    }
-
-    /// Centers the map camera on the user's coordinate with a smooth spring animation.
-    func centerOnUserLocation(coordinate: CLLocationCoordinate2D?) {
-        guard let coordinate else { return }
-        isTrackingUser = true
-        animateCamera(
-            center: coordinate,
-            distance: min(currentDistance, 4000),
-            animation: .spring(response: 0.45, dampingFraction: 0.8)
-        )
-        currentCenter = coordinate
-    }
-
-    /// Flattens the map view to 2D (pitch = 0) while keeping current center, distance, and heading intact.
-    func resetPitchTo2D() {
-        animateCamera(
-            center: currentCenter,
-            distance: currentDistance,
-            pitch: 0,
-            animation: .spring(response: 0.4, dampingFraction: 0.85)
-        )
-        currentPitch = 0
-    }
-
-    /// Toggles between explore (normal) and satellite map rendering modes.
-    func toggleMapMode() {
-        selectedMapMode = (selectedMapMode == .satellite) ? .explore : .satellite
-    }
-
-    // MARK: - Region Suggestion
-
-    /// Evaluates whether the current camera viewport belongs to a different transit network,
-    /// updating `suggestedCity`.
-    func updateRegionSuggestion() {
-        let center = cameraState.center
-        let span = cameraState.region.span
-
-        // Clear dismissed city memory if the user has panned far away from it (> 1.5x its radius)
-        if let dismissed = dismissedCityID,
-           let city = City.city(id: dismissed),
-           center.distance(to: city.coordinate) > city.coverageRadiusMeters * 1.5 {
-            dismissedCityID = nil
-        }
-
-        let newSuggestion = Self.detectSuggestedCity(
-            center: center,
-            regionSpan: span,
-            currentCity: selectedCity,
-            allCities: City.allCities,
-            dismissedCityID: dismissedCityID
-        )
-
-        if suggestedCity != newSuggestion {
-            suggestedCity = newSuggestion
-        }
-    }
-
-    /// Determines whether the viewport is focused on a different transit network.
-    static func detectSuggestedCity(
-        center: CLLocationCoordinate2D,
-        regionSpan: MKCoordinateSpan,
-        currentCity: City,
-        allCities: [City] = City.allCities,
-        dismissedCityID: String? = nil
-    ) -> City? {
-        // Only evaluate when zoomed into city or regional scale (span ≤ 0.6° ≈ 65 km).
-        // Macro / nationwide zooms shouldn't trigger local city switch suggestions.
-        guard regionSpan.latitudeDelta <= 0.6 else { return nil }
-
-        var closestMatch: (city: City, distance: CLLocationDistance)?
-        for city in allCities {
-            guard city.id != City.pkp.id, city.id != currentCity.id else { continue }
-            let radius = city.coverageRadiusMeters
-            guard radius > 0 else { continue }
-
-            // Fast bounding-box prefilter before great-circle distance.
-            let maxDeltaLat = (radius / MapConstants.metresPerDegreeLatitude) * 1.05
-            guard abs(center.latitude - city.coordinate.latitude) <= maxDeltaLat else { continue }
-
-            let distance = center.distance(to: city.coordinate)
-            guard distance <= radius else { continue }
-            if distance < (closestMatch?.distance ?? .infinity) {
-                closestMatch = (city, distance)
+        debounceTask?.cancel()
+        debounceTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: self?.debounceDuration ?? MapConstants.cameraDebounce)
+            } catch {
+                return
             }
+            guard !Task.isCancelled else { return }
+            self?.startMapStreamForCurrentViewport()
+        }
+    }
+
+    func saveCameraPosition() {
+        persistence.saveLastSelectedCityID(selectedCityID)
+        persistence.saveCamera(
+            latitude: cameraState.center.latitude,
+            longitude: cameraState.center.longitude,
+            distance: cameraState.distance
+        )
+    }
+
+    // MARK: - City Suggestion
+
+    func updateRegionSuggestion() {
+        if let dismissedCenter = dismissedAtCenter,
+           Self.distanceMeters(from: cameraState.center, to: dismissedCenter) > MapConstants.dismissalResetDistanceMeters {
+            lastServerSuggestedCityID = nil
+            dismissedCityID = nil
+            dismissedAtCenter = nil
         }
 
-        guard let best = closestMatch else { return nil }
-
-        // If the user dismissed this specific city, don't nag them while they stay in it
-        if best.city.id == dismissedCityID {
-            return nil
+        // 1. Prefer server-emitted `suggestedCity` from mapFeatures `initial`.
+        if let serverCityID = lastServerSuggestedCityID,
+           serverCityID != selectedCityID,
+           serverCityID != dismissedCityID,
+           let target = City.city(id: serverCityID, in: citiesCatalog),
+           !target.isVirtual {
+            suggestedCity = target
+            return
         }
 
-        // If current city is not PKP, verify the viewport is not still in the current city's territory.
-        // Hysteresis: best candidate must be closer than current city by at least 3 km.
-        if currentCity.id != City.pkp.id {
-            let currentDistance = center.distance(to: currentCity.coordinate)
-            if best.distance >= currentDistance - 3_000 {
+        // 2. Local nearest non-virtual city lookup from `/api6` catalog when panned outside current city's coverage.
+        guard let currentCity = selectedCity else {
+            suggestedCity = nil
+            return
+        }
+        suggestedCity = Self.nearestSuggestedCity(
+            for: cameraState.center,
+            currentCity: currentCity,
+            dismissedCityID: dismissedCityID,
+            allCities: citiesCatalog
+        )
+    }
+
+    static func nearestSuggestedCity(
+        for center: CLLocationCoordinate2D,
+        currentCity: City,
+        dismissedCityID: String?,
+        allCities: [City]
+    ) -> City? {
+        if !currentCity.isVirtual && currentCity.coverageRadiusMeters > 0 {
+            if Self.distanceMeters(from: center, to: currentCity.coordinate) <= currentCity.coverageRadiusMeters {
                 return nil
             }
         }
 
-        return best.city
-    }
-
-    /// Selects a new city, optionally repositioning the camera to the city's center.
-    func selectCity(_ city: City, repositionCamera: Bool = true) {
-        guard city != selectedCity else { return }
-        selectedCity = city
-        persistence.saveLastSelectedCityID(city.id)
-        selection = nil
-        isRetryableError = true
-        clearStopCache()
-        clearVehicleCache()
-        stopVehiclePolling()
-        if repositionCamera {
-            repositionCameraForCurrentCity()
-        } else {
-            syncDerivedCameraProperties(from: cameraState)
-        }
-        suggestedCity = nil
-        loadStopsForSelectedCity()
-        startVehiclePolling()
-    }
-
-    /// Switches the active city to the currently suggested city without moving the camera,
-    /// so the user retains their exact viewing position.
-    func switchToSuggestedCity() {
-        guard let city = suggestedCity else { return }
-        selectCity(city, repositionCamera: false)
-    }
-
-    /// Dismisses the current region switch suggestion.
-    func dismissSuggestedCity() {
-        if let currentSuggestion = suggestedCity {
-            dismissedCityID = currentSuggestion.id
-            suggestedCity = nil
-        }
-    }
-
-    // MARK: - Stop fetching (tiled viewport coverage)
-
-    /// Why the current viewport does or does not need a request.
-    private enum ViewportLoad {
-        case cached
-        case fetch(bbox: BoundingBox, tiles: Set<MapTile>)
-        case invalid
-    }
-
-    /// Loads stops for the selected city's current viewport. Idempotent while
-    /// a request for the same area is in flight or every required tile is
-    /// already cached.
-    func loadStopsForSelectedCity() {
-        debounceTask?.cancel()
-        debounceTask = nil
-        fetchCurrentViewport()
-    }
-
-    // MARK: - Scene phase
-
-    /// Cancels in-flight network work when the scene backgrounds. The session
-    /// cache is kept in memory so returning to the foreground stays instant.
-    func pauseForBackground() {
-        #if DEBUG
-        Logger.mapCache.debug("Pausing for background: cancelling active fetch and debounced tasks for city \(self.selectedCity.id, privacy: .public)")
-        #endif
-        debounceTask?.cancel()
-        debounceTask = nil
-        vehicleDebounceTask?.cancel()
-        vehicleDebounceTask = nil
-        stopVehiclePolling()
-        vehicleThinningTask?.cancel()
-        vehicleThinningTask = nil
-        cancelActiveFetch()
-    }
-
-    /// Maps an error to a short, localized message. Non-`LocalizedError`
-    /// failures (including generic test doubles) get a stable app-owned string
-    /// instead of Foundation's often-English `localizedDescription`.
-    private static func userFacingMessage(for error: Error) -> String {
-        if let localizedError = error as? LocalizedError,
-           let description = localizedError.errorDescription,
-           !description.isEmpty {
-            return description
-        }
-        return String(localized: "error.generic")
-    }
-
-    private func fetchCurrentViewport() {
-        guard areStopsVisible else {
-            cancelActiveFetch()
-            updateStops()
-            return
-        }
-        let city = selectedCity
-        switch loadDecision(for: cameraState.region) {
-        case .cached:
-            cancelActiveFetch()
-            errorsByCity[city.id] = nil
-            updateLoadingAndErrorStates()
-            updateStops(force: true)
-        case .fetch(let bbox, let tiles):
-            startFetch(city: city, bbox: bbox, tiles: tiles)
-        case .invalid:
-            cancelActiveFetch()
-        }
-    }
-
-    /// Debounces fetches triggered by `.onEnd` camera changes.
-    /// Skips debounce and fetch entirely if all visible tiles are covered or already in flight (2P1-6).
-    private func scheduleViewportFetch() {
-        guard areStopsVisible else {
-            cancelActiveFetch()
-            updateStops()
-            return
-        }
-        let visibleTiles = MapTileGrid.visibleTiles(in: cameraState.region)
-        let missingTiles = visibleTiles.filter { !fetchedTiles.contains($0) }
-        if missingTiles.isEmpty || missingTiles == inFlightTiles {
-            return
-        }
-
-        debounceTask?.cancel()
-        debounceTask = Task { [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: debounceDuration)
-            guard !Task.isCancelled else { return }
-            self.debounceTask = nil
-            self.fetchCurrentViewport()
-        }
-    }
-
-    /// Decides whether the visible tiles are already covered by the session
-    /// cache, and if not, which missing tiles to request in one bbox.
-    private func loadDecision(for region: MKCoordinateRegion) -> ViewportLoad {
-        let visibleTiles = MapTileGrid.visibleTiles(in: region)
-        guard !visibleTiles.isEmpty else {
-            Logger.mapCache.debug("Load decision: invalid region (visible tiles is empty)")
-            return .invalid
-        }
-        let missingTiles = visibleTiles.filter { !fetchedTiles.contains($0) }
-        guard !missingTiles.isEmpty else {
-            Logger.mapCache.debug("Cache HIT: all \(visibleTiles.count, privacy: .public) visible tiles at zoom \(MapTileGrid.zoom, privacy: .public) covered. Cached stops: \(self.cachedStopsByID.count, privacy: .public)")
-            return .cached
-        }
-        guard let bbox = MapTileGrid.boundingBox(covering: missingTiles) else {
-            Logger.mapCache.debug("Load decision: failed to create bounding box for \(missingTiles.count, privacy: .public) missing tiles")
-            return .invalid
-        }
-        Logger.mapCache.debug("Cache MISS: \(missingTiles.count, privacy: .public) of \(visibleTiles.count, privacy: .public) visible tiles missing at zoom \(MapTileGrid.zoom, privacy: .public). Querying bbox: \(bbox.queryValue, privacy: .public)")
-        return .fetch(bbox: bbox, tiles: missingTiles)
-    }
-
-    private func startFetch(city: City, bbox: BoundingBox, tiles: Set<MapTile>) {
-        let requestKey = RequestKey(cityID: city.id, bbox: bbox)
-        guard activeRequest != requestKey else {
-            #if DEBUG
-            Logger.mapCache.debug("Start fetch skipped: already in flight for \(city.id, privacy: .public):\(bbox.queryValue, privacy: .public)")
-            #endif
-            return
-        }
-
-        #if DEBUG
-        Logger.mapCache.debug("Starting fetch for city \(city.id, privacy: .public), bbox: \(bbox.queryValue, privacy: .public), missing tiles: \(tiles.count, privacy: .public)")
-        #endif
-
-        activeFetchTask?.cancel()
-        debounceTask?.cancel()
-        debounceTask = nil
-        inFlightTiles = tiles
-        requestGeneration = UUID()
-        let generation = requestGeneration
-        errorsByCity[city.id] = nil
-        activeRequest = requestKey
-        updateLoadingAndErrorStates()
-
-        loadingPhase = (lastRequestedCityID == nil) ? .initial : ((lastRequestedCityID == city.id) ? .refresh : .citySwitch)
-        lastRequestedCityID = city.id
-
-        // Existing cached stops stay on screen while the new tiles load.
-        updateStops()
-
-        activeFetchTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let fetchedStops = try await self.apiClient.fetchStops(city: city.id, bbox: bbox)
-                guard !Task.isCancelled, generation == self.requestGeneration else {
-                    #if DEBUG
-                    Logger.mapCache.debug("Fetch result discarded for \(city.id, privacy: .public): cancelled or generation mismatch")
-                    #endif
-                    return
-                }
-                guard self.selectedCity.id == city.id else {
-                    #if DEBUG
-                    Logger.mapCache.debug("Fetch result discarded: selected city changed to \(self.selectedCity.id, privacy: .public)")
-                    #endif
-                    return
-                }
-                for stop in fetchedStops {
-                    self.cachedStopsByID[stop.id] = stop
-                }
-                // Empty results still mark the tiles as fetched: an empty
-                // viewport is authoritative for this session and must not
-                // trigger a request on every settle.
-                self.fetchedTiles.formUnion(tiles)
-                self.inFlightTiles.removeAll()
-                self.errorsByCity.removeValue(forKey: city.id)
-                self.updateStops(force: true)
-                self.activeRequest = nil
-                self.loadingPhase = nil
-                self.updateLoadingAndErrorStates()
-                Logger.mapCache.debug("Fetch completed for \(city.id, privacy: .public): +\(fetchedStops.count, privacy: .public) stops (total cached: \(self.cachedStopsByID.count, privacy: .public)), +\(tiles.count, privacy: .public) tiles (total tiles: \(self.fetchedTiles.count, privacy: .public))")
-            } catch {
-                guard !Task.isCancelled, !(error is CancellationError), generation == self.requestGeneration else {
-                    Logger.mapCache.debug("Fetch error discarded for \(city.id, privacy: .public): cancelled or generation mismatch")
-                    return
-                }
-                if self.selectedCity.id == city.id {
-                    Logger.mapCache.error("Fetch failed for \(city.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                    self.inFlightTiles.removeAll()
-                    self.errorsByCity[city.id] = Self.userFacingMessage(for: error)
-                    self.activeRequest = nil
-                    self.loadingPhase = nil
-                    self.updateLoadingAndErrorStates()
-                }
-            }
-        }
-    }
-
-    private func cancelActiveFetch() {
-        if activeFetchTask != nil {
-            Logger.mapCache.debug("Cancelling active fetch for city \(self.selectedCity.id, privacy: .public)")
-        }
-        activeFetchTask?.cancel()
-        activeFetchTask = nil
-        inFlightTiles.removeAll()
-        // Invalidate the generation so a task already past its guard writes
-        // nothing after cancellation.
-        requestGeneration = UUID()
-        loadingPhase = nil
-        if activeRequest != nil {
-            activeRequest = nil
-            updateLoadingAndErrorStates()
-        }
-    }
-
-    /// Drops every cached stop and tile for the previous city. The cache is
-    /// session-only and never written to UserDefaults or disk.
-    private func clearStopCache() {
-        #if DEBUG
-        Logger.mapCache.debug("Clearing stop cache: purging \(self.cachedStopsByID.count, privacy: .public) cached stops and \(self.fetchedTiles.count, privacy: .public) fetched tiles for city \(self.selectedCity.id, privacy: .public)")
-        #endif
-        debounceTask?.cancel()
-        debounceTask = nil
-        lastBufferedRegion = nil
-        cancelActiveFetch()
-        cachedStopsByID.removeAll()
-        fetchedTiles.removeAll()
-        errorsByCity.removeAll()
-        updateLoadingAndErrorStates()
-        updateStops(force: true)
-    }
-
-    // MARK: - Marker rendering
-
-    /// Evaluates whether the current visible region is sufficiently covered by the buffered region
-    /// so that re-thinning can be safely skipped.
-    static func isRegion(_ inner: MKCoordinateRegion, safelyContainedIn outer: MKCoordinateRegion) -> Bool {
-        guard let innerBounds = BoundingBox(inner),
-              let outerBounds = BoundingBox(outer),
-              outerBounds.contains(innerBounds) else {
-            return false
-        }
-
-        // Check if zoom scale hasn't shifted significantly
-        let nominalOuterLatSpan = outer.span.latitudeDelta / MapConstants.viewportBufferFactor
-        let latRatio = inner.span.latitudeDelta / max(nominalOuterLatSpan, 1e-6)
-        return abs(latRatio - 1.0) <= MapConstants.zoomChangeRatioThreshold
-    }
-
-    /// Computes an expanded buffered region for a given viewport region.
-    static func bufferedRegion(for region: MKCoordinateRegion) -> MKCoordinateRegion {
-        MKCoordinateRegion(
-            center: region.center,
-            span: MKCoordinateSpan(
-                latitudeDelta: region.span.latitudeDelta * MapConstants.viewportBufferFactor,
-                longitudeDelta: region.span.longitudeDelta * MapConstants.viewportBufferFactor
-            )
-        )
-    }
-
-    /// Pure, thread-safe computation of visible stops for a region (no thinning needed below 3,000 m).
-    nonisolated static func computeRenderedStops(
-        from cachedStops: some Sequence<Stop>,
-        in region: MKCoordinateRegion
-    ) -> [Stop] {
-        guard let bounds = BoundingBox(region) else { return [] }
-        return cachedStops
-            .filter { bounds.contains(latitude: $0.latitude, longitude: $0.longitude) }
-            .sorted { $0.id < $1.id }
-    }
-
-    /// Fast synchronous update of visible stops for the current viewport.
-    func updateStops(force: Bool = false) {
-        guard areStopsVisible, !cachedStopsByID.isEmpty else {
-            lastBufferedRegion = nil
-            if !stops.isEmpty {
-                stops = []
-            }
-            return
-        }
-
-        let currentRegion = cameraState.region
-        guard BoundingBox(currentRegion) != nil else { return }
-
-        if !force, let lastBuffered = lastBufferedRegion,
-           Self.isRegion(currentRegion, safelyContainedIn: lastBuffered) {
-            return
-        }
-
-        let targetBuffer = Self.bufferedRegion(for: currentRegion)
-        lastBufferedRegion = targetBuffer
-        let rendered = Self.computeRenderedStops(from: cachedStopsByID.values, in: targetBuffer)
-        if rendered != stops {
-            stops = rendered
-        }
-    }
-
-    // MARK: - Live Vehicles
-
-    func startVehiclePolling(immediate: Bool = true) {
-        guard isVehiclesVisible else { return }
-        stopVehiclePolling()
-        vehiclePollingTask = Task { [weak self] in
-            if immediate {
-                await self?.fetchVehiclesForCurrentViewport()
-            }
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .seconds(MapConstants.vehicleTTL))
-                } catch {
-                    break
-                }
-                guard let self, !Task.isCancelled else { break }
-                await self.fetchVehiclesForCurrentViewport()
-            }
-        }
-    }
-
-    func stopVehiclePolling() {
-        vehiclePollingTask?.cancel()
-        vehiclePollingTask = nil
-    }
-
-    /// Schedules a debounced fetch for vehicles when the camera moves outside the
-    /// currently fetched buffered region.
-    private func scheduleVehicleFetch() {
-        guard isVehiclesVisible else {
-            vehicleDebounceTask?.cancel()
-            vehicleDebounceTask = nil
-            return
-        }
-
-        let currentRegion = cameraState.region
-        guard BoundingBox(currentRegion) != nil else { return }
-
-        if let lastFetched = lastFetchedVehicleRegion,
-           Self.isRegion(currentRegion, safelyContainedIn: lastFetched) {
-            return
-        }
-
-        vehicleDebounceTask?.cancel()
-        vehicleDebounceTask = Task { [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: debounceDuration)
-            guard !Task.isCancelled else { return }
-            self.vehicleDebounceTask = nil
-            self.stopVehiclePolling()
-            await self.fetchVehiclesForCurrentViewport()
-            guard !Task.isCancelled else { return }
-            self.startVehiclePolling(immediate: false)
-        }
-    }
-
-    func fetchVehiclesForCurrentViewport() async {
-        guard isVehiclesVisible else { return }
-        let city = selectedCity
-        let region = cameraState.region
-        guard BoundingBox(region) != nil else { return }
-
-        let buffer = Self.bufferedRegion(for: region)
-        guard let bbox = BoundingBox(buffer)?.clamped else { return }
-
-        do {
-            let fetched = try await apiClient.fetchVehicles(city: city.id, bbox: bbox)
-            guard !Task.isCancelled, selectedCity.id == city.id else { return }
-
-            if !isRetryableError {
-                errorMessage = nil
-                isRetryableError = true
-            }
-
-            lastFetchedVehicleRegion = buffer
-            await updateCachedVehiclesAsync(fetched, for: buffer)
-        } catch is CancellationError {
-            return
-        } catch {
-            guard !Task.isCancelled, selectedCity.id == city.id else { return }
-            Logger.api.error("Failed to fetch vehicles for \(city.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            // Instruction: don't include retry action for vehicle network failures
-            isRetryableError = false
-            errorMessage = Self.userFacingMessage(for: error)
-        }
-    }
-
-    private func updateCachedVehiclesAsync(_ newVehicles: [VehiclePosition], for buffer: MKCoordinateRegion) async {
-        let now = ContinuousClock.now
-        for vehicle in newVehicles {
-            cachedVehiclesByID[vehicle.id] = CachedVehicleEntry(vehicle: vehicle, receivedAt: now)
-        }
-
-        let ttl = Duration.seconds(MapConstants.vehicleCacheTTL)
-        let selectedID = selectedVehicleID
-        cachedVehiclesByID = cachedVehiclesByID.filter { id, entry in
-            if id == selectedID { return true }
-            return (now - entry.receivedAt) < ttl
-        }
-
-        cachedVehicles = Array(cachedVehiclesByID.values.map(\.vehicle))
-
-        // If tracked vehicle moved, smoothly update camera
-        if isTrackingVehicle, let selectedID = selectedVehicleID, let tracked = cachedVehicle(for: selectedID) {
-            let targetDistance = currentDistance > 0 ? currentDistance : MapConstants.vehicleCompactDistanceThreshold
-            animateCamera(
-                center: tracked.coordinate,
-                distance: targetDistance,
-                animation: .easeInOut(duration: 1.0)
-            )
-        }
-
-        await updateRenderedVehiclesAsync(for: buffer, force: true)
-    }
-
-    private func clearVehicleCache() {
-        vehicleThinningTask?.cancel()
-        vehicleThinningTask = nil
-        vehicleDebounceTask?.cancel()
-        vehicleDebounceTask = nil
-        cachedVehiclesByID.removeAll()
-        cachedVehicles.removeAll()
-        vehicles.removeAll()
-        lastVehicleBufferedRegion = nil
-        lastFetchedVehicleRegion = nil
-    }
-
-    func cachedVehicle(for id: String) -> VehiclePosition? {
-        cachedVehiclesByID[id]?.vehicle ?? cachedVehicles.first(where: { $0.id == id })
-    }
-
-    nonisolated private struct VehicleThinningPlan: Sendable {
-        let vehicles: [VehiclePosition]
-        let region: MKCoordinateRegion
-        let selectedVehicleID: String?
-        let generation: UUID
-    }
-
-    private func prepareVehicleThinning(for buffer: MKCoordinateRegion?, force: Bool) -> VehicleThinningPlan? {
-        guard isVehiclesVisible, !cachedVehicles.isEmpty else {
-            vehicleThinningTask?.cancel()
-            vehicleThinningTask = nil
-            lastVehicleBufferedRegion = nil
-            if !vehicles.isEmpty {
-                vehicles = []
-            }
-            return nil
-        }
-
-        let currentRegion = cameraState.region
-        guard BoundingBox(currentRegion) != nil else { return nil }
-
-        let targetBuffer = buffer ?? Self.bufferedRegion(for: currentRegion)
-
-        if !force, buffer == nil, let last = lastVehicleBufferedRegion,
-           Self.isRegion(currentRegion, safelyContainedIn: last) {
-            return nil
-        }
-
-        let maxCount = MapConstants.maxRenderedVehicles
-        let generation = UUID()
-        vehicleThinningGeneration = generation
-
-        if cachedVehicles.count <= maxCount {
-            vehicleThinningTask?.cancel()
-            vehicleThinningTask = nil
-            let rendered = Self.computeRenderedVehicles(
-                from: cachedVehicles,
-                in: targetBuffer,
-                selectedVehicleID: selectedVehicleID,
-                maxRenderedVehicles: maxCount
-            )
-            applyRenderedVehicles(rendered, for: targetBuffer, generation: generation)
-            return nil
-        }
-
-        return VehicleThinningPlan(
-            vehicles: cachedVehicles,
-            region: targetBuffer,
-            selectedVehicleID: selectedVehicleID,
-            generation: generation
-        )
-    }
-
-    func updateRenderedVehiclesAsync(for buffer: MKCoordinateRegion? = nil, force: Bool = false) async {
-        guard let plan = prepareVehicleThinning(for: buffer, force: force) else { return }
-
-        vehicleThinningTask?.cancel()
-        let rendered = await Task.detached(priority: .userInitiated) {
-            Self.computeRenderedVehicles(
-                from: plan.vehicles,
-                in: plan.region,
-                selectedVehicleID: plan.selectedVehicleID,
-                maxRenderedVehicles: MapConstants.maxRenderedVehicles
-            )
-        }.value
-
-        guard !Task.isCancelled, plan.generation == vehicleThinningGeneration else { return }
-        vehicleThinningTask = nil
-        applyRenderedVehicles(rendered, for: plan.region, generation: plan.generation)
-    }
-
-    func updateRenderedVehicles(for buffer: MKCoordinateRegion? = nil, force: Bool = false) {
-        vehicleThinningTask?.cancel()
-        vehicleThinningTask = Task {
-            await updateRenderedVehiclesAsync(for: buffer, force: force)
-        }
-    }
-
-    private func applyRenderedVehicles(_ rendered: [VehiclePosition], for bufferedRegion: MKCoordinateRegion, generation: UUID) {
-        guard generation == vehicleThinningGeneration else { return }
-        lastVehicleBufferedRegion = bufferedRegion
-        if rendered != vehicles {
-            withAnimation(.easeInOut(duration: 1.0)) {
-                vehicles = rendered
-            }
-        }
-    }
-
-    nonisolated static func computeRenderedVehicles(
-        from cachedVehicles: [VehiclePosition],
-        in region: MKCoordinateRegion,
-        selectedVehicleID: String?,
-        maxRenderedVehicles: Int
-    ) -> [VehiclePosition] {
-        guard let bounds = BoundingBox(region) else { return [] }
-
-        let visibleVehicles = cachedVehicles.filter {
-            bounds.contains(latitude: $0.latitude, longitude: $0.longitude)
-        }
-
-        var rendered: [VehiclePosition]
-        if visibleVehicles.count > maxRenderedVehicles {
-            rendered = thinnedVehicles(visibleVehicles, region: region, selectedVehicleID: selectedVehicleID, maxRenderedVehicles: maxRenderedVehicles)
-        } else {
-            rendered = visibleVehicles.sorted { $0.id < $1.id }
-        }
-
-        if let selectedVehicleID,
-           let selected = cachedVehicles.first(where: { $0.id == selectedVehicleID }),
-           bounds.contains(latitude: selected.latitude, longitude: selected.longitude),
-           !rendered.contains(where: { $0.id == selectedVehicleID }) {
-            rendered.append(selected)
-            rendered.sort { $0.id < $1.id }
-        }
-
-        return rendered
-    }
-
-    /// World-aligned spatial grid steps derived from the region span.
-    nonisolated private static func thinningSteps(for region: MKCoordinateRegion) -> (latStep: Double, lonStep: Double) {
-        let latSpan = max(region.span.latitudeDelta, 1e-6)
-        let lonSpan = max(region.span.longitudeDelta, 1e-6)
-        // With at most 12 cells per axis, a viewport can intersect at most 13x13 = 169 cells <= maxRenderedVehicles.
-        let targetLatStep = latSpan / 12.0
-        let targetLonStep = lonSpan / 12.0
-        let latStep = pow(2.0, ceil(log2(targetLatStep)))
-        let lonStep = pow(2.0, ceil(log2(targetLonStep)))
-        return (max(latStep, 1e-6), max(lonStep, 1e-6))
-    }
-
-    /// Grid-based thinning: keep one deterministic representative per cell of
-    /// a world-aligned spatial grid laid over the visible region.
-    nonisolated static func thinnedVehicles(
-        _ rawVehicles: [VehiclePosition],
-        region: MKCoordinateRegion?,
-        selectedVehicleID: String?,
-        maxRenderedVehicles: Int
-    ) -> [VehiclePosition] {
-        guard let region = region, let bounds = BoundingBox(region) else { return [] }
-        let (latStep, lonStep) = thinningSteps(for: region)
-        var buckets: [Int: VehiclePosition] = [:]
-        for vehicle in rawVehicles {
-            guard bounds.contains(latitude: vehicle.latitude, longitude: vehicle.longitude) else { continue }
-            let col = Int(floor(vehicle.longitude / lonStep))
-            let row = Int(floor(vehicle.latitude / latStep))
-            let cell = (row &* 73856093) ^ (col &* 19349663)
-
-            if let current = buckets[cell] {
-                if vehicle.id == selectedVehicleID || (current.id != selectedVehicleID && vehicle.id < current.id) {
-                    buckets[cell] = vehicle
+        var nearest: (city: City, distance: Double)?
+        for candidate in allCities where !candidate.isVirtual && candidate.id != currentCity.id {
+            let distance = Self.distanceMeters(from: center, to: candidate.coordinate)
+            guard distance <= candidate.coverageRadiusMeters else { continue }
+            if let currentBest = nearest {
+                if distance < currentBest.distance {
+                    nearest = (candidate, distance)
                 }
             } else {
-                buckets[cell] = vehicle
+                nearest = (candidate, distance)
             }
         }
-        let sorted = buckets.values.sorted { $0.id < $1.id }
-        return sorted.count > maxRenderedVehicles ? Array(sorted.prefix(maxRenderedVehicles)) : sorted
+
+        guard let match = nearest?.city, match.id != dismissedCityID else {
+            return nil
+        }
+        return match
+    }
+
+    private static func distanceMeters(from lhs: CLLocationCoordinate2D, to rhs: CLLocationCoordinate2D) -> Double {
+        CLLocation(latitude: lhs.latitude, longitude: lhs.longitude)
+            .distance(from: CLLocation(latitude: rhs.latitude, longitude: rhs.longitude))
+    }
+
+    // MARK: - Selection, Departures & Trip Navigation
+
+    func openDeparture(_ departure: StopDeparture) {
+        if let activeStopDetail {
+            stopReturnSelection = activeStopDetail.stop
+            canNavigateBackToStop = true
+        }
+        isFollowingVehicle = false
+
+        if let vehicle = departure.vehicle {
+            selection = .vehicle(vehicle.id)
+        } else {
+            selection = .trip(
+                city: departure.trip.city,
+                tripId: departure.trip.id,
+                initialRoute: departure.trip.route,
+                headsign: departure.trip.headsign,
+                brigade: departure.trip.brigade
+            )
+        }
+    }
+
+    func navigateBackToStop() {
+        guard let stop = stopReturnSelection else {
+            selection = nil
+            return
+        }
+        stopReturnSelection = nil
+        canNavigateBackToStop = false
+        stopsByID[stop.id] = stop
+        selection = .stop(stop.id)
+    }
+
+    private func handleSelectionChanged(from oldValue: FeatureSelection?, to newValue: FeatureSelection?) {
+        stopStreamTask?.cancel()
+        stopStreamTask = nil
+        tripStreamTask?.cancel()
+        tripStreamTask = nil
+        vehicleMetadataTask?.cancel()
+        vehicleMetadataTask = nil
+
+        let previousStopDetail = activeStopDetail
+        guard let newValue else {
+            activeStopDetail = nil
+            activeTripDetail = nil
+            stopReturnSelection = nil
+            canNavigateBackToStop = false
+            isFollowingVehicle = false
+            return
+        }
+
+        switch newValue {
+        case .stop(let stopID):
+            activeTripDetail = nil
+            stopReturnSelection = nil
+            canNavigateBackToStop = false
+            isFollowingVehicle = false
+            let initialStop = stopsByID[stopID]
+            guard let stop = initialStop else {
+                activeStopDetail = nil
+                return
+            }
+            activeStopDetail = ActiveStopDetail(stop: stop, departures: [], isLoadingDepartures: true)
+            startStopStream(stop: stop)
+
+        case .vehicle(let vehicleID):
+            activeStopDetail = nil
+            let cached = vehiclesByID[vehicleID]
+                ?? previousStopDetail?.departures.compactMap(\.vehicle).first(where: { $0.id == vehicleID })
+            let cityID = cached?.city ?? selectedCityID
+            activeTripDetail = ActiveTripDetail(
+                city: cityID,
+                vehicleId: vehicleID,
+                tripId: cached?.tripId,
+                route: cached?.route,
+                headsign: cached?.routeLongName,
+                brigade: cached?.brigade,
+                livePosition: cached,
+                isLoading: true
+            )
+            startVehicleTripStream(city: cityID, vehicleId: vehicleID)
+            fetchMetadataForVehicle(city: cityID, vehicleId: vehicleID)
+
+        case let .trip(city, tripId, initialRoute, headsign, brigade):
+            activeStopDetail = nil
+            activeTripDetail = ActiveTripDetail(
+                city: city,
+                vehicleId: nil,
+                tripId: tripId,
+                route: initialRoute,
+                headsign: headsign,
+                brigade: brigade,
+                isLoading: true
+            )
+            startTripStream(city: city, tripId: tripId)
+        }
+    }
+
+    private func restartActiveDetailStreamIfNeeded() {
+        switch selection {
+        case .stop:
+            if let stop = activeStopDetail?.stop {
+                startStopStream(stop: stop)
+            }
+        case .vehicle(let vehicleID):
+            let cityID = activeTripDetail?.city ?? selectedCityID
+            startVehicleTripStream(city: cityID, vehicleId: vehicleID)
+        case let .trip(city, tripId, _, _, _):
+            startTripStream(city: city, tripId: tripId)
+        case nil:
+            break
+        }
+    }
+
+    private func startStopStream(stop: Stop) {
+        stopStreamTask?.cancel()
+        let targetStopID = stop.id
+        let targetCityID = stop.city
+        let stream = transitDataProvider.streamStopDepartures(
+            city: targetCityID,
+            stopId: targetStopID,
+            limit: MapConstants.defaultStopDeparturesLimit
+        )
+
+        stopStreamTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                for try await event in stream {
+                    guard !Task.isCancelled, self.selectedStopID == targetStopID else { return }
+                    switch event {
+                    case .initial(let fullStop):
+                        self.stopsByID[fullStop.id] = fullStop
+                        if var detail = self.activeStopDetail, detail.stop.id == fullStop.id {
+                            detail.stop = fullStop
+                            detail.errorMessage = nil
+                            self.activeStopDetail = detail
+                        }
+                    case .message(let departures):
+                        if var detail = self.activeStopDetail, detail.stop.id == targetStopID {
+                            detail.departures = departures
+                            detail.isLoadingDepartures = false
+                            detail.errorMessage = nil
+                            self.activeStopDetail = detail
+                        }
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard self.selectedStopID == targetStopID else { return }
+                if var detail = self.activeStopDetail {
+                    detail.isLoadingDepartures = false
+                    detail.errorMessage = error.localizedDescription
+                    self.activeStopDetail = detail
+                }
+            }
+        }
+    }
+
+    private func startVehicleTripStream(city: String, vehicleId: String) {
+        let stream = transitDataProvider.streamVehiclePosition(city: city, vehicleId: vehicleId)
+        consumeTripStream(stream)
+    }
+
+    private func startTripStream(city: String, tripId: String) {
+        let stream = transitDataProvider.streamTrip(city: city, tripId: tripId)
+        consumeTripStream(stream)
+    }
+
+    private func consumeTripStream(_ stream: AsyncThrowingStream<TripStreamEvent, Error>) {
+        tripStreamTask?.cancel()
+        tripStreamTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                for try await event in stream {
+                    guard !Task.isCancelled, var detail = self.activeTripDetail else { return }
+                    switch event {
+                    case .initial(let initial):
+                        detail.tripInfo = initial.trip
+                        detail.tripId = initial.trip.id
+                        detail.itinerary = initial.itinerary
+                        detail.route = initial.trip.route
+                        detail.headsign = initial.trip.headsign
+                        detail.brigade = initial.trip.brigade
+                        detail.isLoading = false
+                        detail.errorMessage = nil
+                        self.activeTripDetail = detail
+
+                    case .message(let update):
+                        detail.livePosition = update.position ?? detail.livePosition
+                        if !update.stops.isEmpty {
+                            detail.stopUpdates = update.stops
+                        }
+                        if let sequence = update.sequence {
+                            detail.currentSequence = sequence
+                        }
+                        if let alerts = update.alerts {
+                            detail.alerts = alerts
+                        }
+                        detail.isLoading = false
+                        detail.errorMessage = nil
+                        self.activeTripDetail = detail
+
+                        if let pos = update.position {
+                            self.vehiclesByID[pos.id] = pos
+                            if self.isFollowingVehicle {
+                                self.focusCameraOnVehicle(coordinate: pos.coordinate)
+                            }
+                        }
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard var detail = self.activeTripDetail else { return }
+                detail.isLoading = false
+                detail.errorMessage = error.localizedDescription
+                self.activeTripDetail = detail
+            }
+        }
+    }
+
+    private func fetchMetadataForVehicle(city: String, vehicleId: String) {
+        vehicleMetadataTask?.cancel()
+        vehicleMetadataTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let metadata = try await transitDataProvider.fetchVehicleMetadata(city: city, vehicleId: vehicleId)
+                guard !Task.isCancelled, var detail = self.activeTripDetail, detail.vehicleId == vehicleId else {
+                    return
+                }
+                detail.vehicleMetadata = metadata
+                self.activeTripDetail = detail
+            } catch {
+                // Vehicle fleet metadata is optional enhancement (404 for unknown/virtual fleet).
+                return
+            }
+        }
+    }
+
+    private func focusCameraOnVehicle(coordinate: CLLocationCoordinate2D) {
+        applyCameraState(
+            CameraState(
+                region: MKCoordinateRegion(
+                    center: coordinate,
+                    span: cameraState.region.span
+                ),
+                distance: min(cameraState.distance, MapConstants.userFocusDistance),
+                heading: currentHeading,
+                pitch: currentPitch,
+                center: coordinate
+            ),
+            animated: true
+        )
     }
 }
-

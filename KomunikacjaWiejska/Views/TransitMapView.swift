@@ -1,9 +1,11 @@
+import CoreLocation
 import MapKit
 import SwiftUI
 
+/// Primary map canvas wiring SSE map streams, detail isolation, and Stop/Trip sheet navigation.
+
 struct TransitMapView: View {
     @State private var viewModel: MapViewModel
-    @State private var activeDetail: ActiveMapDetail?
     private var locationManager: any LocationProviding
     @Environment(\.scenePhase) private var scenePhase
     @Namespace private var mapScope
@@ -12,16 +14,13 @@ struct TransitMapView: View {
         viewModel: MapViewModel? = nil,
         locationManager: (any LocationProviding)? = nil
     ) {
-        _viewModel = State(initialValue: viewModel ?? MapViewModel())
+        self._viewModel = State(initialValue: viewModel ?? MapViewModel())
         self.locationManager = locationManager ?? LocationManager.shared
     }
 
-    /// Keeps the detail sheet presented while only its content swaps. Binding
-    /// the sheet to an active detail instead of an item prevents dismiss/re-present
-    /// thrashing and preserves chosen presentation detents.
     private var isDetailSheetPresented: Binding<Bool> {
         Binding(
-            get: { viewModel.selection != nil },
+            get: { viewModel.activeStopDetail != nil || viewModel.activeTripDetail != nil },
             set: { isPresented in
                 if !isPresented {
                     viewModel.selection = nil
@@ -30,29 +29,12 @@ struct TransitMapView: View {
         )
     }
 
-    private var currentDetailFromSelection: ActiveMapDetail? {
-        switch viewModel.selection {
-        case .stop(let id):
-            return viewModel.cachedStop(for: id).map(ActiveMapDetail.stop)
-        case .vehicle(let id):
-            return viewModel.cachedVehicle(for: id).map(ActiveMapDetail.vehicle)
-        case nil:
-            return nil
-        }
-    }
-
     private func selectStop(_ stop: Stop) {
-        activeDetail = .stop(stop)
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-            viewModel.selection = .stop(stop.id)
-        }
+        viewModel.selection = .stop(stop.id)
     }
 
     private func selectVehicle(_ vehicle: VehiclePosition) {
-        activeDetail = .vehicle(vehicle)
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-            viewModel.selection = .vehicle(vehicle.id)
-        }
+        viewModel.selection = .vehicle(vehicle.id)
     }
 
     var body: some View {
@@ -62,57 +44,98 @@ struct TransitMapView: View {
                     get: { viewModel.cameraPosition },
                     set: { viewModel.setCameraPositionFromGesture($0) }
                 ),
+                interactionModes: .all,
                 selection: $viewModel.selection,
                 scope: mapScope
             ) {
                 UserAnnotation()
 
-                if viewModel.areStopsVisible {
-                    ForEach(viewModel.stops) { stop in
-                        Annotation(
-                            viewModel.areStopTitlesVisible ? stop.displayName : "",
-                            coordinate: stop.coordinate,
-                            anchor: .center
-                        ) {
-                            StopAnnotationContent(
-                                stop: stop,
-                                viewModel: viewModel,
-                                onSelect: { selectStop(stop) }
-                            )
-                        }
-                        .annotationTitles(viewModel.areStopTitlesVisible ? .visible : .hidden)
-                        .tag(MapViewModel.FeatureSelection.stop(stop.id))
-                    }
+                if viewModel.displayedRouteCoordinates.count >= 2 {
+                    MapPolyline(coordinates: viewModel.displayedRouteCoordinates)
+                        .stroke(
+                            viewModel.displayedRouteColor,
+                            style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
+                        )
                 }
 
-                if viewModel.isVehiclesVisible {
-                    ForEach(viewModel.vehicles) { vehicle in
-                        Annotation(
-                            "",
-                            coordinate: vehicle.coordinate,
-                            anchor: .center
-                        ) {
-                            VehicleAnnotationContent(
-                                vehicle: vehicle,
-                                viewModel: viewModel,
-                                onSelect: { selectVehicle(vehicle) }
-                            )
-                        }
-                        .annotationTitles(.hidden)
-                        .tag(MapViewModel.FeatureSelection.vehicle(vehicle.id))
+                ForEach(viewModel.displayedItineraryStops) { itineraryStop in
+                    Annotation(
+                        viewModel.areStopTitlesVisible ? itineraryStop.stop.name : "",
+                        coordinate: itineraryStop.stop.coordinate,
+                        anchor: .center
+                    ) {
+                        ItineraryStopDotView(
+                            stop: itineraryStop.stop,
+                            color: viewModel.displayedRouteColor
+                        )
                     }
+                    .annotationTitles(viewModel.areStopTitlesVisible ? .visible : .hidden)
+                }
+
+                ForEach(viewModel.displayedStopEntrances) { entrance in
+                    Annotation(entrance.name, coordinate: entrance.coordinate, anchor: .center) {
+                        EntranceMarkerView(entrance: entrance)
+                    }
+                    .annotationTitles(.visible)
+                }
+
+                ForEach(viewModel.displayedDots) { dot in
+                    Annotation("", coordinate: dot.coordinate, anchor: .center) {
+                        DotMarkerView(dot: dot)
+                    }
+                    .annotationTitles(.hidden)
+                }
+
+                ForEach(viewModel.displayedStops) { stop in
+                    Annotation(
+                        viewModel.areStopTitlesVisible ? stop.name : "",
+                        coordinate: stop.coordinate,
+                        anchor: .center
+                    ) {
+                        StopAnnotationContent(
+                            stop: stop,
+                            viewModel: viewModel,
+                            onSelect: { selectStop(stop) }
+                        )
+                    }
+                    .annotationTitles(viewModel.areStopTitlesVisible ? .visible : .hidden)
+                    .tag(MapViewModel.FeatureSelection.stop(stop.id))
+                }
+
+                ForEach(viewModel.displayedVehicles) { vehicle in
+                    Annotation(
+                        "",
+                        coordinate: vehicle.coordinate,
+                        anchor: .center
+                    ) {
+                        VehicleAnnotationContent(
+                            vehicle: vehicle,
+                            viewModel: viewModel,
+                            onSelect: { selectVehicle(vehicle) }
+                        )
+                    }
+                    .annotationTitles(.hidden)
+                    .tag(MapViewModel.FeatureSelection.vehicle(vehicle.id))
                 }
             }
             .mapStyle(viewModel.selectedMapMode.mapStyle)
+            .mapScope(mapScope)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { newWidth in
+                if newWidth > 0 {
+                    viewModel.viewportWidthPoints = Double(newWidth)
+                }
+            }
             .onMapCameraChange(frequency: .onEnd) { context in
                 viewModel.handleCameraChange(to: context)
             }
-            .mapControlVisibility(.hidden)
-            .ignoresSafeArea()
+            .mapControls {
+                // Native compass lives in TopChromeView alongside the city picker; no scale/pitch extras.
+            }
 
             TopChromeView(viewModel: viewModel, mapScope: mapScope)
         }
-        // Bottom Right: Apple Maps Map Style + Location Combo Capsule
         .overlay(alignment: .bottomTrailing) {
             MapControlsComboView(
                 viewModel: viewModel,
@@ -121,78 +144,69 @@ struct TransitMapView: View {
             .padding(.trailing, DesignTokens.horizontalPadding)
             .padding(.bottom, DesignTokens.bottomPadding)
         }
-        .mapScope(mapScope)
         .onAppear {
-            locationManager.requestWhenInUseAuthorization()
-        }
-        .task {
-            viewModel.loadStopsForSelectedCity()
-            viewModel.startVehiclePolling()
+            viewModel.start()
         }
         .onChange(of: scenePhase) { _, newPhase in
-            // No network/GPS activity while the app is in the background.
-            if newPhase == .background {
+            if newPhase == .inactive || newPhase == .background {
                 viewModel.saveCameraPosition()
                 viewModel.pauseForBackground()
                 locationManager.stopUpdatingLocation()
             } else if newPhase == .active {
-                locationManager.requestWhenInUseAuthorization()
-                viewModel.loadStopsForSelectedCity()
-                viewModel.startVehiclePolling()
-            }
-        }
-        .onChange(of: viewModel.selection) { _, _ in
-            if let detail = currentDetailFromSelection {
-                activeDetail = detail
-            }
-        }
-        .onChange(of: viewModel.vehicles) { _, newVehicles in
-            if case .vehicle(let vehicle) = activeDetail,
-               let updated = newVehicles.first(where: { $0.id == vehicle.id }) {
-                activeDetail = .vehicle(updated)
+                viewModel.resumeFromBackground()
             }
         }
         .sheet(isPresented: isDetailSheetPresented) {
-            if let detail = activeDetail ?? currentDetailFromSelection {
-                switch detail {
-                case .stop(let stop):
-                    StopDetailSheet(stop: stop) {
-                        viewModel.selection = nil
-                    }
-                    .presentationDetents([.height(DesignTokens.sheetSmallDetentHeight), .medium, .large])
-                    .presentationDragIndicator(.visible)
-                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-                case .vehicle(let vehicle):
-                    VehicleDetailSheet(vehicle: vehicle) {
-                        viewModel.selection = nil
-                    }
-                    .presentationDetents([.height(DesignTokens.vehicleSheetSmallDetentHeight), .medium])
-                    .presentationDragIndicator(.visible)
-                    .presentationBackgroundInteraction(.enabled(upThrough: .height(DesignTokens.vehicleSheetSmallDetentHeight)))
-                }
-            }
+            detailSheetContent
         }
     }
 
+    @ViewBuilder
+    private var detailSheetContent: some View {
+        if let tripDetail = viewModel.activeTripDetail {
+            VehicleDetailSheet(
+                detail: tripDetail,
+                timeZone: viewModel.timeZone(for: tripDetail.city),
+                canNavigateBack: viewModel.canNavigateBackToStop,
+                isFollowingVehicle: viewModel.isFollowingVehicle,
+                onBack: { viewModel.navigateBackToStop() },
+                onToggleFollow: { viewModel.toggleFollowVehicle() },
+                onDismiss: { viewModel.selection = nil }
+            )
+            .presentationDetents([.height(DesignTokens.vehicleSheetSmallDetentHeight), .medium, .large])
+            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        } else if let stopDetail = viewModel.activeStopDetail {
+            StopDetailSheet(
+                stop: stopDetail.stop,
+                departures: stopDetail.departures,
+                isLoadingDepartures: stopDetail.isLoadingDepartures,
+                errorMessage: stopDetail.errorMessage,
+                timeZone: viewModel.timeZone(for: stopDetail.stop.city),
+                onSelectDeparture: { departure in
+                    viewModel.openDeparture(departure)
+                },
+                onDismiss: { viewModel.selection = nil }
+            )
+            .presentationDetents([.height(DesignTokens.sheetSmallDetentHeight), .medium, .large])
+            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        }
+    }
 }
 
-// MARK: - Top chrome
-
-/// Isolated subview for top controls and notifications.
-/// Isolating these controls prevents status and error changes from invalidating
-/// the parent `TransitMapView.body` and triggering expensive MapKit annotation diffing.
 private struct TopChromeView: View {
     @Bindable var viewModel: MapViewModel
     let mapScope: Namespace.ID
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: DesignTokens.controlSpacing) {
             HStack(alignment: .top) {
                 cityPickerButton
                 Spacer()
                 trailingControls
             }
+
             statusCapsule
+
             if let suggestedCity = viewModel.suggestedCity {
                 regionSuggestionCapsule(for: suggestedCity)
             }
@@ -201,28 +215,39 @@ private struct TopChromeView: View {
         .padding(.top, DesignTokens.topPadding)
     }
 
+    private var cityPickerLabelText: String {
+        viewModel.selectedCity?.name ?? String(localized: "cityPicker.title")
+    }
+
     private var cityPickerButton: some View {
         Button {
             viewModel.isShowingCityPicker = true
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "tram.circle.fill")
-                    .foregroundStyle(Color.accentColor)
-                    .font(.headline)
-                Text(viewModel.selectedCity.name)
+                Image(systemName: "building.2.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+
+                Text(cityPickerLabelText)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2)
+
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
         }
         .buttonStyle(.glass)
-        .buttonBorderShape(.capsule)
+        .disabled(viewModel.pickerCities.isEmpty)
         .accessibilityLabel(Text("map.control.cityPicker"))
-        .accessibilityValue(Text(viewModel.selectedCity.name))
+        .accessibilityValue(Text(cityPickerLabelText))
         .sheet(isPresented: $viewModel.isShowingCityPicker) {
-            CityPickerSheet(selectedCity: viewModel.selectedCity) { city in
+            CityPickerSheet(
+                cities: viewModel.pickerCities,
+                selectedCity: viewModel.selectedCity
+            ) { city in
                 viewModel.selectCity(city)
             }
         }
@@ -230,134 +255,120 @@ private struct TopChromeView: View {
 
     private var trailingControls: some View {
         VStack(alignment: .trailing, spacing: DesignTokens.controlSpacing) {
-            // The compass is the native `MapCompass`; it deliberately keeps
-            // Apple's own appearance and animations.
             MapCompass(scope: mapScope)
+                .mapControlVisibility(.automatic)
 
-            // 2D Button: appears when map pitch is tilted in 3D
             if viewModel.isPitched3D {
                 Button {
                     viewModel.resetPitchTo2D()
                 } label: {
                     Text("map.control.2d")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(Color.primary)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
                         .frame(width: DesignTokens.compactControlSize, height: DesignTokens.compactControlSize)
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
                 .frame(minWidth: DesignTokens.controlSize, minHeight: DesignTokens.controlSize)
                 .contentShape(Circle())
-                .accessibilityLabel(Text("map.control.2d.accessibility"))
                 .transition(.scale.combined(with: .opacity))
+                .accessibilityLabel(Text("map.control.2d.accessibility"))
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.isPitched3D)
     }
 
     @ViewBuilder
     private var statusCapsule: some View {
         if viewModel.isLoading {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text(loadingMessage)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(2)
+                Text(LocalizedStringKey(loadingMessage))
+                    .font(.footnote.weight(.medium))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .glassEffect(.regular, in: .capsule)
-            .accessibilityElement(children: .combine)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .glassEffect()
+            .transition(.move(edge: .top).combined(with: .opacity))
         } else if let error = viewModel.errorMessage {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                    .font(.caption)
                     .accessibilityHidden(true)
                 Text(error)
-                    .font(.caption)
+                    .font(.footnote.weight(.medium))
                     .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+
                 if viewModel.isRetryableError {
                     Button {
-                        viewModel.loadStopsForSelectedCity()
+                        viewModel.retry()
                     } label: {
-                        Text("map.error.retry")
-                            .font(.caption.weight(.semibold))
+                        Image(systemName: "arrow.clockwise")
+                            .font(.footnote.weight(.bold))
+                            .frame(minWidth: 28, minHeight: 28)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(Text("map.error.retry"))
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .glassEffect(.regular, in: .capsule)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .glassEffect()
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
-    @ViewBuilder
     private func regionSuggestionCapsule(for city: City) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 10) {
             Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    viewModel.switchToSuggestedCity()
-                }
+                viewModel.switchToSuggestedCity()
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "arrow.triangle.swap")
-                        .foregroundStyle(Color.accentColor)
-                        .font(.caption.weight(.semibold))
-                    Text(String(format: String(localized: "map.suggestion.switchCity"), city.name))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary)
+                    Image(systemName: "location.magnifyingglass")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tint)
+                        .accessibilityHidden(true)
+
+                    Text(
+                        String(
+                            format: String(localized: "map.suggestion.switchCity"),
+                            city.name
+                        )
+                    )
+                    .font(.footnote.weight(.semibold))
                 }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.capsule)
+            .buttonStyle(.plain)
 
             Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    viewModel.dismissSuggestedCity()
-                }
+                viewModel.dismissSuggestedCity()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.caption2.weight(.bold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 14, height: 14)
+                    .frame(width: 24, height: 24)
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
+            .buttonStyle(.borderless)
             .accessibilityLabel(Text("map.suggestion.dismiss"))
         }
-        .transition(.asymmetric(
-            insertion: .scale(scale: 0.9).combined(with: .opacity).combined(with: .move(edge: .top)),
-            removal: .scale(scale: 0.9).combined(with: .opacity)
-        ))
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 4)
+        .glassEffect()
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     private var loadingMessage: String {
-        switch viewModel.loadingPhase {
-        case .refresh:
-            return String(localized: "map.loading.refresh")
-        case .citySwitch:
-            return String(localized: "map.loading.citySwitch")
-        case .initial, .none:
-            return String(localized: "map.loading.initial")
+        if viewModel.stops.isEmpty && viewModel.vehicles.isEmpty && viewModel.dots.isEmpty {
+            return "map.loading.initial"
         }
+        return "map.loading.refresh"
     }
 }
 
-private enum ActiveMapDetail: Equatable {
-    case stop(Stop)
-    case vehicle(VehiclePosition)
-}
-
-/// Reads the selection and camera state on the annotation's own view body so
-/// Observation invalidates the marker immediately. Reading the same values in
-/// `Annotation`'s escaping content closure is not tracked by SwiftUI, which
-/// left markers stale until the next camera update.
-/// `.onTapGesture` eliminates the ~350ms MapKit gesture recognizer delay when tapping.
 private struct StopAnnotationContent: View {
     let stop: Stop
     let viewModel: MapViewModel
@@ -367,10 +378,9 @@ private struct StopAnnotationContent: View {
         let heading: Double = stop.bearing != nil ? viewModel.currentHeading : 0
         StopMarkerView(
             stop: stop,
-            isSelected: viewModel.selectedStopID == stop.id,
-            heading: heading
+            heading: heading,
+            isSelected: viewModel.selectedStopID == stop.id
         )
-        .equatable()
         .onTapGesture {
             onSelect()
         }
@@ -383,17 +393,51 @@ private struct VehicleAnnotationContent: View {
     let onSelect: () -> Void
 
     var body: some View {
-        let isCompact = viewModel.isVehicleCompactDisplayMode
-        let heading: Double = (!isCompact && vehicle.bearing != nil) ? viewModel.currentHeading : 0
+        let heading: Double = vehicle.bearing != nil ? viewModel.currentHeading : 0
         VehicleMarkerView(
             vehicle: vehicle,
-            isSelected: viewModel.selectedVehicleID == vehicle.id,
-            isCompact: isCompact,
-            heading: heading
+            heading: heading,
+            isSelected: viewModel.selectedVehicleID == vehicle.id
         )
-        .equatable()
         .onTapGesture {
             onSelect()
         }
+    }
+}
+
+private struct ItineraryStopDotView: View {
+    let stop: Stop
+    let color: Color
+
+    var body: some View {
+        Circle()
+            .fill(Color(.systemBackground))
+            .overlay(
+                Circle()
+                    .stroke(color, lineWidth: 2.5)
+            )
+            .frame(width: MapConstants.itineraryStopMarkerSize, height: MapConstants.itineraryStopMarkerSize)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                Text(String(format: String(localized: "map.itineraryStop.accessibility"), stop.name))
+            )
+    }
+}
+
+private struct EntranceMarkerView: View {
+    let entrance: StopEntrance
+
+    var body: some View {
+        Image(systemName: "door.left.hand.open")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 20, height: 20)
+            .background(Color.secondary)
+            .clipShape(Circle())
+            .overlay(Circle().stroke(.white, lineWidth: 1.5))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                Text(String(format: String(localized: "map.entrance.accessibility"), entrance.name))
+            )
     }
 }

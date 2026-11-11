@@ -1,41 +1,51 @@
+import CoreFoundation
 import Foundation
 
+/// Constants governing SSE streaming, viewport zoom derivation, and map markers.
 nonisolated enum MapConstants {
-    /// Approximate metres per degree of latitude (~111 km).
-    static let metresPerDegreeLatitude: Double = 111_000
+    /// Default city identifier selected on first launch before `/api6` resolves if none is persisted.
+    static let defaultCityID: String = "warsaw"
 
-    /// Debounce applied to viewport stops fetches triggered by camera movements.
-    static let cameraFetchDebounce: Duration = .milliseconds(350)
+    /// Initial camera center coordinates used while `GET /api6` loads on first launch.
+    static let defaultCenterLatitude: Double = 52.2297
+    static let defaultCenterLongitude: Double = 21.0122
 
-    /// Camera distance (in metres) above which stops are no longer displayed at all.
-    static let stopVisibilityDistanceThreshold: Double = 3_000
+    /// Default coordinate span delta for initial city framing.
+    static let defaultCoordinateSpanDelta: Double = 0.08
 
-    /// Camera distance (in metres) above which PKP stops are hidden when PKP is selected.
-    static let pkpStopVisibilityDistanceThreshold: Double = 50_000
+    /// Camera altitude (meters) when focusing on the user's current location.
+    static let userFocusDistance: Double = 1_500
 
-    /// Camera distance (in metres) above which stop name labels are hidden.
-    static let stopTitleVisibilityDistanceThreshold: Double = 500
+    /// Default camera altitude (meters) when jumping to a city center.
+    static let defaultCityDistance: Double = 3_000
 
-    /// Camera distance (in metres) above which vehicles are hidden and polling stops.
-    static let vehicleVisibilityDistanceThreshold: Double = 10_000
+    /// Distance beyond which the city suggestion alert becomes eligible to reappear.
+    static let dismissalResetDistanceMeters: Double = 5_000
 
-    /// Camera distance (in metres) above which vehicles switch to compact dot display mode.
-    static let vehicleCompactDistanceThreshold: Double = 2_000
+    /// Minimum time the camera must stay settled before reopening `mapFeatures` SSE.
+    static let cameraDebounce: Duration = .milliseconds(350)
 
-    /// Polling and TTL interval in seconds for live vehicle positions.
-    static let vehicleTTL: TimeInterval = 15.0
+    /// Fallback animation/render wait duration cleanly handled by SwiftUI MapKit.
+    static let defaultViewportWidthPoints: Double = 393.0
 
-    /// Maximum cache retention duration in seconds for vehicles in previously viewed areas.
-    static let vehicleCacheTTL: TimeInterval = 45.0
+    /// Background grace period before pausing active SSE streams (matches webapp `45_000` ms).
+    static let sseBackgroundDisconnectDelay: Duration = .seconds(45)
 
-    /// Hard ceiling on vehicle markers rendered at once; extra vehicles are thinned to
-    /// one representative per grid cell (see `thinnedVehicles`).
-    static let maxRenderedVehicles: Int = 150
+    /// Elapsed background/idle threshold triggering SSE refresh on foreground return (matches webapp `10_000` ms).
+    static let sseForegroundStaleInterval: TimeInterval = 10.0
 
-    /// Margin expansion multiplier for buffering the visible viewport (e.g. 50% extra on each dimension).
-    static let viewportBufferFactor: Double = 1.50
+    /// Maximum automatic SSE reconnect attempts on transient stream drops (matches webapp 5 retries).
+    static let sseMaxReconnectAttempts: Int = 5
 
-    /// Maximum zoom ratio change allowed before re-evaluating viewport bounds.
-    static let zoomChangeRatioThreshold: Double = 0.20
+    /// Delay before attempting automatic SSE reconnection (matches webapp `2_000` ms).
+    static let sseReconnectDelay: Duration = .seconds(2)
+
+    /// Default stop departure count requested from `stops/{id}/stream`.
+    static let defaultStopDeparturesLimit: Int = 21
+
+    /// Diameter in points for zoomed-out server `dots` vehicle markers.
+    static let dotMarkerSize: CGFloat = 8
+
+    /// Diameter in points for stop nodes drawn along a selected trip itinerary.
+    static let itineraryStopMarkerSize: CGFloat = 10
 }
-

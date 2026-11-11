@@ -1,6 +1,6 @@
 import Foundation
 
-enum RouteType: Int, Codable, CaseIterable, Sendable {
+nonisolated enum RouteType: Int, Codable, CaseIterable, Sendable {
     case tram = 0
     case subway = 1
     case rail = 2

@@ -1,11 +1,8 @@
-import Foundation
 import SwiftUI
 
-/// Non-blocking bottom sheet displaying the selected vehicle's header and live upcoming-stop timeline.
-struct VehicleDetailSheet: View {
-    let vehicle: VehiclePosition
-    let onDismiss: () -> Void
+/// Sheet displaying active trip itineraries, live delays, progress, alerts, and fleet metadata.
 
+struct VehicleDetailSheet: View {
     enum DelayStatus: Equatable {
         case onTime
         case delayed(minutes: Int)
@@ -19,10 +16,10 @@ struct VehicleDetailSheet: View {
             }
         }
 
-        var isSignificantOffset: Bool {
+        var shouldHighlightText: Bool {
             switch self {
-            case .onTime: false
             case .delayed, .early: true
+            case .onTime: false
             }
         }
 
@@ -38,136 +35,189 @@ struct VehicleDetailSheet: View {
         }
     }
 
-    private static let defaultTransitTimeZone = TimeZone(identifier: "Europe/Warsaw") ?? .current
-
-    private static let warsawTimeFormatter = makeTimeFormatter(timeZone: defaultTransitTimeZone)
-
-    private static func makeTimeFormatter(timeZone: TimeZone) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }
-
     static func delayStatus(for delayMs: Int) -> DelayStatus {
-        if delayMs >= 60_000 {
-            return .delayed(minutes: delayMs / 60_000)
-        } else if delayMs <= -60_000 {
-            return .early(minutes: abs(delayMs) / 60_000)
+        let minutes = delayMs / 60_000
+        if minutes > 0 {
+            return .delayed(minutes: minutes)
+        } else if minutes < 0 {
+            return .early(minutes: abs(minutes))
         } else {
             return .onTime
         }
     }
 
-    static func countdownText(estimatedMs: Int64, now: Date) -> String {
-        let remainingSeconds = Double(estimatedMs) / 1_000.0 - now.timeIntervalSince1970
-        if remainingSeconds <= 30 {
-            return String(localized: "vehicle.countdown.lessThanOne")
-        }
-        let roundedMinutes = max(1, Int((remainingSeconds / 60.0).rounded()))
-        return "\(roundedMinutes)"
+    static func countdownText(estimatedMs: Int64, now: Date = Date()) -> String {
+        TransitTimeFormatting.countdownText(estimatedMs: estimatedMs, now: now)
     }
 
-    static func formattedTime(epochMs: Int64, timeZone: TimeZone = defaultTransitTimeZone) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(epochMs) / 1_000.0)
-        let formatter = (timeZone == defaultTransitTimeZone)
-            ? warsawTimeFormatter
-            : makeTimeFormatter(timeZone: timeZone)
-        return formatter.string(from: date)
+    static func formattedTime(epochMs: Int64, timeZone: TimeZone = .current) -> String {
+        TransitTimeFormatting.formattedClockTime(epochMs: epochMs, timeZone: timeZone)
     }
 
-    private var headerTitle: String {
-        if let headsign = vehicle.headsign, !headsign.isEmpty {
-            return headsign
-        }
-        return vehicle.routeName
+    let detail: ActiveTripDetail
+    let timeZone: TimeZone
+    let canNavigateBack: Bool
+    let isFollowingVehicle: Bool
+    let onBack: () -> Void
+    let onToggleFollow: () -> Void
+    let onDismiss: () -> Void
+
+    init(
+        detail: ActiveTripDetail,
+        timeZone: TimeZone = .current,
+        canNavigateBack: Bool = false,
+        isFollowingVehicle: Bool = false,
+        onBack: @escaping () -> Void = {},
+        onToggleFollow: @escaping () -> Void = {},
+        onDismiss: @escaping () -> Void
+    ) {
+        self.detail = detail
+        self.timeZone = timeZone
+        self.canNavigateBack = canNavigateBack
+        self.isFollowingVehicle = isFollowingVehicle
+        self.onBack = onBack
+        self.onToggleFollow = onToggleFollow
+        self.onDismiss = onDismiss
     }
 
-    private var headerSubtitle: String? {
+    /// Convenience initializer for previews and lightweight component tests.
+    init(vehicle: VehiclePosition, onDismiss: @escaping () -> Void) {
+        self.init(
+            detail: ActiveTripDetail(
+                city: vehicle.city,
+                vehicleId: vehicle.id,
+                tripId: vehicle.tripId,
+                route: vehicle.route,
+                headsign: vehicle.routeLongName,
+                brigade: vehicle.brigade,
+                livePosition: vehicle,
+                isLoading: false
+            ),
+            onDismiss: onDismiss
+        )
+    }
+
+    private var routeColor: Color {
+        detail.displayRoute?.displayColor ?? .accentColor
+    }
+
+    private var routeContrastingColor: Color {
+        detail.displayRoute?.contrastingTextColor ?? .white
+    }
+
+    private var routeName: String {
+        detail.displayRoute?.name ?? "—"
+    }
+
+    private var routeSystemImage: String {
+        detail.displayRoute?.type.systemImageName ?? RouteType.unknown.systemImageName
+    }
+
+    private var subtitleText: String? {
         var parts: [String] = []
-        if !vehicle.brigade.isEmpty {
-            parts.append(String(format: String(localized: "vehicle.brigade"), vehicle.brigade))
+        if let brigade = detail.displayBrigade, !brigade.isEmpty {
+            parts.append(String(format: String(localized: "vehicle.brigade"), brigade))
         }
-        if let model = vehicle.vehicle.model, !model.isEmpty {
-            parts.append(model)
+        if let shortName = detail.tripInfo?.shortName, !shortName.isEmpty {
+            parts.append(shortName)
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private var routeAccessibilityDescription: String {
-        String(
-            format: String(localized: "accessibility.route"),
-            vehicle.routeName,
-            vehicle.routeType.displayName
-        )
+    private var activeDelayPresentation: TransitDelayPresentation? {
+        guard !detail.stopUpdates.isEmpty else { return nil }
+        let idx = min(max(detail.currentSequence ?? 0, 0), detail.stopUpdates.count - 1)
+        return TransitTimeFormatting.presentation(for: detail.stopUpdates[idx].departure)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            headerView
+            headerSection
                 .padding(.horizontal, DesignTokens.horizontalPadding)
-                .padding(.top, 18)
+                .padding(.top, 20)
                 .padding(.bottom, 12)
 
             Divider()
-                .padding(.horizontal, DesignTokens.horizontalPadding)
 
             ScrollView {
-                Group {
-                    if vehicle.upcomingStops.isEmpty {
-                        emptyStopsSection
-                    } else {
-                        TimelineView(.periodic(from: .now, by: 10)) { context in
-                            stopsTimeline(now: context.date)
-                        }
+                VStack(alignment: .leading, spacing: 14) {
+                    statusAndMetadataBar
+                    if !detail.alerts.isEmpty {
+                        alertsSection
+                    }
+                    itinerarySection
+                    if let pairs = detail.tripInfo?.descriptionPairs, !pairs.isEmpty {
+                        descriptionFooter(pairs: pairs)
                     }
                 }
                 .padding(.horizontal, DesignTokens.horizontalPadding)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 14)
             }
-            .scrollBounceBehavior(.basedOnSize)
         }
+        .presentationDragIndicator(.visible)
     }
 
-    private var headerView: some View {
-        HStack(alignment: .center, spacing: 12) {
+    private var headerSection: some View {
+        HStack(alignment: .top, spacing: 10) {
+            if canNavigateBack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(Text("vehicle.back.accessibility"))
+            }
+
             HStack(spacing: 4) {
-                Image(systemName: vehicle.routeType.systemImageName)
-                    .font(.caption2.weight(.bold))
-                    .frame(width: 14, height: 14)
-                Text(vehicle.routeName)
-                    .font(.system(.caption, design: .rounded).weight(.bold))
+                Image(systemName: routeSystemImage)
+                    .font(.system(size: 14, weight: .bold))
+                Text(routeName)
+                    .font(.system(size: 16, weight: .bold))
+                    .lineLimit(1)
             }
             .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(vehicle.displayColor)
-            .foregroundStyle(vehicle.contrastingTextColor)
-            .clipShape(Capsule())
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(verbatim: routeAccessibilityDescription))
+            .frame(minWidth: 44, minHeight: 40, maxHeight: 40)
+            .background(routeColor)
+            .foregroundStyle(routeContrastingColor)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(headerTitle)
-                    .font(.headline)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(detail.displayHeadsign)
+                    .font(.title3.bold())
+                    .lineLimit(2)
 
-                if let headerSubtitle {
-                    Text(headerSubtitle)
-                        .font(.caption)
+                if let subtitle = subtitleText {
+                    Text(subtitle)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 6)
 
-            Button {
-                onDismiss()
-            } label: {
+            if detail.livePosition != nil {
+                Button(action: onToggleFollow) {
+                    Image(systemName: isFollowingVehicle ? "location.fill" : "location")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(isFollowingVehicle ? .blue : .secondary)
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(Text("vehicle.follow.accessibility"))
+                .accessibilityAddTraits(isFollowingVehicle ? .isSelected : [])
+            }
+
+            Button(action: onDismiss) {
                 Image(systemName: "xmark")
-                    .frame(width: DesignTokens.compactControlSize, height: DesignTokens.compactControlSize)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 30)
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
@@ -175,186 +225,346 @@ struct VehicleDetailSheet: View {
         }
     }
 
-    private func stopsTimeline(now: Date) -> some View {
-        let status = Self.delayStatus(for: vehicle.delay)
-        let stops = Array(vehicle.upcomingStops.enumerated())
+    @ViewBuilder
+    private var statusAndMetadataBar: some View {
+        TimelineView(.periodic(from: .now, by: 5)) { context in
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    if let delay = activeDelayPresentation {
+                        Text(delay.localizedText)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(delay.color)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(delay.color.opacity(0.14))
+                            .clipShape(Capsule())
+                    }
 
-        return Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 0) {
-            ForEach(stops, id: \.offset) { index, stop in
-                stopRow(
-                    stop: stop,
-                    index: index,
-                    isCurrent: index == 0,
-                    status: status,
-                    now: now
-                )
-            }
-        }
-        .backgroundPreferenceValue(StopTimelineAnchorKey.self) { anchors in
-            GeometryReader { geometry in
-                if let firstAnchor = anchors[0],
-                   let lastIndex = stops.indices.last,
-                   let lastAnchor = anchors[lastIndex] {
-                    let firstRect = geometry[firstAnchor]
-                    let lastRect = geometry[lastAnchor]
-                    let startsMidTrip = (vehicle.upcomingStops.first?.sequence ?? 0) > 0
-                    let trackWidth: CGFloat = 12
-                    let topY = startsMidTrip ? 0 : max(0, firstRect.midY - trackWidth / 2)
-                    let bottomY = max(lastRect.midY + trackWidth / 2, geometry.size.height)
+                    if let lastPingMs = detail.livePosition?.lastPingMs {
+                        Label {
+                            Text(TransitTimeFormatting.relativePingDescription(lastPingMs: lastPingMs, now: context.date))
+                        } icon: {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
 
-                    RoundedRectangle(cornerRadius: trackWidth / 2)
-                        .fill(vehicle.displayColor)
-                        .frame(width: trackWidth, height: max(trackWidth, bottomY - topY))
-                        .position(x: firstRect.midX, y: (topY + bottomY) / 2)
+                if let metadata = detail.vehicleMetadata,
+                   metadata.model != nil || metadata.carrier != nil {
+                    HStack(spacing: 6) {
+                        Image(systemName: routeSystemImage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+
+                        let details = [
+                            metadata.model,
+                            metadata.prodYear.map(String.init),
+                            metadata.carrier
+                        ].compactMap { $0 }
+
+                        Text(details.joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
             }
         }
     }
 
-    private func stopRow(
-        stop: VehicleUpcomingStop,
-        index: Int,
-        isCurrent: Bool,
-        status: DelayStatus,
-        now: Date
-    ) -> some View {
-        let estimatedArrivalMs = stop.scheduledArrival + Int64(vehicle.delay)
-        let estimatedDepartureMs = stop.scheduledDeparture + Int64(vehicle.delay)
-        let countdown = Self.countdownText(estimatedMs: estimatedArrivalMs, now: now)
-        let displayTime = Self.formattedTime(epochMs: estimatedDepartureMs)
+    private var alertsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("vehicle.alerts.heading")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+                .textCase(.uppercase)
 
-        return GridRow {
-            timesColumn(
-                stop: stop,
-                estimatedArrivalMs: estimatedArrivalMs,
-                estimatedDepartureMs: estimatedDepartureMs,
-                status: status
-            )
-            .padding(.vertical, 8)
-
-            timelineNode(isCurrent: isCurrent)
-                .frame(width: 28, height: 28)
-                .anchorPreference(key: StopTimelineAnchorKey.self, value: .bounds) { [index: $0] }
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(stop.name)
-                    .font(isCurrent ? .subheadline.weight(.bold) : .subheadline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text(status.localizedText)
-                    .font(.caption)
-                    .foregroundStyle(status.color)
+            ForEach(detail.alerts) { alert in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Text(alert.title)
+                            .font(.caption.weight(.semibold))
+                    }
+                    if !alert.description.isEmpty {
+                        Text(alert.description)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.orange.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 8)
+        }
+    }
 
-            VStack(alignment: .trailing, spacing: 0) {
-                Text(countdown)
-                    .font(.subheadline.weight(.medium).monospacedDigit())
-                    .foregroundStyle(.primary)
-                Text("vehicle.countdown.min")
-                    .font(.caption)
+    @ViewBuilder
+    private var itinerarySection: some View {
+        let stops = detail.itinerary?.stops ?? []
+        if detail.isLoading && stops.isEmpty {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("map.loading.initial")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            .padding(.vertical, 8)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: String(
-            format: String(localized: "vehicle.accessibility.stopRow"),
-            stop.name,
-            displayTime,
-            status.localizedText,
-            countdown
-        )))
-    }
-
-    @ViewBuilder
-    private func timesColumn(
-        stop: VehicleUpcomingStop,
-        estimatedArrivalMs: Int64,
-        estimatedDepartureMs: Int64,
-        status: DelayStatus
-    ) -> some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            if stop.scheduledArrival == stop.scheduledDeparture {
-                if status.isSignificantOffset {
-                    Text(Self.formattedTime(epochMs: stop.scheduledDeparture))
-                        .font(.caption.monospacedDigit())
-                        .strikethrough()
-                        .foregroundStyle(.secondary)
-                    Text(Self.formattedTime(epochMs: estimatedDepartureMs))
-                        .font(.caption.weight(.medium).monospacedDigit())
-                        .foregroundStyle(status.color)
-                } else {
-                    Text(Self.formattedTime(epochMs: estimatedDepartureMs))
-                        .font(.caption.weight(.medium).monospacedDigit())
-                        .foregroundStyle(.primary)
-                }
-            } else {
-                Text(Self.formattedTime(epochMs: estimatedArrivalMs))
-                    .font(.caption.weight(.medium).monospacedDigit())
-                    .foregroundStyle(status.isSignificantOffset ? status.color : .primary)
-                Text(Self.formattedTime(epochMs: estimatedDepartureMs))
-                    .font(.caption.weight(.medium).monospacedDigit())
-                    .foregroundStyle(status.isSignificantOffset ? status.color : .primary)
-            }
-        }
-        .frame(minWidth: 42, alignment: .trailing)
-    }
-
-    @ViewBuilder
-    private func timelineNode(isCurrent: Bool) -> some View {
-        if isCurrent {
-            ZStack {
-                Circle()
-                    .fill(vehicle.displayColor)
-                    .frame(width: 26, height: 26)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color(uiColor: .systemBackground), lineWidth: 2)
-                    )
-
-                Image(systemName: vehicle.routeType.systemImageName)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(vehicle.contrastingTextColor)
-            }
-        } else {
-            Circle()
-                .fill(.white)
-                .frame(width: 14, height: 14)
-                .overlay(
-                    Circle()
-                        .strokeBorder(vehicle.displayColor, lineWidth: 2.5)
-                )
-        }
-    }
-
-    private var emptyStopsSection: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                .font(.title2)
+            .padding(.vertical, 12)
+        } else if let errorMessage = detail.errorMessage, stops.isEmpty {
+            Label(errorMessage, systemImage: "exclamationmark.triangle")
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-
+                .padding(.vertical, 8)
+        } else if stops.isEmpty {
             Text("vehicle.stops.empty")
-                .font(.footnote)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        } else {
+            TimelineView(.periodic(from: .now, by: 15)) { context in
+                VStack(spacing: 0) {
+                    ForEach(Array(stops.enumerated()), id: \.offset) { index, itineraryStop in
+                        let update = index < detail.stopUpdates.count ? detail.stopUpdates[index] : nil
+                        TripTimelineRow(
+                            itineraryStop: itineraryStop,
+                            update: update,
+                            index: index,
+                            totalCount: stops.count,
+                            sequence: detail.currentSequence,
+                            percentTraveled: detail.livePosition?.percentTraveled,
+                            routeColor: routeColor,
+                            routeContrastingColor: routeContrastingColor,
+                            routeSystemImage: routeSystemImage,
+                            timeZone: timeZone,
+                            now: context.date
+                        )
+                    }
+                }
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
-        .background(Color(uiColor: .secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func descriptionFooter(pairs: [[String]]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Divider()
+                .padding(.vertical, 4)
+
+            ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
+                if pair.count >= 2 {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(pair[0])
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(pair[1])
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let first = pair.first {
+                    Text(first)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 
-nonisolated private struct StopTimelineAnchorKey: PreferenceKey {
-    static let defaultValue: [Int: Anchor<CGRect>] = [:]
+private struct TripTimelineRow: View {
+    let itineraryStop: ItineraryStop
+    let update: TripStopUpdate?
+    let index: Int
+    let totalCount: Int
+    let sequence: Int?
+    let percentTraveled: Double?
+    let routeColor: Color
+    let routeContrastingColor: Color
+    let routeSystemImage: String
+    let timeZone: TimeZone
+    let now: Date
 
-    static func reduce(value: inout [Int: Anchor<CGRect>], nextValue: () -> [Int: Anchor<CGRect>]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    private var isFirst: Bool { index == 0 }
+    private var isLast: Bool { index == totalCount - 1 }
+
+    private var hasDeparted: Bool {
+        guard let update else { return false }
+        if update.departure.isCancelled { return true }
+        if let sequence {
+            return index < sequence
+        }
+        return update.departure.estimatedMs < Int64(now.timeIntervalSince1970 * 1_000.0)
+    }
+
+    private var showsLiveVehicleOnSegment: Bool {
+        !isFirst && sequence == index && percentTraveled != nil
+    }
+
+    private var clampedPercentFraction: CGFloat {
+        let value = (percentTraveled ?? 0) / 100.0
+        return CGFloat(min(max(value, 0.0), 1.0))
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            timeColumn
+                .frame(width: 48, alignment: .trailing)
+
+            trackColumn
+                .frame(width: 24)
+
+            stopDetailsColumn
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 10)
+
+            countdownColumn
+        }
+        .opacity(hasDeparted ? 0.65 : 1.0)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var timeColumn: some View {
+        if let update {
+            let arrivalText = TransitTimeFormatting.formattedClockTime(epochMs: update.arrival.estimatedMs, timeZone: timeZone)
+            let departureText = TransitTimeFormatting.formattedClockTime(epochMs: update.departure.estimatedMs, timeZone: timeZone)
+            let presentation = TransitTimeFormatting.presentation(for: update.departure)
+            let scheduledText = TransitTimeFormatting.formattedClockTime(epochMs: update.departure.scheduledMs, timeZone: timeZone)
+
+            VStack(alignment: .trailing, spacing: 1) {
+                if arrivalText != departureText {
+                    Text(arrivalText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Text(departureText)
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(presentation.shouldHighlightText ? presentation.color : .primary)
+                } else if presentation.shouldStrikeScheduledTime {
+                    Text(scheduledText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .strikethrough()
+                    if !update.departure.isCancelled {
+                        Text(departureText)
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(presentation.color)
+                    }
+                } else {
+                    Text(departureText)
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(presentation.shouldHighlightText ? presentation.color : .primary)
+                }
+            }
+        }
+    }
+
+    private var trackColumn: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .top) {
+                Rectangle()
+                    .fill(isFirst ? .clear : routeColor)
+                    .frame(width: 3)
+
+                if showsLiveVehicleOnSegment {
+                    GeometryReader { proxy in
+                        Image(systemName: routeSystemImage)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(routeContrastingColor)
+                            .frame(width: 20, height: 20)
+                            .background(routeColor)
+                            .clipShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(.white, lineWidth: 1.5)
+                            )
+                            .position(
+                                x: proxy.size.width / 2,
+                                y: max(10, proxy.size.height * clampedPercentFraction)
+                            )
+                            .animation(.easeInOut(duration: 0.5), value: clampedPercentFraction)
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+
+            Circle()
+                .fill(hasDeparted ? routeColor : Color(.systemBackground))
+                .overlay(
+                    Circle()
+                        .stroke(routeColor, lineWidth: 2.5)
+                )
+                .frame(width: 11, height: 11)
+
+            Rectangle()
+                .fill(isLast ? .clear : routeColor)
+                .frame(width: 3)
+                .frame(maxHeight: .infinity)
+        }
+    }
+
+    private var stopDetailsColumn: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(itineraryStop.stop.name)
+                    .font(.subheadline.weight((sequence == index && !hasDeparted) ? .bold : .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+
+                if !itineraryStop.stop.code.isEmpty {
+                    Text(itineraryStop.stop.code)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            let platform = update?.platform ?? itineraryStop.platform
+            let track = update?.track
+            if platform != nil || track != nil || itineraryStop.isOnDemand || itineraryStop.isBoardingForbidden {
+                HStack(spacing: 6) {
+                    if let platform {
+                        Text(String(format: String(localized: "stopDetail.platform"), platform))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let track {
+                        Text(String(format: String(localized: "vehicle.stop.track"), track))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if itineraryStop.isOnDemand {
+                        Label("vehicle.stop.onDemand", systemImage: "hand.raised.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    if itineraryStop.isBoardingForbidden {
+                        Label("vehicle.stop.noBoarding", systemImage: "arrow.down.to.line")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var countdownColumn: some View {
+        if let update, !hasDeparted, !update.departure.isCancelled {
+            let minutes = TransitTimeFormatting.minutesRemaining(estimatedMs: update.departure.estimatedMs, now: now)
+            let presentation = TransitTimeFormatting.presentation(for: update.departure)
+            if minutes >= 0 {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(TransitTimeFormatting.countdownText(estimatedMs: update.departure.estimatedMs, now: now))
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(presentation.shouldHighlightText ? presentation.color : .primary)
+
+                    Text("vehicle.countdown.min")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }

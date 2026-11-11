@@ -477,6 +477,40 @@
         }
       }
     },
+    "map.dot.accessibility" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live vehicle"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pojazd na trasie"
+          }
+        }
+      }
+    },
+    "map.entrance.accessibility" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop entrance: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wejście na przystanek: %@"
+          }
+        }
+      }
+    },
     "map.error.retry" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -490,6 +524,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Spróbuj ponownie"
+          }
+        }
+      }
+    },
+    "map.itineraryStop.accessibility" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Route stop: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przystanek na trasie: %@"
           }
         }
       }
@@ -817,8 +868,23 @@
         }
       }
     },
-    "stop.sheet.close" : {
-
+    "stop.sheet.close" : {},
+    "stopDetail.accessibility.departureRow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Line %@, to %@, %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linia %@, kierunek %@, %@"
+          }
+        }
+      }
     },
     "stopDetail.close" : {
       "extractionState" : "manual",
@@ -833,6 +899,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zamknij szczegóły przystanku"
+          }
+        }
+      }
+    },
+    "stopDetail.departuresHeading" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Departures"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odjazdy"
           }
         }
       }
@@ -871,6 +954,40 @@
         }
       }
     },
+    "stopDetail.loadingDepartures" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading departures..."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ładowanie odjazdów..."
+          }
+        }
+      }
+    },
+    "stopDetail.noDepartures" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No upcoming departures"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brak nadchodzących odjazdów"
+          }
+        }
+      }
+    },
     "stopDetail.noRoutes" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -884,6 +1001,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Brak przypisanych linii dla tego słupka."
+          }
+        }
+      }
+    },
+    "stopDetail.platform" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Platform %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Peron %@"
           }
         }
       }
@@ -918,6 +1052,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@, %@, %@, %@ min"
+          }
+        }
+      }
+    },
+    "vehicle.alerts.heading" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Service alerts"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komunikaty"
+          }
+        }
+      }
+    },
+    "vehicle.back.accessibility" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back to stop"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wróć do przystanku"
           }
         }
       }
@@ -1020,6 +1188,176 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Planowo"
+          }
+        }
+      }
+    },
+    "vehicle.follow.accessibility" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Follow vehicle"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Śledź pojazd"
+          }
+        }
+      }
+    },
+    "vehicle.lastPing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updated %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktualizacja %@"
+          }
+        }
+      }
+    },
+    "vehicle.lastPing.justNow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "just now"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "przed chwilą"
+          }
+        }
+      }
+    },
+    "vehicle.lastPing.minutes" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld min ago"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld min temu"
+          }
+        }
+      }
+    },
+    "vehicle.lastPing.seconds" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld s ago"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld s temu"
+          }
+        }
+      }
+    },
+    "vehicle.status.cancelled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelled"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odwołany"
+          }
+        }
+      }
+    },
+    "vehicle.status.scheduled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scheduled"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rozkładowo"
+          }
+        }
+      }
+    },
+    "vehicle.stop.noBoarding" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drop-off only"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tylko wysiadanie"
+          }
+        }
+      }
+    },
+    "vehicle.stop.onDemand" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On demand"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Na żądanie"
+          }
+        }
+      }
+    },
+    "vehicle.stop.track" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Track %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tor %@"
           }
         }
       }

@@ -1,221 +1,105 @@
-# Zbiorkom API Reference
+# `api.zbiorkom.live/api6` Specification & Positional Schema
 
-This document provides a complete reference for the `zbiorkom.live` open public transport API (`https://api.zbiorkom.live/api6-open`).
+**KomunikacjaWiejska** communicates directly with `https://api.zbiorkom.live/api6` over HTTPS (`URLSession`) and Server-Sent Events (`SSEFrameParser` on top of `URLSession.bytes(for:)`).
 
-## 1. General Principles & Conventions
-
-- **Base URL:** `https://api.zbiorkom.live/api6-open`
-- **Specification:** OpenAPI 3.1 (`GET /api6-open` or `GET /api6-open?city={city}`)
-- **Scoping:** Every transit endpoint is prefixed with a `{city}` identifier (e.g. `warsaw`, `krakow`, `wroclaw`, `poznan`, `tricity`, `gzm`, `rybnik`, `pkp`, etc.).
-- **Coordinate Order:** All coordinates are `[longitude, latitude]` in WGS 84.
-  > [!IMPORTANT]
-  > When bridging to MapKit / CoreLocation, note that `CLLocationCoordinate2D` takes `(latitude: point[1], longitude: point[0])`.
-- **Timestamps:** Epoch timestamps and duration offsets are expressed in **milliseconds** (`ms`).
-- **Data Optimization:** High-frequency endpoints (e.g., `stops`, `positions`, `routes`) return **unkeyed positional JSON arrays (tuples)** rather than JSON objects with key names to minimize network payload sizes.
+> [!IMPORTANT]
+> **Coordinate Order:** All coordinate pairs in `/api6` follow GeoJSON `[longitude, latitude]` order (`lon = [0]`, `lat = [1]`), decoded into `CLLocationCoordinate2D(latitude: lat, longitude: lon)`.
+> **Path Encoding:** Each path segment is strictly percent-encoded (`alphanumerics` + `"-._~"`), matching JavaScript `encodeURIComponent` so colons/slashes in vehicle and trip IDs (such as `3:MM831` -> `3%3AMM831`) are preserved cleanly.
 
 ---
 
-## 2. Endpoints Overview
+## 1. Endpoints
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api6-open/{city}/stops` | Returns stops for the city, optionally filtered by `?bbox=minLon,minLat,maxLon,maxLat`. |
-| `GET` | `/api6-open/{city}/stops/{stopId}` | Real-time departures for a specific stop pole. |
-| `GET` | `/api6-open/{city}/positions/{bbox}` | Real-time vehicle positions within the given bounding box. |
-| `GET` | `/api6-open/{city}/trips/{tripId}` | Details of a trip, including route path/polyline points and stop sequence. |
-| `GET` | `/api6-open/{city}/routes` | List of all routes in the network. |
-| `GET` | `/api6-open/{city}/schedule/{route}/{brigade}` | Full day schedule for a vehicle brigade. |
-
----
-
-## 3. Stops Positional Tuple Schema (`StopTuple`)
-
-Returned from `GET /api6-open/{city}/stops?bbox={minLon},{minLat},{maxLon},{maxLat}`:
-
-```json
-{
-  "stops": [
-    [
-      "rybnik-srodmiescie-dworek261-0-j58h8",
-      "rybnik",
-      "Rybnik Śródmieście Dworek",
-      "261/0",
-      [18.542289, 50.096472],
-      [3],
-      145,
-      "Chwałowice / Boguszowice",
-      [
-        ["24", "rybnik", "24", "24", "default", 3, "#215da5"]
-      ],
-      [
-        ["Wejście A", [18.542300, 50.096500]]
-      ]
-    ]
-  ]
-}
-```
-
-### Positional Index Reference
-
-| Index | Field | Type | Description |
+| Kind | Method / Protocol | Path | Consumer |
 |---|---|---|---|
-| `0` | `id` | `String` | Unique stop identifier. Used for departures lookup. |
-| `1` | `city` | `String` | City identifier (e.g., `"warsaw"`, `"rybnik"`). |
-| `2` | `name` | `String` | Human-readable stop name (e.g. `"Rybnik Śródmieście Dworek"`). |
-| `3` | `code` | `String` | Platform or pole number (e.g. `"01"`, `"261/0"`). Empty string if none. |
-| `4` | `location` | `[Double]` | Array of two doubles: `[longitude, latitude]`. |
-| `5` | `vehicleTypes` | `[Int]` | Array of GTFS route type integers: `0` (tram), `1` (metro), `2` (rail), `3` (bus), `4` (ferry), `6` (cable car), `7` (funicular), `11` (trolleybus), `12` (monorail). |
-| `6` | `bearing` | `Int?` | Direction of travel in degrees (`0..360`), or `null` if unknown. |
-| `7` | `direction` | `String` | Destination or corridor description (e.g. `"Centrum"`). |
-| `8` | `routes` | `[RouteTuple]` | Array of 7-element route tuples serving this stop. |
-| `9` | `entrances` | `[EntranceTuple]` | Array of station entrances/exits. |
+| **City Catalog** | `GET` (JSON) | `/api6` | `ZbiorkomAPIClient.fetchCities()` |
+| **Vehicle Metadata** | `GET` (JSON) | `/api6/{city}/vehicles/vehicle/{vehicleId}` | `ZbiorkomAPIClient.fetchVehicleMetadata(city:vehicleId:)` |
+| **Map Features** | `GET` (`text/event-stream`) | `/api6/{city}/mapFeatures/{zoom}/{minLon},{minLat},{maxLon},{maxLat}/stream` | `ZbiorkomAPIClient.streamMapFeatures(city:zoom:bbox:)` |
+| **Stop Departures** | `GET` (`text/event-stream`) | `/api6/{city}/stops/{stopId}/stream?limit=21` | `ZbiorkomAPIClient.streamStopDepartures(city:stopId:limit:)` |
+| **Vehicle / Trip Live** | `GET` (`text/event-stream`) | `/api6/{city}/positions/{vehicleId}/stream` | `ZbiorkomAPIClient.streamVehiclePosition(city:vehicleId:)` |
+| **Scheduled Trip** | `GET` (`text/event-stream`) | `/api6/{city}/trips/{tripId}/stream` | `ZbiorkomAPIClient.streamTrip(city:tripId:)` |
 
-### `RouteTuple` (7 elements)
-- `[0] id: String` — Route identifier (e.g. `"24"`).
-- `[1] city: String` — City identifier.
-- `[2] name: String` — Short display name (e.g. `"24"`).
-- `[3] longName: String` — Descriptive name.
-- `[4] agency: String` — Operator identifier (e.g. `"default"`, `"ztm"`).
-- `[5] type: Int` — GTFS route type (`RouteType`).
-- `[6] color: String` — Hex color string (e.g. `"#215da5"`).
-
-### `EntranceTuple` (2 elements)
-- `[0] name: String` — Entrance name.
-- `[1] location: [Double]` — `[longitude, latitude]`.
+SSE streams emit `event: initial` on connection open followed by periodic `event: message` pushes roughly every 10 seconds (`:00, :10, :20, ...`). Server error frames arrive under `event: errorCode`.
 
 ---
 
-## 4. Stop Departures Schema
+## 2. REST Schemas
 
-`GET /api6-open/{city}/stops/{stopId}?limit=20`
-
-Returns keyed JSON:
-
+### `GET /api6` (`CitiesResponse`)
 ```json
 {
-  "departures": [
+  "hash": "3pmo7n8olz3ua",
+  "shouldUpdate": true,
+  "cities": [
     {
-      "trip": {
-        "route": {
-          "id": "24",
-          "name": "24",
-          "agency": "default",
-          "type": 3,
-          "color": "#215da5"
-        },
-        "headsign": "Meksyk",
-        "brigade": "N-02",
-        "shortName": null
-      },
-      "scheduledDeparture": 1789397160000,
-      "delay": 33000,
-      "isRealtime": true,
-      "isCancelled": false,
-      "platform": null
+      "id": "krakow",
+      "name": "Kraków",
+      "description": "...",
+      "category": "lesserPoland",
+      "location": [19.94781, 50.06865],
+      "timezone": "Europe/Warsaw",
+      "virtual": false,
+      "agencies": {
+        "default": { "id": "default", "name": "ZTP Kraków", "faresUrl": "...", "icon": "<path .../>" }
+      }
     }
   ]
 }
 ```
+Entries with `virtual: true` (`pkp`, `mld`, `lka`, `flixbus`, `digitraffic`) are excluded from `CityPickerSheet` and region suggestions, while preserved for cross-city stream URL routing (`stop.city`, `vehicle.city`, `trip.city`).
 
-- `scheduledDeparture`: Epoch millisecond timestamp of scheduled departure time.
-- `delay`: Offset from scheduled departure in milliseconds (`33000` = 33 seconds late, negative values = early).
-- `isRealtime`: `true` if tracked by GPS AVL, `false` if scheduled static timetable.
-- `isCancelled`: `true` if trip was officially annulled.
-
----
-
-## 5. Vehicle Positions Schema (`VehiclePosition`)
-
-`GET /api6-open/{city}/positions/{bbox}`
-
-Returns keyed JSON of all vehicles currently operating inside the bounding box:
-
-```json
-{
-  "positions": [
-    {
-      "vehicle": {
-        "id": "2025",
-        "type": "3",
-        "agency": "default",
-        "model": "Solbus SM18"
-      },
-      "routeName": "189",
-      "routeColor": "#a5248c",
-      "brigade": "D31",
-      "location": [20.908178, 52.228401],
-      "timestamp": 1794335632000,
-      "bearing": 84,
-      "delay": 120000,
-      "headsign": "Rondo Unii Europejskiej",
-      "upcomingStops": [
-        {
-          "sequence": 6,
-          "name": "Raginisa",
-          "scheduledArrival": 1794334200000,
-          "scheduledDeparture": 1794334200000
-        }
-      ],
-      "url": "https://v6-api.zbiorkom-v5.pages.dev/warsaw/vehicle/3%3A2025"
-    }
-  ]
-}
-```
-
-### Field Definitions
-
-- `vehicle.id`: Fleet number (unique per operator agency and vehicle type).
-- `vehicle.type`: GTFS route type integer represented as a string (`"0"` tram, `"1"` metro, `"2"` rail, `"3"` bus, etc.).
-- `vehicle.agency`: Operator agency code (e.g. `"default"`, `"ztm"`).
-- `vehicle.model`: Bus/tram vehicle model name or `null`.
-- `routeName`: Displayed route identifier (e.g. `"189"`, `"4"`, `"M1"`).
-- `routeColor`: Hex color string (`"#rrggbb"`).
-- `brigade`: Duty / run number (`brygada`).
-- `location`: `[longitude, latitude]` in WGS 84.
-- `timestamp`: Epoch millisecond timestamp of the last GPS fix.
-- `bearing`: Heading in degrees (`0..360`), or omitted/null if stationary/unknown.
-- `delay`: Predicted delay in milliseconds (negative = early, positive = late).
-- `headsign`: Destination or trip terminus string.
-- `upcomingStops`: Array of sequence-ordered stops along the current trip.
-- `url`: Canonical web link to vehicle details on zbiorkom.live.
+### `GET /api6/{city}/vehicles/vehicle/{vehicleId}` (`VehicleMetadata`)
+Positional 5-tuple: `[id, model, prodYear, carrier, imageHash]`.
 
 ---
 
-## 6. Error Schema
+## 3. Positional Tuple Reference
 
-Non-200 responses return:
+### `StopRoute` (`RouteTuple`)
+`[0: id, 1: city, 2: name, 3: longName, 4: agency, 5: type (GTFS Int), 6: color (hex with/without #)]`
 
-```json
-{
-  "error": "ERROR_CODE"
-}
-```
+### `Stop`
+- **`mapFeatures` `initial`** emits 7-element tuples:
+  `[0: id, 1: city, 2: name, 3: code, 4: [lon, lat], 5: types ([Int]), 6: bearing?]`
+- **`stops/{id}/stream` `initial`** emits full 10-element tuples:
+  `[0..6]` plus `[7: direction?, 8: [StopRoute], 9: [[entranceName, [lon, lat]]]]`
 
-Standard codes:
-- `CITY_NOT_FOUND`
-- `STOP_NOT_FOUND`
-- `INVALID_BBOX`
-- `UNKNOWN_ERROR`
+`Stop.hasFullMetadata` tracks whether the stop has been hydrated from a 10-element metadata tuple.
 
-### Client-side error mapping (`ZbiorkomAPIError`)
+### `DotVehicle` & `MapFeaturesUpdate`
+- **`DotVehicle`**: `[0: colorHex, 1: [lon, lat]]` (returned in `dots` when zoomed out `< ~15`).
+- **`MapFeaturesUpdate`**: `{"positions": [VehiclePosition], "dots": [DotVehicle], "bbox": [minLon, minLat, maxLon, maxLat]?, "traffic": ...}`.
 
-| Client case | Trigger | User-facing message |
-|---|---|---|
-| `transport(URLError.Code)` | Offline, timeout, host unreachable | Localized: "Brak połączenia z internetem." / "No internet connection.", etc. |
-| `invalidURL` | Base URL or query construction failure | Localized "invalid request URL" copy. |
-| `invalidResponse` | Response is not an `HTTPURLResponse` | Localized "invalid server response" copy. |
-| `serverError(String)` | Non-200 response with an `error` code | Localized "server error: `CODE`". |
-| `httpError(statusCode)` | Non-200 response without an error body | Localized "HTTP error (`code`)". |
-| `decodingError(String)` | Malformed payload | Short localized copy; the associated diagnostic is DEBUG-only and logged with `os.Logger`, never shown in the UI. |
+### `VehiclePosition`
+- **6-tuple (`mapFeatures`, `StopDeparture`)**:
+  `[0: id, 1: city, 2: StopRoute, 3: brigade, 4: [lon, lat], 5: bearing?]`
+- **9-tuple (`positions/{id}/stream`)**:
+  `[0..5]` plus `[6: lastPingMs?, 7: tripId?, 8: percentTraveled?]`
 
-All copy is provided in Polish and English through
-`Resources/Localizable.xcstrings`. Requests set `Accept: application/json`, use a
-15 s timeout, and are retried **once with 200–600 ms jitter** for transient
-transport errors (timeout, connection loss, offline) and 5xx responses. 4xx
-responses are never retried.
+### `StopDeparture` & `StopTimeUpdate`
+- **`StopDeparture`**: `[0: TripInfo, 1: VehiclePosition?, 2: departure StopTimeUpdate, 3: destination StopTimeUpdate?]`
+- **`StopTimeUpdate`**: `[0: scheduledMs, 1: delayMs?, 2: DepartureStatus (0=Scheduled, 1=OnTrip, 2=OnPreviousTrip, 3=Cancelled), 3: platform?, ...]`
 
-### Bounding box semantics
+### `TripInitial`, `Itinerary` & `TripUpdate`
+- **`TripInfo`**: `[0: id, 1: city, 2: StopRoute, 3: headsign, 4: brigade?, 5: shortName?, 6: [[key, value]]?, ...]`
+- **`Itinerary`**: `[0: [ItineraryStop], 1: encodedPolyline6, ...]` — polylines use factor **`1e6`** (`PolylineDecoder`).
+- **`ItineraryStop`**: `[0: Stop, 1: alightBitmask (1=regular, 2=forbidden, 4=onDemand, 8=isLastStop), 2: distanceMeters?, 3: platform?, ...]`
+- **`TripStopUpdate`**: `[0: arrival StopTimeUpdate, 1: departure StopTimeUpdate, 2: platform?, 3: track?, 4: [TripAlert]?]`
+- **`TripAlert`**: `[0: title, 1: description, 2: url?, 3: publishedAtMs?, 4: activeFromMs?, 5: activeUntilMs?, 6: language?, 7: detected?]`
 
-`bbox` is `minLon,minLat,maxLon,maxLat` (WGS84, decimal degrees), built from the
-visible map region and rounded to six decimal places. The client fetches per
-viewport and caches results for 10 minutes (see `docs/decisions/0001-fetch-strategy.md`).
+---
+
+## 4. Supported `RouteType` Values
+
+| Value | Case | SF Symbol | Default Hex |
+|---:|---|---|---|
+| `0` | `.tram` | `tram.fill` | `#E53935` |
+| `1` | `.subway` | `tram.fill.tunnel` | `#1E88E5` |
+| `2` | `.rail` | `train.side.front.car` | `#43A047` |
+| `3` | `.bus` | `bus.fill` | `#FB8C00` |
+| `4` | `.ferry` | `ferry.fill` | `#00ACC1` |
+| `6` | `.aerialLift` | `cablecar.fill` | `#546E7A` |
+| `7` | `.funicular` | `cablecar` | `#546E7A` |
+| `11` | `.trolleybus` | `bus.doubledecker.fill` | `#8E24AA` |
+| `12` | `.monorail` | `train.side.middle.car` | `#546E7A` |
+| `-1` / other | `.unknown` | `questionmark.circle.fill` | `#757575` |

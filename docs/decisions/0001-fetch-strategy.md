@@ -1,6 +1,6 @@
 # ADR-0001 — Stops fetch strategy: viewport bbox (Decision 1D1)
 
-**Status:** Accepted (2026-11-05)
+**Status:** Superseded by [ADR-0009](0009-api6-sse-streaming.md) (2026-11-11) — originally accepted 2026-11-05
 
 ## Context
 Stops can be fetched for an entire city (`{city}/stops`) or for the visible viewport

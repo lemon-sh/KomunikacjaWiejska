@@ -1,146 +1,73 @@
-# Architecture Guide
+# Architecture & Design Guide
 
-This document describes the software architecture, state flow, MapKit integration, and future expansion roadmap for the `KomunikacjaWiejska` native iOS app.
-
----
-
-## 1. Architectural Principles
-
-1. **Native-First Design:**
-   - Pure Apple frameworks: `SwiftUI`, `MapKit`, `CoreLocation`, `Observation`, and `Foundation`.
-   - Prefer Apple HIG idioms: Liquid Glass via native `.buttonStyle(.glass)` / `glassEffect` / `GlassEffectContainer`, SF Symbols, native MapKit controls (`MapCompass`), and standard bottom sheets (`.presentationDetents`).
-   - The app never re-implements platform chrome (compass animations, glass buttons, map gestures).
-2. **Observation & Swift Concurrency:**
-   - View models use the Swift `@Observable` macro and `@MainActor`.
-   - No Combine pipelines or `ObservableObject` classes.
-   - Network interactions are actor-isolated (`ZbiorkomAPIClient: actor`) with `async`/`await`.
-   - The app builds in **Swift 6 language mode** with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. Pure value types used across actors (`BoundingBox`, model types, `StopsProviding`, `LocationProviding`) are explicitly `nonisolated`; no blanket `@preconcurrency` escapes.
-3. **Optimized Map Performance:**
-   - Public transit networks in metropolitan areas contain tens of thousands of stop poles.
-   - Stops are fetched **per visible viewport**: `.onMapCameraChange(frequency: .onEnd)` debounces camera changes (`MapConstants.cameraDebounceNanoseconds`, 350 ms) and `MapViewModel` determines missing Web Mercator tiles.
-   - Fetched stops live in a session-only, per-city tile cache using flat Zoom 12 Web Mercator tiles (`MapTile.zoom = 12`). There is no multi-level tile hierarchy; missing tiles are requested as a single union bounding box (`minLon,minLat,maxLon,maxLat`) and merged into the city cache by stop ID. The cache is cleared on city switch and never persisted.
-   - Camera distance controls transit rendering thresholds:
-     - **Stops:** Rendered when camera distance $\le$ 3,000 m (`MapViewModel.stopVisibilityDistanceThreshold`). At this scale, stops are rendered directly in the visible viewport without spatial grid thinning. Stops are hidden and fetches suppressed above 3,000 m.
-     - **Live Vehicles (Two-tier display):**
-       - **Full route badges:** Camera distance $\le$ 2,000 m (`MapViewModel.vehicleCompactDistanceThreshold`) with route pill badge and directional bearing pointer.
-       - **Compact markers:** Camera distance between 2,000 m and 10,000 m (`MapViewModel.vehicleVisibilityDistanceThreshold`) displaying minimal 7pt dots with route colors and hidden annotation titles for fluid MapKit rendering.
-       - **Hidden:** Vehicles hidden and polling suspended above 10,000 m.
-     - **Vehicle Thinning:** When more than 150 vehicles are visible in the viewport, `MapViewModel` thins them deterministically on a background task using a world-aligned 2D spatial grid (`maxRenderedVehicles = 150`), always retaining the selected vehicle.
-     - **Vehicle Polling & Caching:** Vehicle positions are fetched per visible viewport bounding box. Camera pans outside the buffered viewport trigger a debounced fetch (`MapConstants.cameraFetchDebounce`, 350 ms) that resets the 15-second polling timer (`vehicleTTL = 15.0`). Vehicles are retained in a session cache with a 45-second TTL (`vehicleCacheTTL = 45.0`) so panning between adjacent areas does not cause vehicles to vanish, and the actively selected vehicle is protected from TTL eviction while selected. Vehicle network errors surface in the top capsule without a retry button, automatically recovering on the subsequent interval.
-   - Camera metrics are grouped into one atomic `CameraState` value, preventing unnecessary annotation redraws during unrelated camera movements.
-4. **Localization & Accessibility:**
-   - User-facing copy lives in `Resources/Localizable.xcstrings` with Polish (`pl`) and English (`en`) translations.
-   - `MapMode` and `RouteType` keep locale-independent identifiers/raw values; display names are localized in the UI layer (`RouteType+UI.swift`).
-   - Icon-only controls have accessibility labels, markers combine into one element, and the selected stop/route type is announced.
+**KomunikacjaWiejska** is a native iOS transit visualizer built with pure Apple frameworks (`SwiftUI`, `MapKit`, `CoreLocation`, `Observation`, Swift 6 concurrency) connected to `https://api.zbiorkom.live/api6` (see [`ADR-0009`](decisions/0009-api6-sse-streaming.md)).
 
 ---
 
-## 2. Component Hierarchy & Flow
+## 1. High-Level Data & Streaming Architecture
 
-```mermaid
-flowchart TD
-    App["KomunikacjaWiejskaApp"] --> Content["ContentView"]
-    Content --> MapView["TransitMapView (SwiftUI Map)"]
-    MapView --> TopBar["Top Chrome (City Picker, Status/Retry)"]
-    MapView --> Annotations["Map Annotations (ForEach Stop)"]
-    Annotations --> MarkerView["StopMarkerView (Icon + Bearing Arrow)"]
-    MapView --> DetailSheet["StopDetailSheet (.sheet(item: selectedStop))"]
-    DetailSheet --> RouteBadges["RouteBadgeView (Pill badge per StopRoute)"]
-    DetailSheet --> EntrancesList["Entrances List (Deep-link to Apple Maps)"]
-    MapView --> CitySheet["CityPickerSheet (Searchable City List)"]
-    MapView --> Controls["MapControlsComboView (Map mode, Location)"]
+1. **Dynamic City Bootstrap (`GET /api6`)**:
+   - On launch (`MapViewModel.start()`), `ZbiorkomAPIClient.fetchCities()` loads the live catalog (`City` records including `location`, `timezone`, `agencies`, and `virtual` flags) directly from `GET /api6` without any bundled offline city catalog. If loading fails, `MapViewModel` enters a retryable error state until `GET /api6` succeeds.
+2. **Viewport SSE Stream (`mapFeatures/{zoom}/{bbox}/stream`)**:
+   - MapKit camera changes (`onMapCameraChange(frequency: .onEnd)`) debounce (`350 ms` via `MapConstants.cameraDebounce`), compute clamped `BoundingBox` and Web Mercator `zoom` (`BoundingBox.webMercatorZoom(viewportWidth:)`), and open a live SSE connection (`SSEFrameParser` over `URLSession.bytes(for:)`).
+   - Zoomed-out views emit colored `dots` (`DotMarkerView`); street-level views emit 7-tuple `stops` (`StopMarkerView`) and 6-tuple live `positions` (`VehicleMarkerView`).
+3. **Selection Isolation, Navigation Stack & Detail Streams**:
+   - **Selecting a Stop (`selection = .stop(id)`)** opens `stops/{stop.city}/stops/{stop.id}/stream` (routing cleanly via `stop.city` for cross-city operators), hydrates missing 10-tuple fields (`direction`, `routes`, `entrances`), isolates surrounding map markers to the stop, its entrances, and active departure vehicles, and streams `StopDeparture` rows.
+   - **Tapping a Departure -> Trip Sheet (`openDeparture(_:)`)** saves the originating `Stop` so `<` Back (`navigateBackToStop()`) returns cleanly to `StopDetailSheet`, transitions inside the single active `.sheet(isPresented:)` container to `VehicleDetailSheet`, opens `positions/{city}/{vehicleId}/stream` (plus `vehicles/vehicle/{vehicleId}`) or `trips/{city}/{tripId}/stream` for scheduled trips without assigned vehicles, renders the `1e6` Google-encoded `MapPolyline` and `ItineraryStop` dots on the map, and optionally tracks live vehicle coordinates (`isFollowingVehicle`).
+4. **App Background Lifecycle (`scenePhase`)**:
+   - Moving off `.active` starts a `45 s` background teardown timer (`sseBackgroundDisconnectDelay`); returning to `.active` reopens streams automatically when disconnected or stale (`>= 10 s` elapsed).
 
-    TopBar --> Localized["Localizable.xcstrings (pl/en)"]
-    Annotations --> Localized
-    DetailSheet --> Localized
+---
 
-    MapView <-->|Binds to| ViewModel["MapViewModel (@Observable @MainActor)"]
-    ViewModel -->|BBox Query| Client["ZbiorkomAPIClient (actor)"]
-    Client -->|REST HTTP| API["https://api.zbiorkom.live/api6-open"]
-    ViewModel -->|Stores Camera| Persistence["CameraPersistenceStore"]
-    ViewModel -->|Requests Location| Location["LocationProviding"]
+## 2. Project File Map
+
+```text
+KomunikacjaWiejska/
+├── KomunikacjaWiejskaApp.swift         # App entry point (skips map under XCTest)
+├── Models/
+│   ├── BoundingBox.swift                # Clamp/containment + coordinate bounds
+│   ├── City.swift                       # CitiesResponse, Agency, City catalog model
+│   ├── RouteType.swift                  # GTFS route type enum
+│   ├── Stop.swift                       # StopRoute (7-tuple), StopEntrance, 7/10-tuple Stop
+│   ├── TripModels.swift                 # MapFeatures*, StopDeparture, StopTimeUpdate, Itinerary, TripAlert, VehicleMetadata
+│   ├── TupleDecoding.swift              # Nonisolated TupleReader, CoordinatePair, Web Mercator zoom
+│   └── VehiclePosition.swift            # DotVehicle (2-tuple), VehiclePosition (6/9-tuple)
+├── Services/
+│   ├── CameraPersistence.swift          # UserDefaults + InMemory store protocols
+│   ├── LocationManager.swift            # CoreLocation state wrapper
+│   ├── LocationProviding.swift          # Location protocol
+│   ├── SSEStreamParser.swift            # Byte-level SSE frame parser (event:, data:, retry:, comments)
+│   ├── StopsProviding.swift             # TransitDataProviding async/SSE protocol
+│   └── ZbiorkomAPIClient.swift          # Actor HTTP + SSE client for https://api.zbiorkom.live/api6
+├── ViewModels/
+│   └── MapViewModel.swift               # @Observable @MainActor state, streams, selection stack & isolation
+├── Views/
+│   ├── CityPickerSheet.swift            # Searchable non-virtual city switcher
+│   ├── DesignTokens.swift               # Shared layout metrics & sheet detents
+│   ├── MapControlsComboView.swift       # Native Liquid Glass map style + location controls
+│   ├── StopDetailSheet.swift            # Hydrated stop header + live departures board
+│   ├── StopMarkerView.swift             # Circle / Metro-Rail rounded-square badge + bearing pointer
+│   ├── TransitMapView.swift             # MapKit canvas, polyline, dots, stops, vehicles & sheet coordinator
+│   ├── VehicleDetailSheet.swift         # Full itinerary timeline, percentTraveled track, alerts & metadata
+│   └── VehicleMarkerView.swift          # Rounded route badge + DotMarkerView
+├── Utilities/
+│   ├── MapConstants.swift               # SSE timing, retry, debounce & marker size constants
+│   ├── PolylineDecoder.swift            # Pure Swift 1e6 Google polyline decoder
+│   └── TransitTimeFormatting.swift      # Timezone-aware HH:mm clocks, countdowns, ping age & delay states
+├── Extensions/
+│   ├── Color+Hex.swift                  # 3/6/8-digit hex parsing (with or without #) & WCAG contrast
+│   ├── Logger+Categories.swift          # Subsystem os.Logger categories
+│   ├── RouteType+UI.swift               # SF Symbols, localized names, default colors
+│   └── VehiclePosition+UI.swift         # Route/vehicle/dot display colors
+└── Resources/
+    └── Localizable.xcstrings            # Polish & English localized strings
 ```
 
 ---
 
-## 3. Key Files & Responsibilities
+## 3. Hermetic Testing Architecture
 
-### Models (`KomunikacjaWiejska/Models/`)
-- [`RouteType.swift`](../KomunikacjaWiejska/Models/RouteType.swift):
-  - GTFS route types (`tram`, `subway`, `rail`, `bus`, `ferry`, `aerialLift`, `funicular`, `trolleybus`, `monorail`, `unknown`).
-- [`BoundingBox.swift`](../KomunikacjaWiejska/Models/BoundingBox.swift):
-  - Calculates `minLon,minLat,maxLon,maxLat` from an `MKCoordinateRegion` for API requests.
-- [`MapTile.swift`](../KomunikacjaWiejska/Models/MapTile.swift):
-  - Flat Web Mercator tile math (`zoom = 12`) for session caching: visible tiles for a region, tile bounds, and union bbox computation.
-- [`Stop.swift`](../KomunikacjaWiejska/Models/Stop.swift):
-  - `Stop`, `StopRoute`, `StopEntrance` models.
-  - Implements custom `Decodable` parsing of unkeyed positional arrays via `TupleReader`.
-- [`City.swift`](../KomunikacjaWiejska/Models/City.swift):
-  - Bundled catalog of 66 Polish cities and metropolitan networks, default coordinates, and `City.city(id:) -> City?`.
-
-### Services & Persistence (`KomunikacjaWiejska/Services/`)
-- [`ZbiorkomAPIClient.swift`](../KomunikacjaWiejska/Services/ZbiorkomAPIClient.swift):
-  - Actor managing `URLSession` communication with `api.zbiorkom.live`.
-  - Implements bounded retries with exponential backoff and jitter for transient errors.
-- [`StopsProviding.swift`](../KomunikacjaWiejska/Services/StopsProviding.swift):
-  - Injectable abstraction over the stops data source; `ZbiorkomAPIClient` conforms so `MapViewModel` can be tested hermetically with stubs.
-- [`LocationProviding.swift`](../KomunikacjaWiejska/Services/LocationProviding.swift) & [`LocationManager.swift`](../KomunikacjaWiejska/Services/LocationManager.swift):
-  - Protocol and implementation wrapping `CLLocationManager` with a 15-second bounded one-shot fix timeout and authorization state handling.
-- [`CameraPersistenceStore.swift`](../KomunikacjaWiejska/Services/CameraPersistenceStore.swift):
-  - Protocol for camera state storage with `UserDefaultsCameraPersistenceStore` (production) and `InMemoryCameraPersistenceStore` (tests).
-
-### Constants & Design (`KomunikacjaWiejska/Constants/`)
-- [`MapConstants.swift`](../KomunikacjaWiejska/Constants/MapConstants.swift):
-  - Centralized thresholds (6 km compact / 12 km visibility), 250 max stops cap, 350 ms debounce, 15 s location timeout.
-- [`DesignTokens.swift`](../KomunikacjaWiejska/Constants/DesignTokens.swift):
-  - Spacing, icon sizes, sheet detents, and minimum 44pt touch target metrics.
-
-### Extensions (`KomunikacjaWiejska/Extensions/`)
-- [`Color+Hex.swift`](../KomunikacjaWiejska/Extensions/Color+Hex.swift):
-  - Failable `Color(hex:)` for 3-, 6-, and 8-digit strings, plus WCAG relative luminance contrast calculation (`isLightColor`).
-- [`RouteType+UI.swift`](../KomunikacjaWiejska/Extensions/RouteType+UI.swift):
-  - SwiftUI color, SF Symbols, and localized display names for `RouteType` per ADR-0004.
-
-### Presentation (`KomunikacjaWiejska/ViewModels/` & `Views/`)
-- [`MapViewModel.swift`](../KomunikacjaWiejska/ViewModels/MapViewModel.swift):
-  - Central `@Observable` state holder. Manages camera position, selected city, flat Zoom 12 session tile cache, visible thinned stops, active stop selection, typed `FetchState`, localized errors, and cancellation of pending network tasks.
-- [`TransitMapView.swift`](../KomunikacjaWiejska/Views/TransitMapView.swift):
-  - Root map screen with MapKit standard layer (POI disabled), safe-area-aware top chrome, and retryable status capsule.
-- [`StopMarkerView.swift`](../KomunikacjaWiejska/Views/StopMarkerView.swift):
-  - Unified transit marker displaying transit icon, platform badge, bearing arrow, and supporting compact mode.
-- [`StopDetailSheet.swift`](../KomunikacjaWiejska/Views/StopDetailSheet.swift):
-  - Non-blocking bottom sheet displaying platform number, direction, route chips with contrast-safe text, and entrance deep-links.
-- [`CityPickerSheet.swift`](../KomunikacjaWiejska/Views/CityPickerSheet.swift):
-  - Searchable list of Polish cities allowing the user to switch transit networks.
-- [`MapControlsComboView.swift`](../KomunikacjaWiejska/Views/MapControlsComboView.swift):
-  - Floating Liquid Glass control combo for map mode and user location tracking.
-
-### Resources (`KomunikacjaWiejska/Resources/`)
-- `Localizable.xcstrings` — Polish and English copy (map chrome, errors, stop sheet, accessibility).
-- `InfoPlist.xcstrings` — localized system permission prompts (location usage description).
-- `DesignTokens.swift` — shared spacing, control, and marker metrics.
-- [`StopMarkerView.swift`](../KomunikacjaWiejska/Views/StopMarkerView.swift):
-  - Circular transit badge showing transit icon and a triangle notch rotated to the stop's `bearing`.
-- [`StopDetailSheet.swift`](../KomunikacjaWiejska/Views/StopDetailSheet.swift):
-  - Non-blocking bottom sheet showing platform number, direction, and route chips.
-- [`VehicleMarkerView.swift`](../KomunikacjaWiejska/Views/VehicleMarkerView.swift):
-  - Two-tier vehicle marker displaying full route badge with bearing notch pointer ($\le$ 2,000 m) or 7pt compact colored dot (2,000 m – 10,000 m).
-- [`VehicleDetailSheet.swift`](../KomunikacjaWiejska/Views/VehicleDetailSheet.swift):
-  - Non-blocking bottom sheet showing route badge, headsign, brigade/model subtitle, and a live upcoming-stop timeline with scheduled/estimated times, delay status, and arrival countdowns.
-- [`CityPickerSheet.swift`](../KomunikacjaWiejska/Views/CityPickerSheet.swift):
-  - Searchable list of Polish cities allowing the user to jump between transit networks.
-
----
-
-## 4. Future Roadmap
-
-1. **Stop Departures (Milestone 2):**
-   - Query `GET /api6-open/{city}/stops/{stopId}` when a stop is selected.
-   - Display real-time departure countdowns, delays in minutes, and cancellations.
-2. **Live Vehicle Positions (Milestone 3 - Implemented):**
-   - Polling `GET /api6-open/{city}/positions/{bbox}` with 15s TTL cache.
-   - Two-tier MapKit rendering (route pill badge $\le$ 2,000 m; compact dot 2,000 m – 10,000 m).
-   - Spatial grid thinning capped at 150 vehicles on background task.
-   - Vehicle selection, interactive sheet, and camera tracking.
-3. **Trip Route Polyline & Vehicle Trace (Milestone 4):**
-   - Query `GET /api6-open/{city}/trips/{tripId}` or route geometries to draw transit lines using `MapPolyline`.
+`KomunikacjaWiejskaTests` uses Swift `Testing` (`@Suite`, `@Test`, `#expect`) with zero live network access:
+- `MockURLProtocol` tests `ZbiorkomAPIClient` HTTP requests, percent-encoding, error paths, and multi-event SSE streams (`SSEFrameParser`).
+- `StubStopsProvider` (`TransitDataProviding`) drives deterministic `AsyncThrowingStream` events into `MapViewModel`.
+- `InMemoryCameraPersistenceStore` isolates persisted city and camera restoration in tests.

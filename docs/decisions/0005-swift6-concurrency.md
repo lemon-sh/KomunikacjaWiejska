@@ -14,7 +14,7 @@ Enable **Swift 6 language mode** with complete strict concurrency. Keep
 default. Value types that must cross actor boundaries are explicitly
 `nonisolated`, with a comment:
 
-- `BoundingBox`, `StopsProviding`, and the `StopsResponse` decoding entry point.
+- `BoundingBox`, `TransitDataProviding`, `TupleReader`, `PolylineDecoder`, `SSEFrameParser`, and DTO models (`CitiesResponse`, `City`, `Stop`, `VehiclePosition`, `DotVehicle`, `TripModels`).
 - The `Sendable` model values (`City`, `Stop`, `StopRoute`, `StopEntrance`,
   `RouteType`) compile cleanly under the same settings; they are pure value
   types and need no actor hop.
