@@ -223,7 +223,8 @@ nonisolated enum VehicleFixtures {
         latitude: Double = 52.23,
         bearing: Int? = 180,
         delay: Int = 120_000,
-        headsign: String? = "Os. Górczewska"
+        headsign: String? = "Os. Górczewska",
+        upcomingStops: [VehicleUpcomingStop] = []
     ) -> VehiclePosition {
         VehiclePosition(
             vehicle: VehicleInfo(id: id, type: type, agency: agency, model: model),
@@ -235,7 +236,7 @@ nonisolated enum VehicleFixtures {
             bearing: bearing,
             delay: delay,
             headsign: headsign,
-            upcomingStops: [],
+            upcomingStops: upcomingStops,
             url: "https://zbiorkom.live/sample"
         )
     }

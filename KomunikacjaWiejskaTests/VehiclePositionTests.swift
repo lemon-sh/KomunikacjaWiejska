@@ -89,13 +89,22 @@ struct VehiclePositionTests {
         #expect(first.headsign == nil)
     }
 
-    @Test("Equatable checks position and rotation stability")
+    @Test("Equatable checks position, rotation, and upcoming stops")
     func testEquatable() {
         let v1 = VehicleFixtures.sample(id: "1", longitude: 21.0, latitude: 52.0)
         let v2 = VehicleFixtures.sample(id: "1", longitude: 21.0, latitude: 52.0)
         let v3 = VehicleFixtures.sample(id: "1", longitude: 21.1, latitude: 52.0)
+        let v4 = VehicleFixtures.sample(
+            id: "1",
+            longitude: 21.0,
+            latitude: 52.0,
+            upcomingStops: [
+                VehicleUpcomingStop(sequence: 1, name: "Centrum", scheduledArrival: 1_700_000_060_000, scheduledDeparture: 1_700_000_060_000)
+            ]
+        )
 
         #expect(v1 == v2)
         #expect(v1 != v3)
+        #expect(v1 != v4)
     }
 }

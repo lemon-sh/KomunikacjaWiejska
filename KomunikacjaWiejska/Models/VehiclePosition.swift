@@ -127,9 +127,12 @@ nonisolated struct VehiclePosition: Decodable, Sendable, Identifiable, Equatable
         lhs.id == rhs.id
             && lhs.routeName == rhs.routeName
             && lhs.routeColor == rhs.routeColor
+            && lhs.brigade == rhs.brigade
             && lhs.timestamp == rhs.timestamp
             && lhs.bearing == rhs.bearing
             && lhs.delay == rhs.delay
+            && lhs.headsign == rhs.headsign
+            && lhs.upcomingStops == rhs.upcomingStops
             && lhs.latitude == rhs.latitude
             && lhs.longitude == rhs.longitude
     }

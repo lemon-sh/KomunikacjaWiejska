@@ -163,18 +163,66 @@ struct PresentationTests {
         }
     }
 
-    @Test("VehicleDetailSheet renders without crashing across delay states")
+    @Test("VehicleDetailSheet renders without crashing across delay states and stop counts")
     func testVehicleDetailSheetRenders() {
-        let onTime = VehicleFixtures.sample(delay: 0)
-        let late = VehicleFixtures.sample(delay: 180_000)
-        let early = VehicleFixtures.sample(delay: -120_000)
+        let stops = [
+            VehicleUpcomingStop(sequence: 4, name: "Rondo Grunwaldzkie 04", scheduledArrival: 1_794_425_460_000, scheduledDeparture: 1_794_425_460_000),
+            VehicleUpcomingStop(sequence: 5, name: "Konopnickiej 02", scheduledArrival: 1_794_425_520_000, scheduledDeparture: 1_794_425_520_000),
+            VehicleUpcomingStop(sequence: 6, name: "Jubilat 03", scheduledArrival: 1_794_425_580_000, scheduledDeparture: 1_794_425_580_000)
+        ]
+        let originStops = [
+            VehicleUpcomingStop(sequence: 0, name: "Ludwinów 02", scheduledArrival: 1_794_425_460_000, scheduledDeparture: 1_794_425_460_000)
+        ]
 
-        for vehicle in [onTime, late, early] {
+        let onTimeEmpty = VehicleFixtures.sample(delay: 0)
+        let lateWithStops = VehicleFixtures.sample(delay: 180_000, upcomingStops: stops)
+        let earlyWithStops = VehicleFixtures.sample(delay: -120_000, upcomingStops: stops)
+        let originOnly = VehicleFixtures.sample(model: nil, brigade: "", delay: 45_000, upcomingStops: originStops)
+
+        for vehicle in [onTimeEmpty, lateWithStops, earlyWithStops, originOnly] {
             let sheet = VehicleDetailSheet(vehicle: vehicle, onDismiss: {})
             let controller = UIHostingController(rootView: sheet)
             let size = controller.sizeThatFits(in: CGSize(width: 393, height: 600))
             #expect(size.height > 100)
         }
+    }
+
+    @Test("VehicleDetailSheet delay status uses >= 1 minute threshold without sub-minute gaps")
+    func testVehicleDetailDelayStatus() {
+        #expect(VehicleDetailSheet.delayStatus(for: 0) == .onTime)
+        #expect(VehicleDetailSheet.delayStatus(for: 30_000) == .onTime)
+        #expect(VehicleDetailSheet.delayStatus(for: 59_999) == .onTime)
+        #expect(VehicleDetailSheet.delayStatus(for: -59_999) == .onTime)
+
+        #expect(VehicleDetailSheet.delayStatus(for: 60_000) == .delayed(minutes: 1))
+        #expect(VehicleDetailSheet.delayStatus(for: 179_999) == .delayed(minutes: 2))
+        #expect(VehicleDetailSheet.delayStatus(for: -60_000) == .early(minutes: 1))
+        #expect(VehicleDetailSheet.delayStatus(for: -180_000) == .early(minutes: 3))
+
+        #expect(VehicleDetailSheet.delayStatus(for: 120_000).color == .red)
+        #expect(VehicleDetailSheet.delayStatus(for: -120_000).color == .orange)
+        #expect(VehicleDetailSheet.delayStatus(for: 0).color == .green)
+    }
+
+    @Test("VehicleDetailSheet countdown and 24-hour time formatting")
+    func testVehicleDetailCountdownAndTimeFormatting() throws {
+        let nowMs: Int64 = 1_794_425_580_000
+        let now = Date(timeIntervalSince1970: TimeInterval(nowMs) / 1_000.0)
+
+        // <= 30s (including slightly overdue due to GPS fix lag) shows "<1"
+        #expect(VehicleDetailSheet.countdownText(estimatedMs: nowMs - 15_000, now: now) == "<1")
+        #expect(VehicleDetailSheet.countdownText(estimatedMs: nowMs, now: now) == "<1")
+        #expect(VehicleDetailSheet.countdownText(estimatedMs: nowMs + 30_000, now: now) == "<1")
+
+        // > 30s rounds to nearest minute (minimum 1)
+        #expect(VehicleDetailSheet.countdownText(estimatedMs: nowMs + 31_000, now: now) == "1")
+        #expect(VehicleDetailSheet.countdownText(estimatedMs: nowMs + 89_000, now: now) == "1")
+        #expect(VehicleDetailSheet.countdownText(estimatedMs: nowMs + 91_000, now: now) == "2")
+
+        // 2026-11-11 20:31:00 Europe/Warsaw (CET, UTC+1) -> 19:31:00 UTC
+        let epochMs: Int64 = 1_794_425_460_000
+        let warsaw = try #require(TimeZone(identifier: "Europe/Warsaw"))
+        #expect(VehicleDetailSheet.formattedTime(epochMs: epochMs, timeZone: warsaw) == "20:31")
     }
 
     @Test("VehicleMarkerView effectiveRotation calculation offsets heading")

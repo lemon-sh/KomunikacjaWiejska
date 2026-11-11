@@ -905,6 +905,23 @@
         }
       }
     },
+    "vehicle.accessibility.stopRow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, %@, %@, %@ min"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, %@, %@, %@ min"
+          }
+        }
+      }
+    },
     "vehicle.brigade" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -922,13 +939,47 @@
         }
       }
     },
+    "vehicle.countdown.lessThanOne" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "<1"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "<1"
+          }
+        }
+      }
+    },
+    "vehicle.countdown.min" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "min"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "min"
+          }
+        }
+      }
+    },
     "vehicle.delay.minutesEarly" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%d min early"
+            "value" : "Early %d min"
           }
         },
         "pl" : {
@@ -945,13 +996,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%d min late"
+            "value" : "Delayed %d min"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%d min spóźnienia"
+            "value" : "Opóźniony %d min"
           }
         }
       }
@@ -968,24 +1019,41 @@
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "O czasie"
+            "value" : "Planowo"
           }
         }
       }
     },
-    "vehicle.sheet.placeholder" : {
+    "vehicle.stops.empty" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Route and upcoming stops will be available soon"
+            "value" : "No upcoming stops available"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Trasa i kolejne przystanki będą dostępne wkrótce"
+            "value" : "Brak informacji o kolejnych przystankach"
+          }
+        }
+      }
+    },
+    "vehicleDetail.close" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close vehicle details"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zamknij szczegóły pojazdu"
           }
         }
       }

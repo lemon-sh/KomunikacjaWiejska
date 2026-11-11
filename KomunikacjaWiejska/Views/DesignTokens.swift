@@ -22,9 +22,9 @@ enum DesignTokens {
     static let vehicleCompactSize: CGFloat = 7
     static let vehiclePillCornerRadius: CGFloat = 6
 
-    /// Height for the collapsed bottom sheet showing stop details.
+    /// Height for the collapsed bottom sheet showing stop or vehicle details.
     static let sheetSmallDetentHeight: CGFloat = 240
-    static let vehicleSheetSmallDetentHeight: CGFloat = 180
+    static let vehicleSheetSmallDetentHeight: CGFloat = 260
 
     static let badgeCornerRadius: CGFloat = 12
 }

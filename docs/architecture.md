@@ -126,7 +126,7 @@ flowchart TD
 - [`VehicleMarkerView.swift`](../KomunikacjaWiejska/Views/VehicleMarkerView.swift):
   - Two-tier vehicle marker displaying full route badge with bearing notch pointer ($\le$ 2,000 m) or 7pt compact colored dot (2,000 m – 10,000 m).
 - [`VehicleDetailSheet.swift`](../KomunikacjaWiejska/Views/VehicleDetailSheet.swift):
-  - Non-blocking bottom sheet showing route badge, headsign, live delay status, and upcoming trip placeholder.
+  - Non-blocking bottom sheet showing route badge, headsign, brigade/model subtitle, and a live upcoming-stop timeline with scheduled/estimated times, delay status, and arrival countdowns.
 - [`CityPickerSheet.swift`](../KomunikacjaWiejska/Views/CityPickerSheet.swift):
   - Searchable list of Polish cities allowing the user to jump between transit networks.
 
