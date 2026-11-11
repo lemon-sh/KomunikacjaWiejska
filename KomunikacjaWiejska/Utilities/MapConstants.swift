@@ -25,6 +25,9 @@ nonisolated enum MapConstants {
     /// Polling and TTL interval in seconds for live vehicle positions.
     static let vehicleTTL: TimeInterval = 15.0
 
+    /// Maximum cache retention duration in seconds for vehicles in previously viewed areas.
+    static let vehicleCacheTTL: TimeInterval = 45.0
+
     /// Hard ceiling on vehicle markers rendered at once; extra vehicles are thinned to
     /// one representative per grid cell (see `thinnedVehicles`).
     static let maxRenderedVehicles: Int = 150

@@ -263,6 +263,8 @@ final class MapViewModel {
             if !visibility.vehiclesVisible {
                 vehicles = []
                 stopVehiclePolling()
+                vehicleDebounceTask?.cancel()
+                vehicleDebounceTask = nil
             } else {
                 startVehiclePolling()
             }
@@ -325,6 +327,7 @@ final class MapViewModel {
     // from any context is safe; the reference itself is never read concurrently.
     @ObservationIgnored private nonisolated(unsafe) var activeFetchTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var debounceTask: Task<Void, Never>?
+    @ObservationIgnored private nonisolated(unsafe) var vehicleDebounceTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var vehiclePollingTask: Task<Void, Never>?
     @ObservationIgnored private nonisolated(unsafe) var vehicleThinningTask: Task<Void, Never>?
     @ObservationIgnored private var vehicleThinningGeneration = UUID()
@@ -332,11 +335,21 @@ final class MapViewModel {
     @ObservationIgnored private var lastBufferedRegion: MKCoordinateRegion?
     /// Region for which `vehicles` was last thinned, expanded by `MapConstants.viewportBufferFactor`.
     @ObservationIgnored private var lastVehicleBufferedRegion: MKCoordinateRegion?
+    /// Buffered region for which vehicle positions were last fetched from the API.
+    @ObservationIgnored private var lastFetchedVehicleRegion: MKCoordinateRegion?
     @ObservationIgnored private var inFlightTiles: Set<MapTile> = []
     /// Session-only stop cache for the selected city.
     @ObservationIgnored private var cachedStopsByID: [String: Stop] = [:]
     /// Tiles whose bbox has been fetched successfully in this session.
     @ObservationIgnored private var fetchedTiles: Set<MapTile> = []
+
+    private struct CachedVehicleEntry: Sendable {
+        let vehicle: VehiclePosition
+        let receivedAt: ContinuousClock.Instant
+    }
+
+    /// Live vehicles cache mapped by ID with client arrival timestamp for TTL eviction.
+    @ObservationIgnored private var cachedVehiclesByID: [String: CachedVehicleEntry] = [:]
 
     /// Live vehicles cache for current session/city.
     @ObservationIgnored private var cachedVehicles: [VehiclePosition] = []
@@ -435,6 +448,7 @@ final class MapViewModel {
     deinit {
         activeFetchTask?.cancel()
         debounceTask?.cancel()
+        vehicleDebounceTask?.cancel()
         vehiclePollingTask?.cancel()
         vehicleThinningTask?.cancel()
     }
@@ -483,6 +497,7 @@ final class MapViewModel {
         updateStops()
         updateRenderedVehicles()
         scheduleViewportFetch()
+        scheduleVehicleFetch()
         updateRegionSuggestion()
     }
 
@@ -681,6 +696,8 @@ final class MapViewModel {
         #endif
         debounceTask?.cancel()
         debounceTask = nil
+        vehicleDebounceTask?.cancel()
+        vehicleDebounceTask = nil
         stopVehiclePolling()
         vehicleThinningTask?.cancel()
         vehicleThinningTask = nil
@@ -941,16 +958,21 @@ final class MapViewModel {
 
     // MARK: - Live Vehicles
 
-    func startVehiclePolling() {
-        guard isVehiclesVisible, vehiclePollingTask == nil else { return }
+    func startVehiclePolling(immediate: Bool = true) {
+        guard isVehiclesVisible else { return }
+        stopVehiclePolling()
         vehiclePollingTask = Task { [weak self] in
-            while !Task.isCancelled {
+            if immediate {
                 await self?.fetchVehiclesForCurrentViewport()
+            }
+            while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(MapConstants.vehicleTTL))
                 } catch {
                     break
                 }
+                guard let self, !Task.isCancelled else { break }
+                await self.fetchVehiclesForCurrentViewport()
             }
         }
     }
@@ -958,6 +980,36 @@ final class MapViewModel {
     func stopVehiclePolling() {
         vehiclePollingTask?.cancel()
         vehiclePollingTask = nil
+    }
+
+    /// Schedules a debounced fetch for vehicles when the camera moves outside the
+    /// currently fetched buffered region.
+    private func scheduleVehicleFetch() {
+        guard isVehiclesVisible else {
+            vehicleDebounceTask?.cancel()
+            vehicleDebounceTask = nil
+            return
+        }
+
+        let currentRegion = cameraState.region
+        guard BoundingBox(currentRegion) != nil else { return }
+
+        if let lastFetched = lastFetchedVehicleRegion,
+           Self.isRegion(currentRegion, safelyContainedIn: lastFetched) {
+            return
+        }
+
+        vehicleDebounceTask?.cancel()
+        vehicleDebounceTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: debounceDuration)
+            guard !Task.isCancelled else { return }
+            self.vehicleDebounceTask = nil
+            self.stopVehiclePolling()
+            await self.fetchVehiclesForCurrentViewport()
+            guard !Task.isCancelled else { return }
+            self.startVehiclePolling(immediate: false)
+        }
     }
 
     func fetchVehiclesForCurrentViewport() async {
@@ -978,6 +1030,7 @@ final class MapViewModel {
                 isRetryableError = true
             }
 
+            lastFetchedVehicleRegion = buffer
             await updateCachedVehiclesAsync(fetched, for: buffer)
         } catch is CancellationError {
             return
@@ -991,7 +1044,19 @@ final class MapViewModel {
     }
 
     private func updateCachedVehiclesAsync(_ newVehicles: [VehiclePosition], for buffer: MKCoordinateRegion) async {
-        cachedVehicles = newVehicles
+        let now = ContinuousClock.now
+        for vehicle in newVehicles {
+            cachedVehiclesByID[vehicle.id] = CachedVehicleEntry(vehicle: vehicle, receivedAt: now)
+        }
+
+        let ttl = Duration.seconds(MapConstants.vehicleCacheTTL)
+        let selectedID = selectedVehicleID
+        cachedVehiclesByID = cachedVehiclesByID.filter { id, entry in
+            if id == selectedID { return true }
+            return (now - entry.receivedAt) < ttl
+        }
+
+        cachedVehicles = Array(cachedVehiclesByID.values.map(\.vehicle))
 
         // If tracked vehicle moved, smoothly update camera
         if isTrackingVehicle, let selectedID = selectedVehicleID, let tracked = cachedVehicle(for: selectedID) {
@@ -1009,13 +1074,17 @@ final class MapViewModel {
     private func clearVehicleCache() {
         vehicleThinningTask?.cancel()
         vehicleThinningTask = nil
+        vehicleDebounceTask?.cancel()
+        vehicleDebounceTask = nil
+        cachedVehiclesByID.removeAll()
         cachedVehicles.removeAll()
         vehicles.removeAll()
         lastVehicleBufferedRegion = nil
+        lastFetchedVehicleRegion = nil
     }
 
     func cachedVehicle(for id: String) -> VehiclePosition? {
-        cachedVehicles.first(where: { $0.id == id })
+        cachedVehiclesByID[id]?.vehicle ?? cachedVehicles.first(where: { $0.id == id })
     }
 
     nonisolated private struct VehicleThinningPlan: Sendable {

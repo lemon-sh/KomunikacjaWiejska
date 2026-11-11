@@ -370,6 +370,104 @@ struct MapViewModelTests {
         #expect(viewModel.isRetryableError == false)
     }
 
+    @Test("Camera pan outside buffered region triggers debounced vehicle fetch")
+    func testCameraPanOutsideBufferedRegionTriggersVehicleFetch() async throws {
+        let vehicleA = VehicleFixtures.sample(id: "v-a", longitude: 21.01, latitude: 52.23)
+        let vehicleB = VehicleFixtures.sample(id: "v-b", longitude: 21.25, latitude: 52.45)
+        let provider = StubStopsProvider(vehicles: [vehicleA, vehicleB])
+        let viewModel = MapViewModel(
+            apiClient: provider,
+            initialCity: .warsaw,
+            debounceDuration: .milliseconds(50)
+        )
+        viewModel.currentDistance = 2_000
+
+        // Initial fetch covers the default Warsaw center
+        await viewModel.fetchVehiclesForCurrentViewport()
+        #expect(provider.vehicleCallCount == 1)
+
+        // Small pan within buffered region: should NOT trigger a new fetch
+        let smallMoveCoord = CLLocationCoordinate2D(
+            latitude: viewModel.currentCenter.latitude + 0.0001,
+            longitude: viewModel.currentCenter.longitude + 0.0001
+        )
+        let smallState = MapViewModel.CameraState(
+            region: MKCoordinateRegion(center: smallMoveCoord, span: viewModel.visibleRegion.span),
+            distance: viewModel.currentDistance,
+            center: smallMoveCoord
+        )
+        viewModel.applyCameraState(smallState)
+
+        // Wait past debounce
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(provider.vehicleCallCount == 1)
+
+        // Large pan outside buffered region: should trigger a debounced fetch
+        let farCoord = CLLocationCoordinate2D(
+            latitude: viewModel.currentCenter.latitude + 0.25,
+            longitude: viewModel.currentCenter.longitude + 0.25
+        )
+        let farState = MapViewModel.CameraState(
+            region: MKCoordinateRegion(
+                center: farCoord,
+                span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+            ),
+            distance: 3_000,
+            center: farCoord
+        )
+        viewModel.applyCameraState(farState)
+
+        try await waitUntil {
+            provider.vehicleCallCount == 2
+        }
+        #expect(provider.vehicleCallCount == 2)
+    }
+
+    @Test("Vehicle cache merges positions across different viewport pans and retains selected vehicle")
+    func testVehicleCacheMergesAcrossPans() async throws {
+        let vehicleA = VehicleFixtures.sample(id: "v-a", longitude: 21.01, latitude: 52.23)
+        let vehicleB = VehicleFixtures.sample(id: "v-b", longitude: 21.25, latitude: 52.45)
+
+        let provider = StubStopsProvider(
+            handler: { _, _ in .success([]) },
+            vehicleHandler: { _, bbox in
+                if bbox.minLon < 21.15 {
+                    return .success([vehicleA])
+                } else {
+                    return .success([vehicleB])
+                }
+            }
+        )
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+        viewModel.currentDistance = 2_000
+
+        // Fetch area 1
+        await viewModel.fetchVehiclesForCurrentViewport()
+        #expect(viewModel.cachedVehicle(for: vehicleA.id) != nil)
+        #expect(viewModel.cachedVehicle(for: vehicleB.id) == nil)
+
+        // Select vehicleA
+        viewModel.selection = .vehicle(vehicleA.id)
+        #expect(viewModel.selectedVehicleID == vehicleA.id)
+
+        // Move to area 2
+        let farCoord = CLLocationCoordinate2D(latitude: 52.45, longitude: 21.25)
+        let farState = MapViewModel.CameraState(
+            region: MKCoordinateRegion(
+                center: farCoord,
+                span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+            ),
+            distance: 2_000,
+            center: farCoord
+        )
+        viewModel.applyCameraState(farState)
+        await viewModel.fetchVehiclesForCurrentViewport()
+
+        // Both vehicles must now be retained in session cache
+        #expect(viewModel.cachedVehicle(for: vehicleA.id) != nil)
+        #expect(viewModel.cachedVehicle(for: vehicleB.id) != nil)
+    }
+
     @Test("Selecting a stop does not recompute rendered stops array instance if stop is already present")
     func testSelectionDoesNotRecomputeStops() async throws {
         let stopA = StopFixtures.sample(id: "stop-a", name: "A")
