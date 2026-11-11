@@ -10,6 +10,9 @@ nonisolated enum MapConstants {
     /// Camera distance (in metres) above which stops are no longer displayed at all.
     static let stopVisibilityDistanceThreshold: Double = 3_000
 
+    /// Camera distance (in metres) above which PKP stops are hidden when PKP is selected.
+    static let pkpStopVisibilityDistanceThreshold: Double = 50_000
+
     /// Camera distance (in metres) above which stop name labels are hidden.
     static let stopTitleVisibilityDistanceThreshold: Double = 500
 

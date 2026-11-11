@@ -180,6 +180,10 @@ final class MapViewModel {
         }
     }
 
+    var isPKPSelected: Bool {
+        selectedCity.id == City.pkp.id
+    }
+
     private(set) var isPitched3D: Bool = false
     private(set) var areStopsVisible: Bool = true
     private(set) var areStopTitlesVisible: Bool = false
@@ -204,28 +208,7 @@ final class MapViewModel {
         get { _cameraState.distance }
         set {
             _cameraState.distance = newValue
-            let newVisible = newValue <= MapConstants.stopVisibilityDistanceThreshold
-            if areStopsVisible != newVisible {
-                areStopsVisible = newVisible
-            }
-            let newStopTitlesVisible = newValue <= MapConstants.stopTitleVisibilityDistanceThreshold
-            if areStopTitlesVisible != newStopTitlesVisible {
-                areStopTitlesVisible = newStopTitlesVisible
-            }
-            let newVehiclesVisible = newValue <= MapConstants.vehicleVisibilityDistanceThreshold
-            if isVehiclesVisible != newVehiclesVisible {
-                isVehiclesVisible = newVehiclesVisible
-                if !newVehiclesVisible {
-                    vehicles = []
-                    stopVehiclePolling()
-                } else {
-                    startVehiclePolling()
-                }
-            }
-            let newVehicleCompact = newValue > MapConstants.vehicleCompactDistanceThreshold
-            if isVehicleCompactDisplayMode != newVehicleCompact {
-                isVehicleCompactDisplayMode = newVehicleCompact
-            }
+            applyDistanceDerivedFlags(newValue)
         }
     }
 
@@ -245,33 +228,50 @@ final class MapViewModel {
         }
     }
 
-    private func syncDerivedCameraProperties(from state: CameraState) {
-        let newPitched = state.pitch > 1.0
-        if isPitched3D != newPitched {
-            isPitched3D = newPitched
+    private static func computeVisibility(for distance: Double, isPKP: Bool) -> (
+        stopsVisible: Bool,
+        stopTitlesVisible: Bool,
+        vehiclesVisible: Bool,
+        vehicleCompact: Bool
+    ) {
+        let stopThreshold = isPKP ? MapConstants.pkpStopVisibilityDistanceThreshold : MapConstants.stopVisibilityDistanceThreshold
+        return (
+            stopsVisible: distance <= stopThreshold,
+            stopTitlesVisible: distance <= MapConstants.stopTitleVisibilityDistanceThreshold,
+            // When PKP is explicitly selected, vehicles remain visible at all zoom levels (thinned when dense).
+            vehiclesVisible: isPKP || distance <= MapConstants.vehicleVisibilityDistanceThreshold,
+            vehicleCompact: distance > MapConstants.vehicleCompactDistanceThreshold
+        )
+    }
+
+    private func applyDistanceDerivedFlags(_ distance: Double) {
+        let visibility = Self.computeVisibility(for: distance, isPKP: isPKPSelected)
+        if areStopsVisible != visibility.stopsVisible {
+            areStopsVisible = visibility.stopsVisible
         }
-        let newVisible = state.distance <= MapConstants.stopVisibilityDistanceThreshold
-        if areStopsVisible != newVisible {
-            areStopsVisible = newVisible
+        if areStopTitlesVisible != visibility.stopTitlesVisible {
+            areStopTitlesVisible = visibility.stopTitlesVisible
         }
-        let newStopTitlesVisible = state.distance <= MapConstants.stopTitleVisibilityDistanceThreshold
-        if areStopTitlesVisible != newStopTitlesVisible {
-            areStopTitlesVisible = newStopTitlesVisible
-        }
-        let newVehiclesVisible = state.distance <= MapConstants.vehicleVisibilityDistanceThreshold
-        if isVehiclesVisible != newVehiclesVisible {
-            isVehiclesVisible = newVehiclesVisible
-            if !newVehiclesVisible {
+        if isVehiclesVisible != visibility.vehiclesVisible {
+            isVehiclesVisible = visibility.vehiclesVisible
+            if !visibility.vehiclesVisible {
                 vehicles = []
                 stopVehiclePolling()
             } else {
                 startVehiclePolling()
             }
         }
-        let newVehicleCompact = state.distance > MapConstants.vehicleCompactDistanceThreshold
-        if isVehicleCompactDisplayMode != newVehicleCompact {
-            isVehicleCompactDisplayMode = newVehicleCompact
+        if isVehicleCompactDisplayMode != visibility.vehicleCompact {
+            isVehicleCompactDisplayMode = visibility.vehicleCompact
         }
+    }
+
+    private func syncDerivedCameraProperties(from state: CameraState) {
+        let newPitched = state.pitch > 1.0
+        if isPitched3D != newPitched {
+            isPitched3D = newPitched
+        }
+        applyDistanceDerivedFlags(state.distance)
         if abs(currentHeading - state.heading) >= 0.5 {
             currentHeading = state.heading
         }
@@ -337,7 +337,9 @@ final class MapViewModel {
     }
 
     /// Camera distance (in metres) above which stops are no longer displayed at all.
-    var stopVisibilityDistanceThreshold: Double { MapConstants.stopVisibilityDistanceThreshold }
+    var stopVisibilityDistanceThreshold: Double {
+        isPKPSelected ? MapConstants.pkpStopVisibilityDistanceThreshold : MapConstants.stopVisibilityDistanceThreshold
+    }
 
     /// Camera distance (in metres) above which stop name labels are hidden.
     var stopTitleVisibilityDistanceThreshold: Double { MapConstants.stopTitleVisibilityDistanceThreshold }
@@ -440,6 +442,7 @@ final class MapViewModel {
             }
         }
 
+        let initialDistance: Double
         if let restored = restoredCamera {
             let delta = max(0.001, min(180.0, restored.distance / MapConstants.metresPerDegreeLatitude))
             let region = MKCoordinateRegion(
@@ -457,10 +460,7 @@ final class MapViewModel {
                 heading: 0,
                 pitch: 0
             ))
-            self.areStopsVisible = restored.distance <= MapConstants.stopVisibilityDistanceThreshold
-            self.areStopTitlesVisible = restored.distance <= MapConstants.stopTitleVisibilityDistanceThreshold
-            self.isVehiclesVisible = restored.distance <= MapConstants.vehicleVisibilityDistanceThreshold
-            self.isVehicleCompactDisplayMode = restored.distance > MapConstants.vehicleCompactDistanceThreshold
+            initialDistance = restored.distance
         } else {
             let initialRegion = MKCoordinateRegion(
                 center: chosenCity.coordinate,
@@ -469,18 +469,20 @@ final class MapViewModel {
                     longitudeDelta: chosenCity.defaultLongitudeDelta
                 )
             )
-            let initialDistance = Self.approximateDistance(for: initialRegion)
+            let computedDistance = Self.approximateDistance(for: initialRegion)
             self._cameraState = CameraState(
                 region: initialRegion,
-                distance: initialDistance,
+                distance: computedDistance,
                 center: chosenCity.coordinate
             )
             self._cameraPosition = .region(initialRegion)
-            self.areStopsVisible = initialDistance <= MapConstants.stopVisibilityDistanceThreshold
-            self.areStopTitlesVisible = initialDistance <= MapConstants.stopTitleVisibilityDistanceThreshold
-            self.isVehiclesVisible = initialDistance <= MapConstants.vehicleVisibilityDistanceThreshold
-            self.isVehicleCompactDisplayMode = initialDistance > MapConstants.vehicleCompactDistanceThreshold
+            initialDistance = computedDistance
         }
+        let visibility = Self.computeVisibility(for: initialDistance, isPKP: chosenCity.id == City.pkp.id)
+        self.areStopsVisible = visibility.stopsVisible
+        self.areStopTitlesVisible = visibility.stopTitlesVisible
+        self.isVehiclesVisible = visibility.vehiclesVisible
+        self.isVehicleCompactDisplayMode = visibility.vehicleCompact
         self.isPitched3D = false
         self.currentHeading = 0
     }
@@ -706,6 +708,8 @@ final class MapViewModel {
         stopVehiclePolling()
         if repositionCamera {
             repositionCameraForCurrentCity()
+        } else {
+            syncDerivedCameraProperties(from: cameraState)
         }
         suggestedCity = nil
         loadStopsForSelectedCity()

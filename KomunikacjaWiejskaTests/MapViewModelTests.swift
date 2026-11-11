@@ -889,6 +889,90 @@ struct MapViewModelTests {
         #expect(!viewModel.areStopsVisible)
         viewModel.loadStopsForSelectedCity()
         #expect(viewModel.stops.isEmpty)
+        #expect(!provider.requestedCities.contains("pkp"))
+    }
+
+    @Test("PKP keeps vehicles always visible with thinning while stops use higher threshold")
+    func testPKPThresholdsAndVehicleThinning() async throws {
+        let pkpStop = StopFixtures.sample(
+            id: "pkp-centralna",
+            city: "pkp",
+            name: "Warszawa Centralna",
+            longitude: City.pkp.coordinate.longitude,
+            latitude: City.pkp.coordinate.latitude
+        )
+        let vehicles = (0..<200).map { index in
+            VehicleFixtures.sample(
+                id: String(format: "%04d", index),
+                type: "2",
+                agency: "pkp",
+                routeName: "IC \(index)",
+                longitude: City.pkp.coordinate.longitude + Double(index) * 0.01,
+                latitude: City.pkp.coordinate.latitude + Double(index) * 0.01
+            )
+        }
+        let provider = StubStopsProvider(stops: [pkpStop], vehicles: vehicles)
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .pkp)
+
+        // Default PKP nationwide distance (~555 km): vehicles visible (thinned), stops hidden
+        #expect(viewModel.isVehiclesVisible)
+        #expect(!viewModel.areStopsVisible)
+
+        viewModel.loadStopsForSelectedCity()
+        try await waitUntilLoaded(viewModel)
+        await viewModel.fetchVehiclesForCurrentViewport()
+
+        #expect(provider.callCount == 0)
+        #expect(viewModel.stops.isEmpty)
+        #expect(provider.requestedVehicleCities == ["pkp"])
+        #expect(!viewModel.vehicles.isEmpty)
+        #expect(viewModel.vehicles.count <= MapConstants.maxRenderedVehicles)
+
+        // Zoomed in within PKP stop threshold (> 3 km city threshold, <= 50 km PKP threshold)
+        viewModel.currentDistance = MapConstants.pkpStopVisibilityDistanceThreshold
+        #expect(viewModel.areStopsVisible)
+        #expect(viewModel.isVehiclesVisible)
+
+        viewModel.loadStopsForSelectedCity()
+        try await waitUntilLoaded(viewModel)
+
+        #expect(provider.requestedCities == ["pkp"])
+        #expect(viewModel.stops == [pkpStop])
+
+        // Zooming past PKP stop threshold hides stops while vehicles remain visible
+        viewModel.currentDistance = MapConstants.pkpStopVisibilityDistanceThreshold + 1_000
+        #expect(!viewModel.areStopsVisible)
+        #expect(viewModel.isVehiclesVisible)
+        viewModel.loadStopsForSelectedCity()
+        #expect(viewModel.stops.isEmpty)
+    }
+
+    @Test("PKP threshold overrides do not affect normal cities when switching regions")
+    func testPKPThresholdsOnlyApplyWhenPKPSelected() async throws {
+        let provider = StubStopsProvider(
+            stops: [StopFixtures.sample()],
+            vehicles: [VehicleFixtures.sample()]
+        )
+        let viewModel = MapViewModel(apiClient: provider, initialCity: .warsaw)
+
+        // Normal city at 25 km: both stops and vehicles are hidden
+        viewModel.currentDistance = 25_000
+        #expect(!viewModel.areStopsVisible)
+        #expect(!viewModel.isVehiclesVisible)
+        viewModel.loadStopsForSelectedCity()
+        await viewModel.fetchVehiclesForCurrentViewport()
+        #expect(provider.callCount == 0)
+        #expect(provider.vehicleCallCount == 0)
+
+        // Switching to PKP without moving camera applies PKP thresholds
+        viewModel.selectCity(.pkp, repositionCamera: false)
+        #expect(viewModel.areStopsVisible)
+        #expect(viewModel.isVehiclesVisible)
+
+        // Switching back to a city restores city thresholds
+        viewModel.selectCity(.krakow, repositionCamera: false)
+        #expect(!viewModel.areStopsVisible)
+        #expect(!viewModel.isVehiclesVisible)
     }
 
     @Test("Camera position persistence in InMemoryCameraPersistenceStore and restoration on launch")
