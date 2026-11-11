@@ -36,21 +36,4 @@ func waitUntilLoaded(
     }
 }
 
-/// Test-only convenience conversion from MKCoordinateRegion to BoundingBox.
-extension BoundingBox {
-    init?(region: MKCoordinateRegion) {
-        let latitudeDelta = region.span.latitudeDelta
-        let longitudeDelta = region.span.longitudeDelta
-        guard latitudeDelta.isFinite, longitudeDelta.isFinite,
-              latitudeDelta > 0, longitudeDelta > 0
-        else { return nil }
-
-        let minLon = region.center.longitude - longitudeDelta / 2
-        let maxLon = region.center.longitude + longitudeDelta / 2
-        let minLat = region.center.latitude - latitudeDelta / 2
-        let maxLat = region.center.latitude + latitudeDelta / 2
-
-        self.init(minLon: minLon, minLat: minLat, maxLon: maxLon, maxLat: maxLat)
-    }
-}
 

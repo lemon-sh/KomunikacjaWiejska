@@ -1,13 +1,5 @@
-import Foundation
 import CoreLocation
-
-/// Centralised keys for persistent defaults storage.
-enum DefaultsKey {
-    static let lastSelectedCityID = "lastSelectedCityId"
-    static let savedCameraLatitude = "savedCameraLatitude"
-    static let savedCameraLongitude = "savedCameraLongitude"
-    static let savedCameraDistance = "savedCameraDistance"
-}
+import Foundation
 
 /// Injected abstraction for persisting camera coordinates and user preferences.
 protocol CameraPersistenceStore: Sendable {
@@ -15,11 +7,17 @@ protocol CameraPersistenceStore: Sendable {
     func saveLastSelectedCityID(_ id: String)
     func loadSavedCamera() -> (latitude: Double, longitude: Double, distance: Double)?
     func saveCamera(latitude: Double, longitude: Double, distance: Double)
-    func clearCamera()
 }
 
 /// Production implementation backed by UserDefaults.
 final class UserDefaultsCameraPersistenceStore: CameraPersistenceStore, @unchecked Sendable {
+    private enum Key {
+        static let lastSelectedCityID = "lastSelectedCityId"
+        static let savedCameraLatitude = "savedCameraLatitude"
+        static let savedCameraLongitude = "savedCameraLongitude"
+        static let savedCameraDistance = "savedCameraDistance"
+    }
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -27,31 +25,25 @@ final class UserDefaultsCameraPersistenceStore: CameraPersistenceStore, @uncheck
     }
 
     func loadLastSelectedCityID() -> String? {
-        defaults.string(forKey: DefaultsKey.lastSelectedCityID)
+        defaults.string(forKey: Key.lastSelectedCityID)
     }
 
     func saveLastSelectedCityID(_ id: String) {
-        defaults.set(id, forKey: DefaultsKey.lastSelectedCityID)
+        defaults.set(id, forKey: Key.lastSelectedCityID)
     }
 
     func loadSavedCamera() -> (latitude: Double, longitude: Double, distance: Double)? {
-        let lat = defaults.double(forKey: DefaultsKey.savedCameraLatitude)
-        let lon = defaults.double(forKey: DefaultsKey.savedCameraLongitude)
-        let dist = defaults.double(forKey: DefaultsKey.savedCameraDistance)
+        let lat = defaults.double(forKey: Key.savedCameraLatitude)
+        let lon = defaults.double(forKey: Key.savedCameraLongitude)
+        let dist = defaults.double(forKey: Key.savedCameraDistance)
         guard lat != 0, lon != 0, dist > 0 else { return nil }
         return (lat, lon, dist)
     }
 
     func saveCamera(latitude: Double, longitude: Double, distance: Double) {
-        defaults.set(latitude, forKey: DefaultsKey.savedCameraLatitude)
-        defaults.set(longitude, forKey: DefaultsKey.savedCameraLongitude)
-        defaults.set(distance, forKey: DefaultsKey.savedCameraDistance)
-    }
-
-    func clearCamera() {
-        defaults.removeObject(forKey: DefaultsKey.savedCameraLatitude)
-        defaults.removeObject(forKey: DefaultsKey.savedCameraLongitude)
-        defaults.removeObject(forKey: DefaultsKey.savedCameraDistance)
+        defaults.set(latitude, forKey: Key.savedCameraLatitude)
+        defaults.set(longitude, forKey: Key.savedCameraLongitude)
+        defaults.set(distance, forKey: Key.savedCameraDistance)
     }
 }
 
@@ -70,32 +62,18 @@ final class InMemoryCameraPersistenceStore: CameraPersistenceStore, @unchecked S
     }
 
     func loadLastSelectedCityID() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return lastCityID
+        lock.withLock { lastCityID }
     }
 
     func saveLastSelectedCityID(_ id: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        lastCityID = id
+        lock.withLock { lastCityID = id }
     }
 
     func loadSavedCamera() -> (latitude: Double, longitude: Double, distance: Double)? {
-        lock.lock()
-        defer { lock.unlock() }
-        return savedCamera
+        lock.withLock { savedCamera }
     }
 
     func saveCamera(latitude: Double, longitude: Double, distance: Double) {
-        lock.lock()
-        defer { lock.unlock() }
-        savedCamera = (latitude, longitude, distance)
-    }
-
-    func clearCamera() {
-        lock.lock()
-        defer { lock.unlock() }
-        savedCamera = nil
+        lock.withLock { savedCamera = (latitude, longitude, distance) }
     }
 }

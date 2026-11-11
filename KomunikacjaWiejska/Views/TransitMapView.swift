@@ -141,18 +141,9 @@ struct TransitMapView: View {
                 viewModel.startVehiclePolling()
             }
         }
-        .onChange(of: viewModel.selection) { _, newSelection in
-            switch newSelection {
-            case .stop(let id):
-                if let stop = viewModel.cachedStop(for: id) {
-                    activeDetail = .stop(stop)
-                }
-            case .vehicle(let id):
-                if let vehicle = viewModel.cachedVehicle(for: id) {
-                    activeDetail = .vehicle(vehicle)
-                }
-            case nil:
-                break
+        .onChange(of: viewModel.selection) { _, _ in
+            if let detail = currentDetailFromSelection {
+                activeDetail = detail
             }
         }
         .onChange(of: viewModel.vehicles) { _, newVehicles in

@@ -1,26 +1,14 @@
 import SwiftUI
 
 struct CityPickerSheet: View {
-    private let selectedCity: City
-    private let onSelect: (City) -> Void
+    let selectedCity: City
+    let onSelect: (City) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var searchText: String = ""
 
-    init(selectedCity: City, onSelect: @escaping (City) -> Void) {
-        self.selectedCity = selectedCity
-        self.onSelect = onSelect
-    }
-
-    init(selectedCity: Binding<City>) {
-        self.selectedCity = selectedCity.wrappedValue
-        self.onSelect = { selectedCity.wrappedValue = $0 }
-    }
-
     private var filteredCities: [City] {
-        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return City.allCities
-        }
-        return City.allCities.filter { $0.matches(searchText: searchText) }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty ? City.allCities : City.allCities.filter { $0.matches(searchText: query) }
     }
 
     var body: some View {

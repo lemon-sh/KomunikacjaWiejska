@@ -4,22 +4,12 @@ import SwiftUI
 struct RouteBadgeView: View {
     let route: StopRoute
 
-    init(route: StopRoute) {
-        self.route = route
-    }
-
     private var badgeColor: Color {
-        if route.color.isEmpty {
-            return route.type.defaultColor
-        }
-        return Color(hex: route.color, fallback: route.type.defaultColor)
+        Color(hex: route.color, fallback: route.type.defaultColor)
     }
 
     private var textColor: Color {
-        if route.color.isEmpty {
-            return .white
-        }
-        return Color.contrastingTextColor(forHex: route.color, fallback: .white)
+        Color.contrastingTextColor(forHex: route.color, fallback: .white)
     }
 
     private var accessibilityDescription: String {
@@ -52,11 +42,6 @@ struct RouteBadgeView: View {
 struct StopDetailSheet: View {
     let stop: Stop
     let onDismiss: () -> Void
-
-    init(stop: Stop, onDismiss: @escaping () -> Void) {
-        self.stop = stop
-        self.onDismiss = onDismiss
-    }
 
     private var directionText: String {
         String(format: String(localized: "stopDetail.direction"), stop.direction)

@@ -6,19 +6,8 @@ struct VehicleDetailSheet: View {
     let vehicle: VehiclePosition
     let onDismiss: () -> Void
 
-    init(vehicle: VehiclePosition, onDismiss: @escaping () -> Void) {
-        self.vehicle = vehicle
-        self.onDismiss = onDismiss
-    }
-
     private var delayColor: Color {
-        if vehicle.delay > 60_000 {
-            return .orange
-        } else if vehicle.delay < -60_000 {
-            return .blue
-        } else {
-            return .green
-        }
+        vehicle.delay > 60_000 ? .orange : (vehicle.delay < -60_000 ? .blue : .green)
     }
 
     private var delayText: String {

@@ -33,13 +33,6 @@ nonisolated struct VehicleUpcomingStop: Decodable, Sendable, Equatable, Identifi
     let scheduledDeparture: Int64
 
     var id: Int { sequence }
-
-    init(sequence: Int, name: String, scheduledArrival: Int64, scheduledDeparture: Int64) {
-        self.sequence = sequence
-        self.name = name
-        self.scheduledArrival = scheduledArrival
-        self.scheduledDeparture = scheduledDeparture
-    }
 }
 
 /// Real-time live vehicle position as returned by the zbiorkom.live API.
@@ -61,19 +54,16 @@ nonisolated struct VehiclePosition: Decodable, Sendable, Identifiable, Equatable
         "\(vehicle.agency):\(vehicle.type):\(vehicle.id)"
     }
 
-    var coordinate: CLLocationCoordinate2D {
-        guard location.count >= 2 else {
-            return CLLocationCoordinate2D(latitude: 0, longitude: 0)
-        }
-        return CLLocationCoordinate2D(latitude: location[1], longitude: location[0])
-    }
-
     var latitude: Double {
         location.count >= 2 ? location[1] : 0
     }
 
     var longitude: Double {
         location.count >= 2 ? location[0] : 0
+    }
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
     var delaySeconds: Int {
@@ -85,10 +75,7 @@ nonisolated struct VehiclePosition: Decodable, Sendable, Identifiable, Equatable
     }
 
     var routeType: RouteType {
-        if let intType = Int(vehicle.type) {
-            return RouteType(rawValue: intType) ?? .unknown
-        }
-        return .unknown
+        Int(vehicle.type).flatMap(RouteType.init) ?? .unknown
     }
 
     init(
@@ -117,18 +104,8 @@ nonisolated struct VehiclePosition: Decodable, Sendable, Identifiable, Equatable
         self.url = url
     }
 
-    enum CodingKeys: String, CodingKey {
-        case vehicle
-        case routeName
-        case routeColor
-        case brigade
-        case location
-        case timestamp
-        case bearing
-        case delay
-        case headsign
-        case upcomingStops
-        case url
+    private enum CodingKeys: CodingKey {
+        case vehicle, routeName, routeColor, brigade, location, timestamp, bearing, delay, headsign, upcomingStops, url
     }
 
     init(from decoder: Decoder) throws {

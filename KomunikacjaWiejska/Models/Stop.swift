@@ -3,39 +3,10 @@ import Foundation
 
 // MARK: - Positional tuple decoding
 
-/// Index layout of the API's positional `StopTuple`.
-enum StopTupleIndex {
-    static let id = 0
-    static let city = 1
-    static let name = 2
-    static let code = 3
-    static let location = 4
-    static let vehicleTypes = 5
-    static let bearing = 6
-    static let direction = 7
-    static let routes = 8
-    static let entrances = 9
-    static let minimumCount = 10
-}
-
-/// Index layout of the API's positional `RouteTuple`.
-enum RouteTupleIndex {
-    static let id = 0
-    static let city = 1
-    static let name = 2
-    static let longName = 3
-    static let agency = 4
-    static let type = 5
-    static let color = 6
-    static let minimumCount = 7
-}
-
-/// Index layout of the API's positional `EntranceTuple`.
-enum EntranceTupleIndex {
-    static let name = 0
-    static let location = 1
-    static let minimumCount = 2
-}
+/// Minimum positional element counts expected from API tuples.
+enum StopTupleIndex { static let minimumCount = 10 }
+enum RouteTupleIndex { static let minimumCount = 7 }
+enum EntranceTupleIndex { static let minimumCount = 2 }
 
 /// Sequentially reads positional tuple fields, maintaining the field index
 /// and providing contextual error diagnostics on decoding failures.
@@ -58,11 +29,11 @@ struct TupleReader {
         }
     }
 
-    mutating func decode<T: Decodable>(_ type: T.Type = T.self, field: String) throws -> T {
+    private mutating func readNext<T>(_ operation: (inout UnkeyedDecodingContainer) throws -> T, field: String) throws -> T {
         let index = currentIndex
         currentIndex += 1
         do {
-            return try container.decode(type)
+            return try operation(&container)
         } catch {
             throw DecodingError.dataCorrupted(.init(
                 codingPath: container.codingPath,
@@ -72,18 +43,12 @@ struct TupleReader {
         }
     }
 
+    mutating func decode<T: Decodable>(_ type: T.Type = T.self, field: String) throws -> T {
+        try readNext({ try $0.decode(type) }, field: field)
+    }
+
     mutating func decodeIfPresent<T: Decodable>(_ type: T.Type = T.self, field: String) throws -> T? {
-        let index = currentIndex
-        currentIndex += 1
-        do {
-            return try container.decodeIfPresent(type)
-        } catch {
-            throw DecodingError.dataCorrupted(.init(
-                codingPath: container.codingPath,
-                debugDescription: "\(typeName): cannot decode field '\(field)' at index \(index) as \(T.self)",
-                underlyingError: error
-            ))
-        }
+        try readNext({ try $0.decodeIfPresent(type) }, field: field)
     }
 
     mutating func nestedReader(field: String, minimumCount: Int) throws -> TupleReader {
@@ -165,13 +130,6 @@ struct StopEntrance: Identifiable, Hashable, Sendable {
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
-
-    init(id: String, name: String, longitude: Double, latitude: Double) {
-        self.id = id
-        self.name = name
-        self.longitude = longitude
-        self.latitude = latitude
-    }
 }
 
 struct Stop: Identifiable, Hashable, Sendable, Decodable {
@@ -196,10 +154,7 @@ struct Stop: Identifiable, Hashable, Sendable, Decodable {
     }
 
     var displayName: String {
-        if code.isEmpty {
-            return name
-        }
-        return "\(name) (\(code))"
+        code.isEmpty ? name : "\(name) (\(code))"
     }
 
     init(

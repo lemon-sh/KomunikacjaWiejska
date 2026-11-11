@@ -63,79 +63,49 @@ actor ZbiorkomAPIClient {
     }
 
     func fetchStops(city: String, bbox: BoundingBox? = nil) async throws -> [Stop] {
-        guard let baseURL = Self.baseURL else {
-            throw ZbiorkomAPIError.invalidURL
+        guard let baseURL = Self.baseURL else { throw ZbiorkomAPIError.invalidURL }
+        var components = URLComponents(url: baseURL.appendingPathComponent(city).appendingPathComponent("stops"), resolvingAgainstBaseURL: false)
+        if let bbox {
+            components?.queryItems = [URLQueryItem(name: "bbox", value: bbox.queryValue)]
         }
-        let stopsURL = baseURL
-            .appendingPathComponent(city)
-            .appendingPathComponent("stops")
+        guard let url = components?.url else { throw ZbiorkomAPIError.invalidURL }
 
-        var components = URLComponents(url: stopsURL, resolvingAgainstBaseURL: false)
-        if let bbox = bbox {
-            components?.queryItems = [
-                URLQueryItem(name: "bbox", value: bbox.queryValue)
-            ]
-        }
-        guard let url = components?.url else {
-            throw ZbiorkomAPIError.invalidURL
-        }
+        Logger.api.debug("Fetching stops for city: \(city, privacy: .public), bbox: \(bbox?.queryValue ?? "none", privacy: .public)")
+        let data = try await perform(makeRequest(url: url))
+        let decoded = try decode(StopsResponse.self, from: data, context: "Stops")
+        Logger.api.debug("Successfully decoded \(decoded.stops.count, privacy: .public) stops for city: \(city, privacy: .public)")
+        return decoded.stops
+    }
 
+    func fetchVehicles(city: String, bbox: BoundingBox) async throws -> [VehiclePosition] {
+        guard let baseURL = Self.baseURL else { throw ZbiorkomAPIError.invalidURL }
+        let url = baseURL.appendingPathComponent(city).appendingPathComponent("positions").appendingPathComponent(bbox.queryValue)
+
+        Logger.api.debug("Fetching vehicles for city: \(city, privacy: .public), bbox: \(bbox.queryValue, privacy: .public)")
+        let data = try await perform(makeRequest(url: url))
+        let decoded = try decode(VehiclesResponse.self, from: data, context: "Vehicles")
+        Logger.api.debug("Successfully decoded \(decoded.positions.count, privacy: .public) vehicles for city: \(city, privacy: .public)")
+        return decoded.positions
+    }
+
+    private func makeRequest(url: URL) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = Self.requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        Logger.api.debug("Fetching stops for city: \(city, privacy: .public), bbox: \(bbox?.queryValue ?? "none", privacy: .public)")
-
-        let data = try await perform(request)
-
-        do {
-            let decoded = try Self.decoder.decode(StopsResponse.self, from: data)
-            Logger.api.debug("Successfully decoded \(decoded.stops.count, privacy: .public) stops for city: \(city, privacy: .public)")
-            return decoded.stops
-        } catch {
-            let details: String
-            #if DEBUG
-            details = String(reflecting: error)
-            Logger.api.error("Stops decoding failed: \(details, privacy: .public)")
-            #else
-            details = ""
-            Logger.api.error("Stops decoding failed")
-            #endif
-            throw ZbiorkomAPIError.decodingError(details)
-        }
+        return request
     }
 
-    func fetchVehicles(city: String, bbox: BoundingBox) async throws -> [VehiclePosition] {
-        guard let baseURL = Self.baseURL else {
-            throw ZbiorkomAPIError.invalidURL
-        }
-        let positionsURL = baseURL
-            .appendingPathComponent(city)
-            .appendingPathComponent("positions")
-            .appendingPathComponent(bbox.queryValue)
-
-        var request = URLRequest(url: positionsURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = Self.requestTimeout
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        Logger.api.debug("Fetching vehicles for city: \(city, privacy: .public), bbox: \(bbox.queryValue, privacy: .public)")
-
-        let data = try await perform(request)
-
+    private func decode<T: Decodable>(_ type: T.Type, from data: Data, context: String) throws -> T {
         do {
-            let decoded = try Self.decoder.decode(VehiclesResponse.self, from: data)
-            Logger.api.debug("Successfully decoded \(decoded.positions.count, privacy: .public) vehicles for city: \(city, privacy: .public)")
-            return decoded.positions
+            return try Self.decoder.decode(type, from: data)
         } catch {
-            let details: String
             #if DEBUG
-            details = String(reflecting: error)
-            Logger.api.error("Vehicles decoding failed: \(details, privacy: .public)")
+            let details = String(reflecting: error)
+            Logger.api.error("\(context, privacy: .public) decoding failed: \(details, privacy: .public)")
             #else
-            details = ""
-            Logger.api.error("Vehicles decoding failed")
+            let details = ""
+            Logger.api.error("\(context, privacy: .public) decoding failed")
             #endif
             throw ZbiorkomAPIError.decodingError(details)
         }
